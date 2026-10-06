@@ -14,6 +14,11 @@ import type { DocItem, DocListResponse, FacetItem, FacetsResponse } from './type
 /** 后端接口就绪后改为 false */
 const USE_MOCK = true
 
+/** 资料详情（对齐 GET /api/docs/:id「单份资料完整信息」，含正文） */
+export interface DocDetail extends DocItem {
+  content: string
+}
+
 /** 书架页查询参数（对齐接口约定，多选维度用数组承载） */
 export interface DocListQuery {
   type?: string
@@ -168,6 +173,29 @@ async function getFacetsHttp(query: DocListQuery): Promise<FacetsResponse> {
   return res.data
 }
 
+async function getDocDetailHttp(id: string): Promise<DocDetail | null> {
+  const res = await http.get<DocDetail>(`/docs/${id}`, { silent: true })
+  return res.data
+}
+
+/** 假数据版：资料详情，找不到返回 null（页面显示 404） */
+async function getDocDetailMock(id: string): Promise<DocDetail | null> {
+  await delay(400)
+  const doc = MOCK_DOCS.find((d) => d.id === id)
+  if (!doc) {
+    return null
+  }
+  return {
+    ...doc,
+    content: [
+      `${doc.title}（${doc.org}，${doc.year}年发布）。本文档属于「${doc.type}」类别，围绕${doc.tags.join('、')}等议题展开。`,
+      '零废弃理念强调从源头减少废弃物的产生，通过分类、回收与资源化利用，让物料在城市系统中循环流动，而非直接进入填埋或焚烧。',
+      '本资料系统梳理了相关政策要求、实践案例与可操作的工具方法，供社区工作者、行业从业者与研究者参考使用。',
+      '如需引用本资料中的数据或结论，请注明原始出处。完整内容可通过在线预览或下载原件查阅。'
+    ].join('\n\n')
+  }
+}
+
 /* ---------------- 对外出口 ---------------- */
 
 export function getDocs(query: DocListQuery): Promise<DocListResponse> {
@@ -176,4 +204,8 @@ export function getDocs(query: DocListQuery): Promise<DocListResponse> {
 
 export function getFacets(query: DocListQuery): Promise<FacetsResponse> {
   return USE_MOCK ? getFacetsMock(query) : getFacetsHttp(query)
+}
+
+export function getDocDetail(id: string): Promise<DocDetail | null> {
+  return USE_MOCK ? getDocDetailMock(id) : getDocDetailHttp(id)
 }
