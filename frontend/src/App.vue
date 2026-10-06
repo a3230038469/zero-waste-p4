@@ -22,6 +22,15 @@ import SiteNav from './components/SiteNav.vue'
   --zw-green-light: #66bb6a;
   --zw-bg: #f7faf7;
   --zw-text: #1f2d1f;
+
+  /* Element Plus 主色对齐零废弃绿（按钮/链接/输入框聚焦等） */
+  --el-color-primary: #2e7d32;
+  --el-color-primary-light-3: #6ca46e;
+  --el-color-primary-light-5: #96be98;
+  --el-color-primary-light-7: #c0d8c1;
+  --el-color-primary-light-8: #d5e4d6;
+  --el-color-primary-light-9: #eaf0ea;
+  --el-color-primary-dark-2: #256428;
 }
 
 * {

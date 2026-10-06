@@ -1,9 +1,18 @@
 <script setup lang="ts">
 /**
  * 顶部导航 —— 负责人：丁梓柔（B04）
- * 显示：站点名 + 导航链接 + 右上角登录态
- * TODO: 接入 useAuth() 显示"XX，你好"
+ * 站点名 + 导航链接 + 右上角登录态（GET /api/auth/me）
+ * 未登录显示「登录 / 注册」，登录后显示「XX，你好」。
+ * 手机窄屏：整体换行为两行（品牌+登录态 / 导航链接），不横滚、不错位。
  */
+import { onMounted } from 'vue'
+import { useAuth } from '../composables/useAuth'
+
+const { user, fetchMe } = useAuth()
+
+onMounted(() => {
+  fetchMe()
+})
 </script>
 
 <template>
@@ -15,8 +24,8 @@
         <RouterLink to="/shelf">书架</RouterLink>
       </nav>
       <div class="auth-slot">
-        <!-- TODO: 未登录显示"登录/注册"，登录后显示"XX，你好" -->
-        <RouterLink to="/auth">登录 / 注册</RouterLink>
+        <span v-if="user" class="greeting">{{ user.name }}，你好</span>
+        <RouterLink v-else to="/auth">登录 / 注册</RouterLink>
       </div>
     </div>
   </header>
@@ -26,20 +35,40 @@
 .site-nav {
   background: var(--zw-green);
   color: #fff;
+  /* 窄屏下内容不出头 */
+  overflow-x: hidden;
 }
 .inner {
   max-width: 1200px;
   margin: 0 auto;
   padding: 12px 16px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 24px;
+  gap: 8px 24px;
 }
 .brand {
   font-weight: 700;
   font-size: 18px;
   color: #fff;
   text-decoration: none;
+  white-space: nowrap;
+}
+.auth-slot {
+  margin-left: auto;
+  font-size: 15px;
+}
+.auth-slot a {
+  color: #fff;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.auth-slot a:hover {
+  text-decoration: underline;
+}
+.greeting {
+  color: #eaf5ea;
+  white-space: nowrap;
 }
 .links {
   display: flex;
@@ -48,26 +77,32 @@
 .links a {
   color: #eaf5ea;
   text-decoration: none;
+  white-space: nowrap;
 }
-.auth-slot {
-  margin-left: auto;
-}
-.auth-slot a {
+.links a:hover {
   color: #fff;
-  text-decoration: none;
+}
+/* 当前页对应的导航链接高亮 */
+.links a.router-link-active {
+  color: #fff;
+  font-weight: 600;
+  border-bottom: 2px solid #fff;
+  padding-bottom: 2px;
 }
 
-/* 手机窄屏：导航不换行、不横滚 */
+/* 手机窄屏：第一行 = 品牌 + 登录态，第二行 = 导航链接 */
 @media (max-width: 480px) {
   .inner {
-    gap: 12px;
+    gap: 6px 12px;
     padding: 10px 12px;
   }
   .brand {
     font-size: 15px;
   }
   .links {
-    gap: 10px;
+    order: 3;
+    flex-basis: 100%;
+    gap: 14px;
     font-size: 14px;
   }
   .auth-slot {
