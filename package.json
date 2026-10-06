@@ -1,0 +1,21 @@
+{
+  "name": "zero-waste-p4",
+  "private": true,
+  "version": "0.1.0",
+  "description": "零废弃知识库 · 公众端（WeKnora 引擎 + 自建网站）",
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev:backend": "npm run dev --workspace backend",
+    "dev:frontend": "npm run dev --workspace frontend",
+    "build": "npm run build --workspace backend && npm run build --workspace frontend",
+    "lint": "npm run lint --workspace backend && npm run lint --workspace frontend",
+    "typecheck": "npm run typecheck --workspace backend && npm run typecheck --workspace frontend",
+    "verify": "npm run lint && npm run typecheck"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
