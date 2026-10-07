@@ -1,0 +1,32 @@
+// 数据库模型 —— 负责人：月月（B02 用户板块）
+// SQLite + Prisma（见《公共约定》技术栈）。
+//
+// 拉取代码后初始化（在 backend 目录执行一次）：
+//   npm install
+//   npm run db:generate   # 生成 Prisma Client
+//   npm run db:push       # 建表（生成 prisma/dev.db，*.db 已在 .gitignore）
+//
+// DATABASE_URL 在 backend/.env 配置，占位示例见 backend/.env.example。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// 注册用户（B02：五个注册字段 + 密码哈希）
+/// 密码只存 bcrypt 哈希（passwordHash），绝不存明文。
+/// topics 为关注议题：SQLite 无数组类型，存 JSON 数组字符串，接口层还原为数组。
+model User {
+  id           String   @id @default(cuid())
+  name         String // 姓名
+  org          String // 机构
+  occupation   String // 职业
+  topics       String // 关注议题（JSON 数组字符串）
+  phone        String   @unique // 电话（唯一）
+  passwordHash String // 密码哈希（bcrypt）
+  createdAt    DateTime @default(now())
+}
