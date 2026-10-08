@@ -10,7 +10,8 @@
     "lint": "eslint src --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "db:generate": "prisma generate",
-    "db:push": "prisma db push"
+    "db:push": "prisma db push",
+    "ingest": "tsx src/ingest/import.cli.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.18.0",
