@@ -1,17 +1,17 @@
 /**
  * 资料数据层 —— 负责人：丁梓柔（B05 书架页）
- * 当前为假数据实现（后端接口未就绪），返回结构与
- * GET /api/docs、GET /api/docs/facets 完全一致（见 docs/接口约定.md）。
- * 后端就绪后：把下面 USE_MOCK 改为 false 即接入真实接口，页面代码不用动。
  *
- * ⚠️ 未决问题：本页「机构/年份/主题」是多选，接口约定里目前只有单数
- *    `tag` 参数。切真实接口前需和韶茹确认多选参数的传法
- *    （如 tag=a&tag=b 重复传参），并同步更新 docs/接口约定.md。
+ * 两种实现，由下面的 USE_MOCK 开关切换：
+ *   - true  ：内置假数据（后端未起时也能开发页面）
+ *   - false ：调自建后端 GET /api/docs、GET /api/docs/facets
+ * 返回结构两者完全一致（见 docs/接口约定.md），页面代码不用动。
+ *
+ * 多选传法已按 2026-10-07 定稿实现：org/year/tag 重复传参（见 toHttpParams）。
  */
 import http from './http'
 import type { DocItem, DocListResponse, FacetItem, FacetsResponse } from './types'
 
-/** 后端接口就绪后改为 false */
+/** 接真实后端时改为 false（联调前必切，否则页面显示的是假数据） */
 const USE_MOCK = true
 
 /** 资料详情（对齐 GET /api/docs/:id「单份资料完整信息」，含正文） */
@@ -164,13 +164,37 @@ async function getFacetsMock(query: DocListQuery): Promise<FacetsResponse> {
 
 /* ---------------- 真实接口（就绪后启用） ---------------- */
 
+/**
+ * 把页面查询参数翻译成契约要求的形式（见 docs/接口约定.md 二·资料列表查询参数）。
+ *
+ * 差异点（照契约，不能想当然）：
+ *   - 页面内部用 orgs/years/tags 承载多值 → 接口要的是**单数参数重复传**：org/year/tag
+ *   - type 是单值 tab，直接透传
+ *   - 数组必须用 `arrayFormat: 'repeat'` 序列化成 `org=a&org=b`；
+ *     axios 默认会发成 `org[]=a&org[]=b`，后端按重复同名参数解析会一条都筛不出来
+ */
+const REPEAT_ARRAY = { paramsSerializer: { indexes: null } } as const
+
+function toHttpParams(query: DocListQuery): Record<string, unknown> {
+  return {
+    type: query.type || undefined,
+    org: query.orgs?.length ? query.orgs : undefined,
+    year: query.years?.length ? query.years : undefined,
+    tag: query.tags?.length ? query.tags : undefined,
+    q: query.q?.trim() || undefined,
+    page: query.page,
+    pageSize: query.pageSize,
+    sort: query.sort
+  }
+}
+
 async function getDocsHttp(query: DocListQuery): Promise<DocListResponse> {
-  const res = await http.get<DocListResponse>('/docs', { params: query })
+  const res = await http.get<DocListResponse>('/docs', { params: toHttpParams(query), ...REPEAT_ARRAY })
   return res.data
 }
 
 async function getFacetsHttp(query: DocListQuery): Promise<FacetsResponse> {
-  const res = await http.get<FacetsResponse>('/docs/facets', { params: query })
+  const res = await http.get<FacetsResponse>('/docs/facets', { params: toHttpParams(query), ...REPEAT_ARRAY })
   return res.data
 }
 

@@ -12,7 +12,7 @@
  */
 import { fileURLToPath } from 'node:url'
 
-import { runImport } from './run.js'
+import { runImport } from './run.ts'
 
 const DEFAULT_PDF_DIR = fileURLToPath(new URL('../../data/kb/', import.meta.url))
 const DEFAULT_OUT_FILE = fileURLToPath(new URL('../../data/kb-index.json', import.meta.url))
