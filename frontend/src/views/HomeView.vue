@@ -10,8 +10,10 @@
  *  5. 右下角嵌入官方 AI 问答窗口（访客免注册可问）
  *  6. 问答窗口连不上时显示降级提示
  */
-import { ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { getDocs } from '../api/docs'
+import HomeAskWidget from '../components/HomeAskWidget.vue'
 
 const router = useRouter()
 const keyword = ref('')
@@ -21,6 +23,59 @@ function onSearch(): void {
   const q = keyword.value.trim()
   router.push(q ? { path: '/shelf', query: { q } } : { path: '/shelf' })
 }
+
+/* ---------- 3. 已收录资料数量（动态取，禁止写死） ---------- */
+
+/** 取不到时为 null，界面显示占位「—」，不报错、不弹红字 */
+const docTotal = ref<number | null>(null)
+
+async function loadDocTotal(): Promise<void> {
+  try {
+    const { total } = await getDocs({ page: 1, pageSize: 1 })
+    docTotal.value = typeof total === 'number' ? total : null
+  } catch {
+    // 后端未就绪 / 接口失败：静默降级为「—」
+    docTotal.value = null
+  }
+}
+
+const totalText = computed(() => (docTotal.value === null ? '—' : String(docTotal.value)))
+
+/* ---------- 4. 示例问题（零废弃主题，本地文案常量） ---------- */
+
+const SAMPLE_QUESTIONS = [
+  '厨余垃圾怎么就地处理？',
+  '社区堆肥需要注意什么？',
+  '垃圾分类有哪些常见误区？',
+  '可回收物怎么分才准确？'
+]
+
+const widgetRef = ref<InstanceType<typeof HomeAskWidget> | null>(null)
+const widgetOpen = ref(false)
+/** 在途提问计数（并发时不能用布尔量，否则先完成的会误置为「不忙」） */
+const pendingCount = ref(0)
+const asking = computed(() => pendingCount.value > 0)
+
+/**
+ * 点击示例问题：送进问答窗口并自动发送。
+ * ⚠️ 这里**不做丢弃式加锁**——连点是用户预期行为，必须每条都送达。
+ *    串行与防丢由 useWidget 的串行队列负责（挂件 openWithQuery 不排队，
+ *    并发会被上游静默丢弃）。此处的计数仅用于按钮的忙碌态提示。
+ */
+async function onAskSample(question: string): Promise<void> {
+  pendingCount.value += 1
+  try {
+    await widgetRef.value?.askWith(question)
+  } catch {
+    // 降级提示由挂件面板内部统一呈现，这里不重复弹错
+  } finally {
+    pendingCount.value = Math.max(0, pendingCount.value - 1)
+  }
+}
+
+onMounted(() => {
+  void loadDocTotal()
+})
 </script>
 
 <template>
@@ -42,9 +97,31 @@ function onSearch(): void {
       <el-button type="primary" size="large" @click="onSearch">搜索</el-button>
     </div>
 
-    <!-- TODO(瑞泽): 示例问题（点击后自动填进问答窗口） -->
-    <!-- TODO(瑞泽): 已收录资料数量（动态取） -->
-    <!-- TODO(瑞泽): 右下角嵌入 AI 问答窗口 + 降级提示 -->
+    <!-- 3. 已收录资料数量（动态取，取不到显示「—」） -->
+    <p class="total-line">
+      已收录 <strong>{{ totalText }}</strong> 份资料
+    </p>
+
+    <!-- 4. 示例问题（点击后自动填进问答窗口并发送） -->
+    <div class="samples">
+      <span class="samples-label">可以这样问：</span>
+      <div class="samples-list">
+        <el-button
+          v-for="q in SAMPLE_QUESTIONS"
+          :key="q"
+          class="sample-chip"
+          plain
+          round
+          :disabled="asking"
+          @click="onAskSample(q)"
+        >
+          {{ q }}
+        </el-button>
+      </div>
+    </div>
+
+    <!-- 5 + 6. 右下角嵌入 AI 问答窗口 + 降级提示 -->
+    <HomeAskWidget ref="widgetRef" v-model:open="widgetOpen" />
   </section>
 </template>
 
@@ -66,6 +143,36 @@ h1 {
   display: flex;
   gap: 12px;
   max-width: 640px;
+}
+.total-line {
+  margin: 16px 0 0;
+  color: #4a5a4a;
+  font-size: 14px;
+}
+.total-line strong {
+  color: var(--zw-green);
+  font-size: 18px;
+  margin: 0 2px;
+}
+.samples {
+  margin-top: 28px;
+}
+.samples-label {
+  display: block;
+  color: #6b7a6b;
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+.samples-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.sample-chip {
+  white-space: normal;
+  height: auto;
+  padding: 8px 16px;
+  line-height: 1.5;
 }
 @media (max-width: 480px) {
   h1 {
