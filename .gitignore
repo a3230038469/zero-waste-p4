@@ -32,3 +32,10 @@ Thumbs.db
 # 临时
 .tmp/
 tmp/
+
+# 本地资料包：PDF 原件体积大（35 份约 60MB），不进仓库
+# 注意：同目录的 kb-index.json 与 README.md **要进**，前端靠索引开发
+backend/data/kb/
+
+# 埋点事件落库（每台机器各自的访客行为，属运行时数据；韶茹，2026-10-07）
+backend/data/track/
