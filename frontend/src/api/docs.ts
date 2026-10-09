@@ -12,7 +12,7 @@ import http from './http'
 import type { DocItem, DocListResponse, FacetItem, FacetsResponse } from './types'
 
 /** 接真实后端时改为 false（联调前必切，否则页面显示的是假数据） */
-const USE_MOCK = true
+const USE_MOCK = false
 
 /** 资料详情（对齐 GET /api/docs/:id「单份资料完整信息」，含正文） */
 export interface DocDetail extends DocItem {

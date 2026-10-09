@@ -10,7 +10,8 @@
  *  6. 分页：每页 20 条，底部
  *  7. 加载中显示骨架屏
  *
- * 数据走 src/api/docs.ts（当前假数据，结构对齐 GET /api/docs、/api/docs/facets）。
+ * 数据走 src/api/docs.ts → 后端 GET /api/docs、/api/docs/facets
+ * （本地演示时后端读知识库，606 份，带机构/年份/类型/领域标签）。
  * 首页搜索跳转 /shelf?q=xxx 时自动带入关键词。
  */
 import { computed, onMounted, ref, watch } from 'vue'
@@ -36,6 +37,17 @@ const facets = ref<FacetsResponse>({ types: [], orgs: [], years: [], tags: [] })
 
 const items = computed(() => list.value?.items ?? [])
 const total = computed(() => list.value?.total ?? 0)
+
+/**
+ * 类型标签：上面固定这几个排在前，知识库里实际还有的类型自动补在后面。
+ * 为什么不能只写死 —— 库里另有「研究实践报告」「各类标准」「国内政策法规」
+ * 「国际公约」「科学认知」等类型（合计 100 多份），写死就永远筛不到它们。
+ */
+const typeTabs = computed(() => {
+  const known = new Set(TYPE_TABS)
+  const extra = facets.value.types.map((t) => t.value).filter((t) => t && !known.has(t))
+  return [...TYPE_TABS, ...extra]
+})
 
 function buildQuery(): DocListQuery {
   return {
@@ -107,7 +119,7 @@ watch(
 
     <!-- 1. 类型标签切换 -->
     <el-tabs v-model="activeType" class="type-tabs" @tab-change="onFilterChange">
-      <el-tab-pane v-for="t in TYPE_TABS" :key="t" :label="t" :name="t" />
+      <el-tab-pane v-for="t in typeTabs" :key="t" :label="t" :name="t" />
     </el-tabs>
 
     <!-- 2. 筛选区 + 3. 搜索框 -->

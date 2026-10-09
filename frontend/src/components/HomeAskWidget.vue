@@ -1,71 +1,127 @@
 <script setup lang="ts">
 /**
- * 右下角 AI 问答窗口 —— 负责人：瑞泽（B07，救急版由协作 AI 实现）
+ * 右下角 AI 问答窗口 —— 负责人：瑞泽（B07）
  *
- * 用官方嵌入挂件承载对话（不自己写问答界面）；访客免注册可问。
- * 未就绪 / 连不上时显示明确降级提示，绝不出现「已就绪却点不开」。
- *
- * 对外只暴露 askWith(question)：首页示例问题点击后送进挂件并发送。
+ * 本地演示版（2026-10-08）改造说明：
+ *   原实现走 WeKnora 官方嵌入挂件，但挂件依赖的换钥匙接口 POST /api/embed/token
+ *   尚未实现（B08 空壳），导致窗口点开是空的。
+ *   现改为直连自建后端 POST /api/ask（SSE 流式逐字回吐），复用 api/ask.ts。
+ *   对外接口不变（askWith / v-model:open），父组件（首页）无需改动。
+ * 访客免注册可问。
  */
-import { computed, onMounted, watch } from 'vue'
-import { DEGRADED_MESSAGE, LOADING_MESSAGE, useWidget } from '../composables/useWidget'
+import { nextTick, ref, watch } from 'vue'
+
+import { askStream } from '../api/ask'
+
+interface ChatMessage {
+  role: 'user' | 'assistant'
+  text: string
+  /** 出错的气泡（额度/网络/引擎不可用），文案用警示色 */
+  failed?: boolean
+}
 
 const emit = defineEmits<{
   /** 状态变化，便于父组件联动（如禁用示例问题按钮） */
   (e: 'status-change', status: string): void
 }>()
 
-const { status, errorMessage, mount, ask } = useWidget()
-
 const panelOpen = defineModel<boolean>('open', { default: false })
 
-const statusText = computed(() => {
-  if (status.value === 'degraded') {
-    return errorMessage.value || DEGRADED_MESSAGE
-  }
-  if (status.value === 'loading') {
-    return LOADING_MESSAGE
-  }
-  return ''
-})
+const messages = ref<ChatMessage[]>([])
+const draft = ref('')
+const busy = ref(false)
+const bodyRef = ref<HTMLElement | null>(null)
+let controller: AbortController | null = null
 
-/** 面板可用（就绪）——loading 时给出行内提示，不做假的「已就绪」 */
-const isBusy = computed(() => status.value === 'loading')
+/** 空面板时的快捷问题（点了直接问） */
+const EXAMPLES = ['厨余垃圾怎么处理？', '什么是零废弃？', '社区堆肥需要注意什么？']
 
-/** 打开面板：首次展开时启动挂件（换钥匙 → 载 loader；mount 内部单飞） */
-async function openPanel(): Promise<void> {
+/**
+ * 知识库引用标签（<kb doc="…" chunk_id="…" kb_id="…" />）对读者太吵，
+ * 渲染时去掉；顺带压掉替换后留下的多余空行。
+ */
+const SOURCE_TAG = /<kb\s+doc="[^"]*"[^>]*\/?>/g
+function renderAnswer(text: string): string {
+  return text
+    .replace(SOURCE_TAG, '')
+    .replace(/[ \t]+$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+}
+
+function scrollToBottom(): void {
+  void nextTick(() => {
+    const el = bodyRef.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
+}
+
+/** 发一问：先落两个气泡，再把流里的 answer 逐字填进回复气泡 */
+async function send(question: string): Promise<void> {
+  const q = question.trim()
+  if (!q || busy.value) return
+
   panelOpen.value = true
-  if (status.value === 'idle') {
-    await mount()
+  draft.value = ''
+  messages.value.push({ role: 'user', text: q })
+  messages.value.push({ role: 'assistant', text: '' })
+  const idx = messages.value.length - 1
+  busy.value = true
+  scrollToBottom()
+
+  controller = new AbortController()
+  try {
+    await askStream({
+      query: q,
+      signal: controller.signal,
+      onEvent: (evt) => {
+        const msg = messages.value[idx]
+        if (!msg) return
+        if (evt.type === 'answer') {
+          msg.text += evt.content
+          scrollToBottom()
+        } else if (evt.type === 'error') {
+          msg.failed = true
+          msg.text = msg.text || evt.content || 'AI 暂时不可用'
+        }
+      }
+    })
+    const msg = messages.value[idx]
+    if (msg && !msg.text) {
+      msg.failed = true
+      msg.text = 'AI 没有返回内容，请稍后再试'
+    }
+  } catch (err) {
+    const msg = messages.value[idx]
+    if (msg) {
+      msg.failed = true
+      msg.text = err instanceof Error ? err.message : '请求失败，请稍后再试'
+    }
+  } finally {
+    busy.value = false
+    controller = null
+    scrollToBottom()
   }
+}
+
+/** 供父组件调用：首页示例问题点击后直接提问 */
+async function askWith(question: string): Promise<void> {
+  await send(question)
 }
 
 function togglePanel(): void {
-  if (panelOpen.value) {
-    panelOpen.value = false
-    return
-  }
-  void openPanel()
+  panelOpen.value = !panelOpen.value
 }
 
-/** 供父组件调用：把问题送进挂件（挂件未就绪时先启动，失败则降级） */
-async function askWith(question: string): Promise<void> {
-  const q = question.trim()
-  if (!q) {
-    return
+function onKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault()
+    void send(draft.value)
   }
-  panelOpen.value = true
-  await ask(q)
 }
 
 defineExpose({ askWith })
 
-watch(status, (s) => emit('status-change', s), { immediate: true })
-
-onMounted(() => {
-  // 预热：提前换钥匙，减少用户点击后的等待；失败静默（点开时才提示）
-  void mount()
-})
+watch(busy, (b) => emit('status-change', b ? 'loading' : 'ready'), { immediate: true })
 </script>
 
 <template>
@@ -78,32 +134,35 @@ onMounted(() => {
           <el-button link size="small" @click="panelOpen = false">收起</el-button>
         </header>
 
-        <p v-if="statusText" class="ask-status" :class="{ warn: status === 'degraded' }">
-          {{ statusText }}
-        </p>
+        <div ref="bodyRef" class="ask-body">
+          <p v-if="messages.length === 0" class="ask-hint">
+            问一句试试，比如「厨余垃圾怎么处理？」答案会从零废弃知识库里找。
+          </p>
 
-        <!--
-          官方挂件容器：loader 脚本会把跨源 iframe 渲染到 #zw-embed-mount。
-          注意：iframe 是跨源的，前端**无法**监听其内部加载失败事件，
-          因此降级判定只依据两个可观测信号：
-            ① 换钥匙失败 / 超时（8s）
-            ② loader 脚本 onerror 或 8s 未就绪
-        -->
-        <div class="ask-body">
-          <div v-if="status === 'ready'" id="zw-embed-mount" class="ask-mount"></div>
-          <div v-else class="ask-fallback">
-            <el-empty :image-size="72" :description="statusText || LOADING_MESSAGE" />
-            <el-button
-              v-if="status === 'degraded'"
-              type="primary"
-              plain
-              size="small"
-              :loading="isBusy"
-              @click="mount"
-            >
-              重试
-            </el-button>
+          <div v-for="(m, i) in messages" :key="i" class="msg" :class="m.role">
+            <div class="bubble" :class="{ failed: m.failed }">
+              <span v-if="m.role === 'assistant' && busy && !m.text" class="typing">正在查资料…</span>
+              <template v-else>{{ renderAnswer(m.text) }}</template>
+            </div>
           </div>
+        </div>
+
+        <div v-if="messages.length === 0" class="ask-examples">
+          <el-button v-for="q in EXAMPLES" :key="q" link size="small" @click="send(q)">
+            {{ q }}
+          </el-button>
+        </div>
+
+        <div class="ask-foot">
+          <el-input
+            v-model="draft"
+            placeholder="输入问题，回车发送"
+            :disabled="busy"
+            @keydown="onKeydown"
+          />
+          <el-button type="primary" :loading="busy" :disabled="!draft.trim()" @click="send(draft)">
+            发送
+          </el-button>
         </div>
       </section>
     </transition>
@@ -164,34 +223,59 @@ onMounted(() => {
   font-weight: 600;
   color: var(--zw-green);
 }
-.ask-status {
-  margin: 0;
-  padding: 8px 14px;
-  font-size: 13px;
-  color: #4a5a4a;
-  background: #f3f8f3;
-}
-.ask-status.warn {
-  color: #b26a00;
-  background: #fff7e6;
-}
 .ask-body {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 8px;
+  padding: 10px;
 }
-.ask-mount {
-  width: 100%;
-  height: 100%;
+.ask-hint {
+  margin: 4px 2px 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #7b8b7b;
 }
-.ask-fallback {
-  height: 100%;
+.msg {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  margin-bottom: 8px;
+}
+.msg.user {
+  justify-content: flex-end;
+}
+.bubble {
+  max-width: 86%;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #f3f8f3;
+  color: #24352a;
+}
+.msg.user .bubble {
+  background: var(--zw-green, #2e7d32);
+  color: #fff;
+}
+.bubble.failed {
+  background: #fff7e6;
+  color: #b26a00;
+}
+.typing {
+  color: #6b7d6b;
+}
+.ask-examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  padding: 0 12px 8px;
+  border-top: 1px solid #f4f8f4;
+}
+.ask-foot {
+  display: flex;
   gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid #eef4ee;
 }
 .pop-enter-active,
 .pop-leave-active {

@@ -26,6 +26,8 @@ onMounted(() => {
       <div class="auth-slot">
         <span v-if="user" class="greeting">{{ user.name }}，你好</span>
         <RouterLink v-else to="/auth">登录 / 注册</RouterLink>
+        <!-- 老师后台入口：刻意做得不显眼（公众看的是首页/书架），但让老师找得到 -->
+        <RouterLink to="/admin/knowledge" class="admin-link">管理</RouterLink>
       </div>
     </div>
   </header>
@@ -69,6 +71,16 @@ onMounted(() => {
 .greeting {
   color: #eaf5ea;
   white-space: nowrap;
+}
+/* 老师后台入口：比正常导航淡一档，不抢公众视线，但一直可见。
+   ⚠️ 选择器必须带 .auth-slot —— 否则被上面 `.auth-slot a` 的优先级压掉（实测踩过） */
+.auth-slot .admin-link {
+  margin-left: 14px;
+  font-size: 13px;
+  color: #cbe4cb;
+}
+.auth-slot .admin-link:hover {
+  color: #fff;
 }
 .links {
   display: flex;

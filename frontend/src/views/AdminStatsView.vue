@@ -155,6 +155,12 @@ onUnmounted(() => {
       <RouterLink to="/shelf" class="back">回到书架</RouterLink>
     </header>
 
+    <nav class="admin-nav">
+      <RouterLink to="/admin/knowledge">资料管理</RouterLink>
+      <RouterLink to="/admin/users">注册用户</RouterLink>
+      <RouterLink to="/admin/stats">数据看板</RouterLink>
+    </nav>
+
     <!-- 口令门 -->
     <el-card shadow="never" class="token-card">
       <div class="token-row">
@@ -340,6 +346,28 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+.admin-nav {
+  display: flex;
+  gap: 18px;
+  margin: 12px 0 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e6ece6;
+  font-size: 14px;
+}
+.admin-nav a {
+  color: #5f6f5f;
+  text-decoration: none;
+  padding: 2px 2px 6px;
+  border-bottom: 2px solid transparent;
+}
+.admin-nav a:hover {
+  color: #1f3a24;
+}
+.admin-nav a.router-link-active {
+  color: #1f3a24;
+  font-weight: 500;
+  border-bottom-color: #2e7d32;
 }
 .token-row {
   display: flex;

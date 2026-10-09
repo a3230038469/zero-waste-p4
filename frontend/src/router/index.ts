@@ -20,6 +20,10 @@ const router = createRouter({
     { path: '/auth', name: 'auth', component: () => import('../views/AuthView.vue') },
     // 韶茹：数据看板（POST /api/track + GET /api/track/stats 的配套页）
     { path: '/admin/stats', name: 'adminStats', component: () => import('../views/AdminStatsView.vue') },
+    // 本地演示：老师后台 · 资料管理（GET /api/admin/knowledge）
+    { path: '/admin/knowledge', name: 'adminKnowledge', component: () => import('../views/AdminKnowledgeView.vue') },
+    // 本地演示：老师后台 · 注册用户（GET /api/admin/users）
+    { path: '/admin/users', name: 'adminUsers', component: () => import('../views/AdminUsersView.vue') },
     { path: '/:pathMatch(.*)*', name: 'notFound', component: () => import('../views/NotFoundView.vue') }
   ],
   scrollBehavior() {
