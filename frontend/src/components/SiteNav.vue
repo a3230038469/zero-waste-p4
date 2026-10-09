@@ -2,13 +2,14 @@
 /**
  * 顶部导航 —— 负责人：丁梓柔（B04）
  * 站点名 + 导航链接 + 右上角登录态（GET /api/auth/me）
- * 未登录显示「登录 / 注册」，登录后显示「XX，你好」。
+ * 登录态三级：拿到用户信息 → 「XX，你好」；只有 token（用户信息暂取不到）→「已登录」；
+ * 都没有 → 「登录 / 注册」。
  * 手机窄屏：整体换行为两行（品牌+登录态 / 导航链接），不横滚、不错位。
  */
 import { onMounted } from 'vue'
 import { useAuth } from '../composables/useAuth'
 
-const { user, fetchMe } = useAuth()
+const { user, isLoggedIn, fetchMe } = useAuth()
 
 onMounted(() => {
   fetchMe()
@@ -25,6 +26,8 @@ onMounted(() => {
       </nav>
       <div class="auth-slot">
         <span v-if="user" class="greeting">{{ user.name }}，你好</span>
+        <!-- 有 token 但 /me 没取到用户信息：仍算已登录，别让用户以为登录没生效 -->
+        <span v-else-if="isLoggedIn" class="greeting">已登录</span>
         <RouterLink v-else to="/auth">登录 / 注册</RouterLink>
         <!-- 老师后台入口：刻意做得不显眼（公众看的是首页/书架），但让老师找得到 -->
         <RouterLink to="/admin/knowledge" class="admin-link">管理</RouterLink>
