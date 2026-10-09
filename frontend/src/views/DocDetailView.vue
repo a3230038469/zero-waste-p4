@@ -19,7 +19,7 @@ import { useAuth } from '../composables/useAuth'
 
 const route = useRoute()
 const router = useRouter()
-const { user, fetchMe } = useAuth()
+const { user, isLoggedIn, fetchMe } = useAuth()
 
 const loading = ref(false)
 const doc = ref<DocDetail | null>(null)
@@ -53,13 +53,15 @@ function contentParagraphs(content: string | null | undefined): string[] {
     .filter((p) => p.length > 0)
 }
 
-/** 登录校验：未登录跳登录页并带回跳地址 */
+/** 登录校验：未登录跳登录页并带回跳地址。
+ *  门槛只看 isLoggedIn（本地有 token 即算登录），不看 user：
+ *  云端 /me 可能取不回用户信息，若卡 user 会让已登录用户点不动下载/预览。 */
 async function requireLogin(): Promise<boolean> {
-  if (!user.value) {
-    // token 在但用户信息尚未拉取完成的情况，先补一次
-    await fetchMe()
-  }
-  if (user.value) {
+  if (isLoggedIn.value) {
+    // 用户信息还没拉过就顺手补一次（失败也不影响放行）
+    if (!user.value) {
+      await fetchMe()
+    }
     return true
   }
   router.push({ path: '/auth', query: { redirect: route.fullPath } })
