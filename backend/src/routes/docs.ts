@@ -143,8 +143,9 @@ function idOrder(doc: KbDocInternal): number {
 function sortDocs(docs: KbDocInternal[], sort: SortMode): KbDocInternal[] {
   const sorted = [...docs]
   if (sort === 'newest') {
-    // newest：按录入顺序倒序（新入库的排前面）
-    sorted.sort((a, b) => idOrder(b) - idOrder(a))
+    // newest：按入库时间倒序。引擎来源有 createdAt；本地索引没有时间戳，
+    // 回落到 id 数字后缀（k-35 → 35）。
+    sorted.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0) || idOrder(b) - idOrder(a))
   } else {
     // year_desc（默认）：年份新的在前，同年按录入顺序正序
     sorted.sort((a, b) => b.year - a.year || idOrder(a) - idOrder(b))

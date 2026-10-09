@@ -7,7 +7,7 @@
  *  2. 搜索框（回车跳 /shelf?q=xxx）
  *  3. 已收录数量（从接口动态取，不写死）
  *  4. 示例问题 3–6 条，点击自动填进问答窗口
- *  5. 右下角嵌入官方 AI 问答窗口（访客免注册可问）
+ *  5. 右下角 AI 问答窗口（直连后端流式问答，访客免注册可问）
  *  6. 问答窗口连不上时显示降级提示
  */
 import { computed, onMounted, ref } from 'vue'
@@ -59,8 +59,8 @@ const asking = computed(() => pendingCount.value > 0)
 /**
  * 点击示例问题：送进问答窗口并自动发送。
  * ⚠️ 这里**不做丢弃式加锁**——连点是用户预期行为，必须每条都送达。
- *    串行与防丢由 useWidget 的串行队列负责（挂件 openWithQuery 不排队，
- *    并发会被上游静默丢弃）。此处的计数仅用于按钮的忙碌态提示。
+ *    串行与防丢由问答窗口自己负责（同一时刻只放一条在飞，见 HomeAskWidget）。
+ *    此处的计数仅用于按钮的忙碌态提示。
  */
 async function onAskSample(question: string): Promise<void> {
   pendingCount.value += 1

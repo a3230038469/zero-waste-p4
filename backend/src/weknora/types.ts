@@ -23,10 +23,16 @@ export interface KbDocInternal extends KbDoc {
   sourceUrl: string
   /** 原始文件名 */
   fileName: string
-  /** 相对 backend/data 的路径 */
+  /** 相对 backend/data 的路径（引擎来源为引擎侧的 file_path，仅排障用） */
   filePath: string
   /** 元数据表里声明的大小，仅用于人工核对 */
   sizeDeclared: number | null
+  /**
+   * 入库时间（毫秒时间戳）。引擎来源有（created_at），本地索引没有。
+   * 用途：`sort=newest` 排序。引擎的 id 是 uuid，没有本地那种 k-35 数字后缀，
+   * 不能再用 id 反推顺序，必须靠这个字段。
+   */
+  createdAt?: number
 }
 
 /** 筛选项：一个枚举值 + 条数 */
@@ -80,8 +86,8 @@ export interface DocStream {
   stream: NodeJS.ReadableStream
 }
 
-/** 数据来源：engine = 真实引擎；local = 本地资料包（引擎密钥未到位时的 demo 通道） */
-export type EngineSource = 'engine' | 'local'
+/** 数据来源：engine = 真实引擎；local = 本地资料包（引擎密钥未到位时的 demo 通道）；snapshot = 云端演示版（读元数据快照，无原件/AI） */
+export type EngineSource = 'engine' | 'local' | 'snapshot'
 
 /** 问答临时钥匙 */
 export interface EmbedToken {

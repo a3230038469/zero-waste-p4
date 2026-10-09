@@ -24,6 +24,7 @@ import {
   type KbDocInternal
 } from './types.js'
 import { parseSseStream } from './sse.js'
+import { baseNameOf, unzipFirstEntry } from './zip.js'
 
 export * from './types.js'
 /** 流终止判断也要给路由层用（判 complete/stop/error，别用 done） */
@@ -46,6 +47,11 @@ function readEnv(name: string): string {
 
 /** 当前生效的数据来源 */
 export function getDataSource(): EngineSource {
+  // 显式开关优先：DOCS_SOURCE=local 时书架固定读本地索引（元数据齐），
+  // snapshot 时读云端演示快照（无原件、无 AI），问答仍可走引擎。
+  // 留空则按密钥是否齐全自动判断。
+  const override = readEnv('DOCS_SOURCE').toLowerCase()
+  if (override === 'local' || override === 'engine' || override === 'snapshot') return override
   return readEnv('WEKNORA_API_KEY') && readEnv('WEKNORA_KB_ID') ? 'engine' : 'local'
 }
 
@@ -136,8 +142,8 @@ export function loadLocalDocs(): KbDocInternal[] {
   localCache = items.map((raw, i) => toLocalDoc(raw, i + 1))
   console.log(
     `[weknora] 本地数据源已启用：${localCache.length} 份资料（${indexFile}）\n` +
-      '[weknora] 原因：未配置 WEKNORA_API_KEY / WEKNORA_KB_ID。' +
-      '配好密钥后自动切回真实引擎，无需改代码。'
+      '[weknora] 原因：DOCS_SOURCE=local 强制走本地，或 WEKNORA_API_KEY / WEKNORA_KB_ID 未配。' +
+      '要让书架也读引擎：.env 里把 DOCS_SOURCE 改成 engine（或删掉这行）并配好密钥。'
   )
   return localCache
 }
@@ -158,6 +164,42 @@ function localAbsPath(doc: KbDocInternal): string {
     )
   }
   return abs
+}
+
+/* ------------------------------------------------------------------ *
+ * 云端演示快照通道（DOCS_SOURCE=snapshot）
+ * ------------------------------------------------------------------ */
+
+let snapshotCache: KbDocInternal[] | null = null
+
+/** 读云端演示用的元数据快照（kb-snapshot.json，由引擎导出，无原件） */
+export function loadSnapshotDocs(): KbDocInternal[] {
+  if (snapshotCache) return snapshotCache
+
+  const snapshotFile = join(dataDir(), 'kb-snapshot.json')
+  if (!existsSync(snapshotFile)) {
+    throw new EngineError('SNAPSHOT_MISSING', `演示快照不存在：${snapshotFile}`, 503)
+  }
+
+  let parsed: KbIndexFile
+  try {
+    parsed = JSON.parse(readFileSync(snapshotFile, 'utf8')) as KbIndexFile
+  } catch {
+    throw new EngineError('SNAPSHOT_BROKEN', `演示快照不是合法 JSON：${snapshotFile}`, 500)
+  }
+
+  if (!Array.isArray(parsed.items)) {
+    throw new EngineError('SNAPSHOT_BROKEN', `演示快照缺 items 数组：${snapshotFile}`, 500)
+  }
+
+  snapshotCache = parsed.items.map((raw, i) => {
+    const doc = toLocalDoc(raw, i + 1)
+    // toLocalDoc 不认 createdAt（那是引擎来源的字段），快照里有，这里补上
+    const created = isRecord(raw) && typeof raw.createdAt === 'number' ? raw.createdAt : undefined
+    return created ? { ...doc, createdAt: created } : doc
+  })
+  console.log(`[weknora] 演示快照数据源已启用：${snapshotCache.length} 份资料（${snapshotFile}）`)
+  return snapshotCache
 }
 
 /* ------------------------------------------------------------------ *
@@ -250,11 +292,37 @@ function pickTags(source: Record<string, unknown>, keys: string[]): string[] {
 }
 
 /**
+ * 从引擎的 custom_metadata 里取一项，转成字符串。
+ *
+ * 业务元数据（发布机构 / 年份 / 类型 / 领域）存这里，由「元数据补录」写入：
+ *   {"org":"…","year":"2024","type":"研究报告","tags":"EPR"}
+ * 引擎限制：值只能是字符串/数字/布尔 —— 所以这里的 key 全用单数短名。
+ */
+function metaString(source: Record<string, unknown>, key: string): string {
+  const meta = source['custom_metadata']
+  if (!isRecord(meta)) return ''
+  const value = meta[key]
+  if (typeof value === 'string') return value.trim()
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  return ''
+}
+
+/** 引擎的时间字符串转毫秒。引擎带 6 位小数秒，JS 只认 3 位，先截断再解析。 */
+function parseEngineTime(value: unknown): number | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined
+  const normalized = value.replace(/(\.\d{3})\d+/, '$1')
+  const timestamp = Date.parse(normalized)
+  return Number.isFinite(timestamp) ? timestamp : undefined
+}
+
+/**
  * 把引擎返回的一条记录归一化成契约字段。
  *
- * ⚠️ 待真机联调：WeKnora v0.8.2 的文件列表字段名尚未在真机上核对过，
- * 这里按常见命名做了容错取值（见 docs/接口约定.md 第五节）。
- * 拿到真实回显后，把用不到的候选键删掉，只留实测通过的那一个。
+ * 字段来源（2026-10-08 真机核对通过）：
+ *   id / title / file_name / file_size / created_at —— 引擎原生字段
+ *   org / year / type / tags —— 引擎的 custom_metadata（元数据补录写入）
+ *
+ * ⚠️ 引擎另有一个 `metadata` 字段，存的是「处理配置」而不是业务元数据，别拿它当来源。
  */
 function toEngineDoc(raw: unknown): KbDocInternal {
   if (!isRecord(raw)) {
@@ -262,19 +330,21 @@ function toEngineDoc(raw: unknown): KbDocInternal {
   }
   const id = pickString(raw, ['id', 'knowledge_id', 'file_id'])
   const fileName = pickString(raw, ['file_name', 'filename', 'name', 'title'])
-  const size = pickNumber(raw, ['size', 'file_size'])
+  const size = pickNumber(raw, ['file_size', 'size'])
+  const yearValue = Number(metaString(raw, 'year'))
   return {
     id,
     title: pickString(raw, ['title', 'name', 'file_name']) || fileName,
-    org: pickString(raw, ['org', 'organization', 'publisher', 'source_org']) || '未标注',
-    year: pickNumber(raw, ['year', 'publish_year', 'published_year']),
-    type: pickString(raw, ['type', 'category', 'doc_type']) || '未分类',
-    tags: pickTags(raw, ['tags', 'topics', 'keywords']),
+    org: metaString(raw, 'org') || '未标注',
+    year: Number.isFinite(yearValue) && yearValue > 0 ? yearValue : 0,
+    type: metaString(raw, 'type') || '未分类',
+    tags: pickTags({ tags: metaString(raw, 'tags') }, ['tags']),
     size,
-    sourceUrl: pickString(raw, ['source_url', 'url', 'source']),
+    sourceUrl: pickString(raw, ['source_url', 'source']),
     fileName,
-    filePath: '',
-    sizeDeclared: size
+    filePath: pickString(raw, ['file_path']),
+    sizeDeclared: size,
+    createdAt: parseEngineTime(raw['created_at'])
   }
 }
 
@@ -302,11 +372,54 @@ async function engineJson(path: string, init?: RequestInit): Promise<unknown> {
  * B01 对外能力
  * ------------------------------------------------------------------ */
 
-/** 取知识库文件列表 */
+/** 引擎列表结果缓存时长：书架每次请求都拉 600+ 条太费，60 秒内复用同一份 */
+const ENGINE_LIST_TTL_MS = 60_000
+
+let engineListCache: { at: number; docs: KbDocInternal[] } | null = null
+
+/** 拉全量资料：引擎按页返回，这里翻页取完（上限 20 页 × 200 = 4000 条） */
+async function fetchEngineDocs(): Promise<KbDocInternal[]> {
+  const kbId = encodeURIComponent(engineKbId())
+  const PAGE_SIZE = 200
+  const all: KbDocInternal[] = []
+  for (let page = 1; page <= 20; page += 1) {
+    const payload = await engineJson(
+      `/api/v1/knowledge-bases/${kbId}/knowledge?page=${page}&page_size=${PAGE_SIZE}`
+    )
+    const rows = extractArray(payload)
+    if (rows.length === 0) break
+    for (const row of rows) all.push(toEngineDoc(row))
+    const total = isRecord(payload) ? pickNumber(payload, ['total']) : 0
+    if (total > 0 && all.length >= total) break
+  }
+  return all
+}
+
+/**
+ * 取知识库文件列表。
+ *
+ * ⚠️ 引擎的列表接口是 `/knowledge-bases/{id}/knowledge`。
+ * 不要用 `/knowledge-bases/{id}/files` —— 那是文件代理路由，需要 `file_path`
+ * 参数，用在这会 400（2026-10-08 实测）。
+ */
+/** 取知识库文件列表。 */
 export async function listFiles(): Promise<KbDocInternal[]> {
-  if (getDataSource() === 'local') return loadLocalDocs()
-  const payload = await engineJson(`/api/v1/knowledge-bases/${engineKbId()}/files`)
-  return extractArray(payload).map(toEngineDoc)
+  const source = getDataSource()
+  if (source === 'snapshot') return loadSnapshotDocs()
+  if (source === 'local') return loadLocalDocs()
+
+  if (engineListCache && Date.now() - engineListCache.at < ENGINE_LIST_TTL_MS) {
+    return engineListCache.docs
+  }
+  const docs = await fetchEngineDocs()
+  engineListCache = { at: Date.now(), docs }
+  console.log(`[weknora] 引擎数据源已启用：${docs.length} 份资料`)
+  return docs
+}
+
+/** 上传/删除资料后让列表缓存立刻失效，否则书架要等最多 60 秒才看得见变化 */
+export function invalidateEngineListCache(): void {
+  engineListCache = null
 }
 
 /**
@@ -343,12 +456,18 @@ export async function hybridSearch(query: string): Promise<KbDocInternal[]> {
 
 /** 按 id 取单份资料详情 */
 export async function getDoc(id: string): Promise<KbDocInternal> {
-  if (getDataSource() === 'local') {
-    const doc = loadLocalDocs().find((d) => d.id === id)
+  const source = getDataSource()
+  if (source === 'snapshot' || source === 'local') {
+    const pool = source === 'snapshot' ? loadSnapshotDocs() : loadLocalDocs()
+    const doc = pool.find((d) => d.id === id)
     if (!doc) throw new EngineError('DOC_NOT_FOUND', `没有这份资料：${id}`, 404)
     return doc
   }
-  return toEngineDoc(await engineJson(`/api/v1/knowledge/${encodeURIComponent(id)}`))
+  // 引擎单条接口外面包了一层：{"success":true,"data":{…}}，必须解开再归一化，
+  // 否则拿到的是外壳对象（id/title 全空）。2026-10-08 实测踩中。
+  const payload = await engineJson(`/api/v1/knowledge/${encodeURIComponent(id)}`)
+  const raw = isRecord(payload) && isRecord(payload['data']) ? payload['data'] : payload
+  return toEngineDoc(raw)
 }
 
 /**
@@ -356,8 +475,17 @@ export async function getDoc(id: string): Promise<KbDocInternal> {
  *
  * mode=inline 给在线预览，mode=attachment 给下载；本地与引擎两种来源统一成 DocStream。
  */
-export async function getFileStream(id: string, mode: 'inline' | 'attachment'): Promise<DocStream> {
+export async function getFileStream(id: string, _mode: 'inline' | 'attachment'): Promise<DocStream> {
   const doc = await getDoc(id)
+
+  // 云端演示版：快照里只有目录信息，没有原件 —— 明确告知，不假装下载成功
+  if (getDataSource() === 'snapshot') {
+    throw new EngineError(
+      'SNAPSHOT_NO_FILE',
+      '云端演示版只提供资料目录，原件下载与在线预览请在正式版使用',
+      404
+    )
+  }
 
   if (getDataSource() === 'local') {
     return {
@@ -368,17 +496,32 @@ export async function getFileStream(id: string, mode: 'inline' | 'attachment'): 
     }
   }
 
-  const suffix = mode === 'attachment' ? 'download' : 'preview'
-  const res = await engineFetch(`/api/v1/knowledge/${encodeURIComponent(id)}/${suffix}`)
-  if (!res.body) {
-    throw new EngineError('ENGINE_EMPTY_BODY', '引擎返回了空文件流', 502)
+  // 引擎没有「取单份原件」的接口（`/knowledge/{id}/preview|download` 不存在，
+  // 2026-10-08 实测 404）。它只有批量下载，返回一个 zip：
+  //   POST /api/v1/knowledge-bases/{id}/knowledge/batch-download  {ids:[…]}  → application/zip
+  // 所以这里下这一份、把 zip 拆开、按普通文件流出去，上层（预览/下载）无感。
+  const kbId = encodeURIComponent(engineKbId())
+  const res = await engineFetch(`/api/v1/knowledge-bases/${kbId}/knowledge/batch-download`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids: [id] })
+  })
+  const zipBuf = Buffer.from(await res.arrayBuffer())
+
+  let entry: { name: string; data: Buffer }
+  try {
+    entry = unzipFirstEntry(zipBuf)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : '未知错误'
+    throw new EngineError('ENGINE_BAD_PAYLOAD', `引擎下载包解不开：${message}`, 502)
   }
-  const declared = Number(res.headers.get('content-length') ?? '')
+
+  const fileName = doc.fileName || baseNameOf(entry.name)
   return {
-    fileName: doc.fileName || `${id}.pdf`,
-    size: Number.isFinite(declared) && declared > 0 ? declared : doc.size,
-    contentType: res.headers.get('content-type') ?? guessContentType(doc.fileName),
-    stream: Readable.fromWeb(res.body)
+    fileName,
+    size: entry.data.length,
+    contentType: guessContentType(fileName),
+    stream: Readable.from(entry.data)
   }
 }
 
@@ -444,7 +587,7 @@ function requireEngineApiKey(): string {
   if (!apiKey) {
     throw new EngineError(
       'ENGINE_NOT_CONFIGURED',
-      '问答引擎尚未配置（缺 WEKNORA_API_KEY），AI 暂时不可用',
+      'AI 问答暂未开放（当前为演示版，引擎未接入）',
       503
     )
   }
@@ -456,6 +599,11 @@ function requireEngineApiKey(): string {
  * **会话 id 只在服务端持有，绝不返回给前端**（前端只发问题、只收流）。
  */
 export async function createAskSession(title: string): Promise<string> {
+  // 云端演示版：ask 流程是「先建会话、再问答」，所以必须在建会话这里就拦，
+  // 否则队友会看到「未配置 WEKNORA_API_KEY」这种内部错误文案（2026-10-08 实测踩中）。
+  if (getDataSource() === 'snapshot') {
+    throw new EngineError('ENGINE_NOT_CONFIGURED', 'AI 问答暂未开放（当前为演示版，引擎未接入）', 503)
+  }
   const payload = await engineJson('/api/v1/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -478,6 +626,11 @@ export async function askKnowledgeBase(params: {
   /** 外部取消（客户端断开）——真正透传给 fetch，让引擎侧也停下来 */
   signal?: AbortSignal
 }): Promise<AsyncGenerator<AskEvent, void, void>> {
+  // 云端演示版：快照数据源没有引擎可问 —— 不管密钥环境如何，一律友好拒绝。
+  // （2026-10-08 实测：某些环境下密钥检查拦不住，问答会以诡异方式落到本地引擎上。）
+  if (getDataSource() === 'snapshot') {
+    throw new EngineError('ENGINE_NOT_CONFIGURED', 'AI 问答暂未开放（当前为演示版，引擎未接入）', 503)
+  }
   const apiKey = requireEngineApiKey()
   const kbIds =
     params.knowledgeBaseIds && params.knowledgeBaseIds.length > 0
@@ -565,7 +718,13 @@ function guessContentType(fileName: string): string {
   return CONTENT_TYPES[fileName.slice(dot).toLowerCase()] ?? 'application/octet-stream'
 }
 
-/** 下载文件名：契约要求「年份-机构-标题」 */
+/**
+ * 下载文件名：契约要求「年份-机构-标题」。
+ *
+ * ⚠️ 标题本身就是文件名（多半已带扩展名），不能无条件再拼 `.pdf` ——
+ * 否则会得到 `xxx.pdf.pdf`（2026-10-08 实测踩过）。这里保留原扩展名，
+ * 没有扩展名时才补 `.pdf`。
+ */
 export function buildDownloadName(doc: { year: number; org: string; title: string }): string {
   const clean = (text: string): string =>
     text
@@ -573,7 +732,11 @@ export function buildDownloadName(doc: { year: number; org: string; title: strin
       .replace(/\s+/g, ' ')
       .trim()
   const year = doc.year > 0 ? String(doc.year) : '年份待补'
-  return `${year}-${clean(doc.org) || '机构待补'}-${clean(doc.title) || '未命名'}.pdf`
+  const source = clean(doc.title) || '未命名'
+  const dot = source.lastIndexOf('.')
+  const stem = dot > 0 ? source.slice(0, dot) : source
+  const ext = dot > 0 ? source.slice(dot) : '.pdf'
+  return `${year}-${clean(doc.org) || '机构待补'}-${stem}${ext}`
 }
 
 /** 组装 Content-Disposition，中文名走 RFC 5987，避免浏览器乱码 */

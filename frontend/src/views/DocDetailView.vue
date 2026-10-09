@@ -2,7 +2,7 @@
 /**
  * 资料详情页 —— 负责人：丁梓柔（B06）
  *
- *  1. 按路由参数 :id 拉取详情（当前假数据，结构对齐 GET /api/docs/:id）
+ *  1. 按路由参数 :id 拉取详情（走 GET /api/docs/:id）
  *  2. 展示：标题 / 机构 / 年份 / 类型 / 标签 / 正文
  *  3. 返回书架按钮；loading；文档不存在 → 404
  *  4. 在线预览 PDF（超过 20MB 提示「文件较大，建议下载后查看」）
@@ -45,9 +45,9 @@ function goShelf(): void {
   router.push('/shelf')
 }
 
-/** 正文按段落渲染 */
-function contentParagraphs(content: string): string[] {
-  return content
+/** 正文按段落渲染。注意：本地资料模式下详情接口不返回 content，必须兜底，否则整页崩 */
+function contentParagraphs(content: string | null | undefined): string[] {
+  return (content ?? '')
     .split(/\n+/)
     .map((p) => p.trim())
     .filter((p) => p.length > 0)
@@ -180,6 +180,11 @@ watch(
 
       <div class="doc-content">
         <p v-for="(p, i) in contentParagraphs(doc.content)" :key="i">{{ p }}</p>
+        <el-empty
+          v-if="contentParagraphs(doc.content).length === 0"
+          :image-size="60"
+          description="这份资料没有内置正文，可点上方「下载原件」或「在线预览」查看"
+        />
       </div>
 
       <!-- PDF 在线预览 -->
