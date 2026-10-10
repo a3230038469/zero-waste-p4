@@ -1,11 +1,13 @@
 /**
  * 路由 —— 负责人：丁梓柔（B04）
- * 页面：首页 / 书架 / 资料详情 / 注册登录 /（韶茹加的）数据看板
+ * 页面：首页 / 资料库 / 数据概览 / 关于项目 / 资料详情 / 注册登录 /（后台）
  *
- * ⚠️ 本文件被两人动过：
+ * ⚠️ 本文件被三人动过：
  *   - 丁梓柔：B04 四个页面 + 404
  *   - 韶茹：`/admin/stats` 数据看板路由 + 一处 PV 埋点（B03 埋点统计配套，2026-10-07）
  *     如需回退，删掉带「韶茹」注释的这几行即可，不影响其余路由。
+ *   - 对外展示站改造（2026-10-10）：新增 `/insights` 数据概览、`/about` 关于项目。
+ *     这两个页面的内容**全部来自真实数据与已核事实**，没有一段是编的（见页面内注释）。
  */
 import { createRouter, createWebHistory } from 'vue-router'
 
@@ -16,6 +18,8 @@ const router = createRouter({
   routes: [
     { path: '/', name: 'home', component: () => import('../views/HomeView.vue') },
     { path: '/shelf', name: 'shelf', component: () => import('../views/ShelfView.vue') },
+    { path: '/insights', name: 'insights', component: () => import('../views/InsightsView.vue') },
+    { path: '/about', name: 'about', component: () => import('../views/AboutView.vue') },
     { path: '/doc/:id', name: 'doc', component: () => import('../views/DocDetailView.vue') },
     { path: '/auth', name: 'auth', component: () => import('../views/AuthView.vue') },
     // 韶茹：数据看板（POST /api/track + GET /api/track/stats 的配套页）
@@ -26,7 +30,9 @@ const router = createRouter({
     { path: '/admin/users', name: 'adminUsers', component: () => import('../views/AdminUsersView.vue') },
     { path: '/:pathMatch(.*)*', name: 'notFound', component: () => import('../views/NotFoundView.vue') }
   ],
-  scrollBehavior() {
+  scrollBehavior(to) {
+    // 带锚点的页内跳转（如 /about#data）落在对应区块，其余一律回顶部
+    if (to.hash) return { el: to.hash, behavior: 'smooth', top: 80 }
     return { top: 0 }
   }
 })

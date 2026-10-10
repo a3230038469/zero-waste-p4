@@ -1,0 +1,201 @@
+/**
+ * 全站基础样式与设计令牌
+ *
+ * 定位：这份文件管「对外展示站」的整体观感（配色、留白、卡片、字号层级），
+ * 页面里的 scoped 样式只管各自版式，公共的东西一律写在这里，避免每个页面各写一套。
+ *
+ * 配色沿项目既定的「零废弃绿」，但把层级拉开：
+ *   深绿 = 标题与主色；薄荷 = 区块底；琥珀 = 强调与数据高亮。
+ */
+
+:root {
+  /* —— 主色（同时覆盖 Element Plus 的 primary，按钮/链接自动跟着走）—— */
+  --zw-green: #2e7d32;
+  --zw-green-deep: #1b5e20;
+  --zw-green-soft: #66bb6a;
+  --zw-green-ink: #12331a;
+  --zw-mint: #e9f3e9;
+  --zw-mint-2: #f2f8f2;
+
+  /* —— 辅助色 —— */
+  --zw-amber: #c8871f;
+  --zw-amber-soft: #fdf3e0;
+  --zw-teal: #2b7a78;
+  --zw-teal-soft: #e6f2f1;
+
+  /* —— 文字 —— */
+  --zw-ink: #16241a;
+  --zw-text: #2c3a2f;
+  --zw-muted: #66786a;
+  --zw-faint: #93a396;
+
+  /* —— 面 —— */
+  --zw-bg: #f4f8f4;
+  --zw-surface: #ffffff;
+  --zw-line: #e1ebe1;
+  --zw-line-strong: #cfe0cf;
+
+  /* —— 形 —— */
+  --zw-radius-sm: 8px;
+  --zw-radius: 14px;
+  --zw-radius-lg: 22px;
+  --zw-shadow-sm: 0 1px 2px rgba(22, 36, 26, 0.05);
+  --zw-shadow: 0 6px 20px rgba(22, 36, 26, 0.07);
+  --zw-shadow-lg: 0 18px 48px rgba(22, 36, 26, 0.12);
+  --zw-max: 1160px;
+
+  /* —— Element Plus 主色对齐 —— */
+  --el-color-primary: #2e7d32;
+  --el-color-primary-light-3: #6ca46e;
+  --el-color-primary-light-5: #96be98;
+  --el-color-primary-light-7: #c0d8c1;
+  --el-color-primary-light-8: #d5e4d6;
+  --el-color-primary-light-9: #eaf0ea;
+  --el-color-primary-dark-2: #256428;
+  --el-border-radius-base: 10px;
+  --el-font-family: 'PingFang SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  font-family: 'PingFang SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+  color: var(--zw-text);
+  background: var(--zw-bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+a {
+  color: var(--zw-green);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  color: var(--zw-ink);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* ------------------------------------------------------------------ *
+ * 版心
+ * ------------------------------------------------------------------ */
+
+.zw-container {
+  max-width: var(--zw-max);
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+.zw-section {
+  padding: 56px 0;
+}
+
+.zw-section--tight {
+  padding: 32px 0;
+}
+
+/* 区块小标题（英文眉标 + 中文主标题 + 一句引言） */
+.zw-eyebrow {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--zw-green);
+  background: var(--zw-mint);
+  border-radius: 999px;
+  padding: 4px 12px;
+  margin-bottom: 14px;
+}
+
+.zw-h2 {
+  font-size: 26px;
+  margin: 0 0 10px;
+}
+
+.zw-sub {
+  color: var(--zw-muted);
+  font-size: 15px;
+  line-height: 1.8;
+  margin: 0;
+}
+
+/* ------------------------------------------------------------------ *
+ * 卡片
+ * ------------------------------------------------------------------ */
+
+.zw-card {
+  background: var(--zw-surface);
+  border: 1px solid var(--zw-line);
+  border-radius: var(--zw-radius);
+  box-shadow: var(--zw-shadow-sm);
+}
+
+.zw-card--pad {
+  padding: 20px 22px;
+}
+
+/* № 序号的等宽数字，用于统计数字 */
+.zw-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* ------------------------------------------------------------------ *
+ * 过渡
+ * ------------------------------------------------------------------ */
+
+.fade-slide-enter-active,
+.fade-slide-leave-active {
+  transition:
+    opacity 0.25s ease,
+    transform 0.25s ease;
+}
+
+.fade-slide-enter-from {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.fade-slide-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+/* ------------------------------------------------------------------ *
+ * 无障碍：尊重「减弱动态效果」
+ * ------------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .zw-section {
+    padding: 36px 0;
+  }
+
+  .zw-h2 {
+    font-size: 22px;
+  }
+}

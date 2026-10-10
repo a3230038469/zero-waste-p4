@@ -25,14 +25,17 @@ npm run dev:frontend   # 前端 http://localhost:5173
 
 ```bash
 curl http://localhost:4000/health   # 期望 {"ok":true}
-# 浏览器打开 http://localhost:5173  期望看到占位页
+# 浏览器打开 http://localhost:5173  期望看到首页
 ```
+
+> 只想起一个进程也行：`npm run build` 之后，后端会托管 `frontend/dist`，**4000 端口就是整站**。
 
 质量关（提交前必须通过）：
 
 ```bash
 npm run lint       # 要求 0 error
 npm run typecheck  # 类型检查
+npm run verify     # 上面两条一起跑
 ```
 
 ---
@@ -54,16 +57,24 @@ npm run typecheck  # 类型检查
 ```
 ├─ frontend/                # 前端（Vue3 + TS）
 │  └─ src/
-│     ├─ views/             # 页面：Home / Shelf / DocDetail / Auth
-│     ├─ components/        # 组件：SiteNav 等
+│     ├─ views/             # 页面：Home 首页 / Shelf 资料库 / Insights 数据概览
+│     │                     #       About 关于项目 / DocDetail 详情 / Auth 登录注册
+│     ├─ components/        # 组件：SiteNav 导航 / SiteFooter 页脚 / DocCard 资料卡片
+│     │                     #       HomeAskWidget 问答窗口 / MouseGlow 鼠标光效
+│     ├─ styles/            # global.css：全站设计令牌与公共样式
+│     ├─ utils/             # format.ts：体积 / 年份 / 大数字的统一格式化
 │     ├─ router/            # 路由
-│     └─ api/               # 统一请求封装
+│     └─ api/               # 统一请求封装（docs / overview / auth / ask / track）
 ├─ backend/                 # 后端（Express + TS）
+│  ├─ data/                 # kb-index.json（书架数据）、kb/（原件，已 gitignore）、
+│  │                        # kb-duplicates.json（重复内容标记）、meta/（元数据）
 │  └─ src/
 │     ├─ routes/            # ★ 按人分文件，见下
 │     │  ├─ docs.ts         # 归韶茹：资料列表/筛选/详情/预览/下载
+│     │  ├─ overview.ts     # 新增：GET /api/overview 整库概览（对外展示站用）
 │     │  ├─ auth.ts         # 归月月：注册/登录/当前用户
 │     │  └─ embed.ts        # 归韶茹：问答窗口钥匙
+│     ├─ data/              # duplicates.ts：重复内容标记的读取层
 │     ├─ weknora/           # 引擎对接层（归韶茹）
 │     └─ middleware/        # 中间件
 ├─ docs/                    # 约定与清单（AI 读这个）

@@ -8,8 +8,7 @@
  * 口径：所有操作都由后端代理 WeKnora 引擎，前端永不直连引擎（铁律 2）；
  *       本文件不改 docs.ts / auth.ts / track.ts 的任何既有行为。
  *
- * 已实现：列出资料、上传资料。
- * 待做：删除资料。
+ * 已实现：列出资料、上传资料、删除资料、查看注册用户（T1 三项已补齐）。
  */
 import { PrismaClient } from '@prisma/client'
 import express, { Router, type NextFunction, type Request, type Response } from 'express'

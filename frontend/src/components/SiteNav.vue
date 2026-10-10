@@ -1,36 +1,78 @@
 <script setup lang="ts">
 /**
- * 顶部导航 —— 负责人：丁梓柔（B04）
- * 站点名 + 导航链接 + 右上角登录态（GET /api/auth/me）
- * 登录态三级：拿到用户信息 → 「XX，你好」；只有 token（用户信息暂取不到）→「已登录」；
- * 都没有 → 「登录 / 注册」。
- * 手机窄屏：整体换行为两行（品牌+登录态 / 导航链接），不横滚、不错位。
+ * 顶部导航 —— 对外展示站版（2026-10-10 改版）
+ *
+ * 改动要点：
+ *   1. 导航项从「首页 / 书架」扩到四页：首页 / 资料库 / 数据概览 / 关于项目。
+ *      对外展示站要让访问者一眼看懂「这里有什么」，「书架」这种内部叫法改成「资料库」。
+ *   2. 深绿实心条 → 半透明磨砂条：内容才是主角，导航不该压住页面。
+ *   3. 补上**退出登录**。此前登录成功后没有任何退出入口，注册过的用户只能清浏览器缓存 ——
+ *      这在一个对外开的站点上是硬伤。
+ *   4. 「管理」入口从导航条移到页脚（见 SiteFooter）：公众站不该把内部后台摆在主航道上，
+ *      但仍留在页脚让老师找得到。
  */
 import { onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
 
-const { user, isLoggedIn, fetchMe } = useAuth()
+const router = useRouter()
+const { user, isLoggedIn, fetchMe, logout } = useAuth()
+
+const NAV = [
+  { to: '/', label: '首页', exact: true },
+  { to: '/shelf', label: '资料库', exact: false },
+  { to: '/insights', label: '数据概览', exact: false },
+  { to: '/about', label: '关于项目', exact: false }
+]
+
+function onLogout(): void {
+  logout()
+  void router.push('/')
+}
 
 onMounted(() => {
-  fetchMe()
+  void fetchMe()
 })
 </script>
 
 <template>
   <header class="site-nav">
-    <div class="inner">
-      <RouterLink to="/" class="brand">零废弃知识库</RouterLink>
-      <nav class="links">
-        <RouterLink to="/">首页</RouterLink>
-        <RouterLink to="/shelf">书架</RouterLink>
+    <div class="zw-container inner">
+      <RouterLink to="/" class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M12 21c5-2.5 8-6.6 8-11V5.8L12 3 4 5.8V10c0 4.4 3 8.5 8 11Z" stroke-linejoin="round" />
+            <path d="M9.2 12.2l2.1 2.1 3.9-4.2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </span>
+        <span class="brand-text">
+          <strong>零废弃知识库</strong>
+          <em>六尺巷基金会</em>
+        </span>
+      </RouterLink>
+
+      <nav class="links" aria-label="主导航">
+        <RouterLink
+          v-for="item in NAV"
+          :key="item.to"
+          :to="item.to"
+          class="nav-link"
+          :class="{ 'is-current': item.exact ? $route.path === item.to : $route.path.startsWith(item.to) }"
+        >
+          {{ item.label }}
+        </RouterLink>
       </nav>
+
       <div class="auth-slot">
-        <span v-if="user" class="greeting">{{ user.name }}，你好</span>
-        <!-- 有 token 但 /me 没取到用户信息：仍算已登录，别让用户以为登录没生效 -->
-        <span v-else-if="isLoggedIn" class="greeting">已登录</span>
-        <RouterLink v-else to="/auth">登录 / 注册</RouterLink>
-        <!-- 老师后台入口：刻意做得不显眼（公众看的是首页/书架），但让老师找得到 -->
-        <RouterLink to="/admin/knowledge" class="admin-link">管理</RouterLink>
+        <template v-if="user">
+          <span class="greeting">{{ user.name }}，你好</span>
+          <button type="button" class="text-btn" @click="onLogout">退出</button>
+        </template>
+        <template v-else-if="isLoggedIn">
+          <span class="greeting">已登录</span>
+          <button type="button" class="text-btn" @click="onLogout">退出</button>
+        </template>
+        <RouterLink v-else to="/auth" class="login-link">登录 / 注册</RouterLink>
       </div>
     </div>
   </header>
@@ -38,89 +80,162 @@ onMounted(() => {
 
 <style scoped>
 .site-nav {
-  background: var(--zw-green);
-  color: #fff;
-  /* 窄屏下内容不出头 */
-  overflow-x: hidden;
-}
-.inner {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 12px 16px;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 24px;
-}
-.brand {
-  font-weight: 700;
-  font-size: 18px;
-  color: #fff;
-  text-decoration: none;
-  white-space: nowrap;
-}
-.auth-slot {
-  margin-left: auto;
-  font-size: 15px;
-}
-.auth-slot a {
-  color: #fff;
-  text-decoration: none;
-  white-space: nowrap;
-}
-.auth-slot a:hover {
-  text-decoration: underline;
-}
-.greeting {
-  color: #eaf5ea;
-  white-space: nowrap;
-}
-/* 老师后台入口：比正常导航淡一档，不抢公众视线，但一直可见。
-   ⚠️ 选择器必须带 .auth-slot —— 否则被上面 `.auth-slot a` 的优先级压掉（实测踩过） */
-.auth-slot .admin-link {
-  margin-left: 14px;
-  font-size: 13px;
-  color: #cbe4cb;
-}
-.auth-slot .admin-link:hover {
-  color: #fff;
-}
-.links {
-  display: flex;
-  gap: 16px;
-}
-.links a {
-  color: #eaf5ea;
-  text-decoration: none;
-  white-space: nowrap;
-}
-.links a:hover {
-  color: #fff;
-}
-/* 当前页对应的导航链接高亮 */
-.links a.router-link-active {
-  color: #fff;
-  font-weight: 600;
-  border-bottom: 2px solid #fff;
-  padding-bottom: 2px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: saturate(1.4) blur(12px);
+  border-bottom: 1px solid var(--zw-line);
 }
 
-/* 手机窄屏：第一行 = 品牌 + 登录态，第二行 = 导航链接 */
-@media (max-width: 480px) {
+.inner {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  min-height: 64px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--zw-ink);
+  flex-shrink: 0;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  color: #fff;
+  background: linear-gradient(140deg, var(--zw-green), var(--zw-green-deep));
+  box-shadow: 0 4px 12px rgba(46, 125, 50, 0.28);
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.brand-text strong {
+  font-size: 16px;
+  letter-spacing: 0.01em;
+}
+
+.brand-text em {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--zw-muted);
+  letter-spacing: 0.08em;
+}
+
+.links {
+  display: flex;
+  gap: 4px;
+  margin-left: 12px;
+}
+
+.nav-link {
+  position: relative;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 15px;
+  color: var(--zw-text);
+  text-decoration: none;
+  transition:
+    color 0.18s ease,
+    background 0.18s ease;
+}
+
+.nav-link:hover {
+  color: var(--zw-green-deep);
+  background: var(--zw-mint-2);
+}
+
+.nav-link.is-current {
+  color: var(--zw-green-deep);
+  font-weight: 600;
+  background: var(--zw-mint);
+}
+
+.auth-slot {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.greeting {
+  color: var(--zw-muted);
+}
+
+.login-link {
+  color: var(--zw-green-deep);
+  text-decoration: none;
+  font-weight: 600;
+  padding: 7px 16px;
+  border: 1px solid var(--zw-line-strong);
+  border-radius: 999px;
+  background: #fff;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.login-link:hover {
+  border-color: var(--zw-green);
+  box-shadow: 0 4px 14px rgba(46, 125, 50, 0.14);
+}
+
+.text-btn {
+  border: 0;
+  background: none;
+  padding: 4px 2px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--zw-muted);
+  cursor: pointer;
+}
+
+.text-btn:hover {
+  color: var(--zw-green-deep);
+  text-decoration: underline;
+}
+
+/* 窄屏：品牌与登录态一行，导航换到第二行横向可滚，不挤压、不换行成柱状 */
+@media (max-width: 720px) {
   .inner {
-    gap: 6px 12px;
-    padding: 10px 12px;
+    flex-wrap: wrap;
+    row-gap: 4px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    min-height: 0;
   }
-  .brand {
-    font-size: 15px;
+
+  .brand-text em {
+    display: none;
   }
+
   .links {
     order: 3;
     flex-basis: 100%;
-    gap: 14px;
-    font-size: 14px;
+    margin-left: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
-  .auth-slot {
+
+  .links::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav-link {
+    padding: 6px 12px;
     font-size: 14px;
   }
 }

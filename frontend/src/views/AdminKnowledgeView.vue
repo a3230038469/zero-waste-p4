@@ -5,8 +5,9 @@
  * 路由：/admin/knowledge
  * 数据源：GET /api/admin/knowledge（需请求头 X-Admin-Token）
  *
- * 已接：列出全部资料、上传新资料（上传后引擎在后台解析，状态先变「处理中」）。
- * 全部已接：列出全部资料、上传（可一并填标签）、删除、下载。
+ * 已接：列出全部资料、上传（可一并填标签）、删除、下载。
+ *   上传后引擎在后台解析，状态先显示「处理中」。
+ *   删除成功后延迟 3 秒再刷新 —— 引擎删除有几秒延迟，列表会短暂仍返回它。
  */
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'

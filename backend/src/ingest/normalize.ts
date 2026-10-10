@@ -93,7 +93,14 @@ export function toTags(value: unknown): string[] {
   return []
 }
 
-/** 字段取值：非字符串/空串一律给兜底值，且把问题记进 warnings */
+/**
+ * 字段取值：非字符串/空串一律给兜底值，且把问题记进 warnings。
+ *
+ * 2026-10-10 补：区分「字段**缺失**」与「字段**明确为空**」。
+ * 真实台账（六尺巷 260929）里 source_url 一列压根没有，元数据侧显式写成
+ * "" 表示「已确认没有来源链接」。原先两种情况都告警，会刷出 617 条同质
+ * 告警把真问题淹掉。现在只有**键不存在**才告警。
+ */
 export function readField(
   raw: RawMetaRow,
   key: keyof RawMetaRow,
@@ -104,7 +111,9 @@ export function readField(
   const value = raw[key]
   if (typeof value === 'string' && value.trim() !== '') return value.trim()
   if (typeof value === 'number' && Number.isFinite(value)) return String(value)
-  warnings.push(`第 ${rowNumber} 行缺字段 ${String(key)}，已回落为「${fallback}」`)
+  if (!(key in raw)) {
+    warnings.push(`第 ${rowNumber} 行缺字段 ${String(key)}，已回落为「${fallback}」`)
+  }
   return fallback
 }
 

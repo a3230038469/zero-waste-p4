@@ -6,6 +6,10 @@
  *
  * 追加记录（韶茹，2026-10-07）：新增 /api/ask（SSE 流式问答）与 /api/track（埋点+看板）
  * 两条挂载，均未触碰已有路由的路径与行为。要回退就删掉带「韶茹」注释的两行。
+ *
+ * 追加记录（巡检，2026-10-10）：把地基自带的 middleware/error.ts 挂到路由链末尾
+ * （此前从未挂载，未匹配路径回的是 HTML 404）。要回退就删掉 `app.use(notFound)` 与
+ * `app.use(errorHandler)` 两行及其上方注释。
  */
 import express from 'express'
 import cors from 'cors'
@@ -21,6 +25,8 @@ import healthRouter from './routes/health.js'
 import askRouter from './routes/ask.js' // 韶茹
 import trackRouter from './routes/track.js' // 韶茹
 import adminRouter from './routes/admin.js' // 本地演示：老师后台（管理资料）
+import overviewRouter from './routes/overview.js' // 对外展示站：整库数据概览
+import { errorHandler, notFound } from './middleware/error.js' // 地基自带（2026-10-10 起真正挂上）
 
 // 配置来源：backend/.env（引擎密钥、数据源开关 DOCS_SOURCE 都从这里读）
 dotenv.config()
@@ -41,6 +47,7 @@ app.use('/api/embed', embedRouter) // 韶茹
 app.use('/api/ask', askRouter) // 韶茹（B07 问答窗口用）
 app.use('/api/track', trackRouter) // 韶茹（埋点 + 看板）
 app.use('/api/admin', adminRouter) // 本地演示：老师后台（管理资料）
+app.use('/api/overview', overviewRouter) // 对外展示站：整库数据概览（GET /api/overview）
 
 // —— 前端构建产物（存在才挂）。
 // 本地开发时前端走 5173 的 dev server，这里不生效；
@@ -55,6 +62,13 @@ if (existsSync(distDir)) {
     res.sendFile(path.join(distDir, 'index.html'))
   })
 }
+
+// —— 未匹配路由 + 统一错误兜底
+// `middleware/error.ts`（地基自带）此前**一直没有被挂载**：文件注释写着「任何错误都返回
+// 统一 JSON 信封」，实际未匹配的路径回的是 Express 默认 HTML 404，前端拿到的不是契约信封。
+// 2026-10-10 补挂。位置必须在 SPA 回退**之后**，否则会把前端路由当成 404 截掉。
+app.use(notFound)
+app.use(errorHandler)
 
 app.listen(PORT, () => {
   console.log(`[backend] listening on http://localhost:${PORT}`)

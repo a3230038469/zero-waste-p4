@@ -12,10 +12,12 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
+import { ADMIN_TOKEN_KEY } from '../api/admin'
 import { fetchStats, type StatsSummary, type TrackEventName } from '../api/track'
 
-/** 口令在 localStorage 的键名 */
-const TOKEN_KEY = 'zwp.adminToken'
+/** 口令在 localStorage 的键名（与资料管理 / 注册用户两页共用；不在这里另写一份字面量，
+ *  否则改键名时三个后台页会各存一份口令，老师得反复输） */
+const TOKEN_KEY = ADMIN_TOKEN_KEY
 
 /** 自动刷新间隔（毫秒） */
 const AUTO_REFRESH_MS = 30_000
