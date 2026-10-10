@@ -16,8 +16,14 @@ import {
   UPLOAD_ACCEPT,
   deleteKnowledge,
   fetchKnowledgeList,
+  fetchQaSettings,
+  saveQaSettings,
   uploadKnowledge,
-  type AdminKnowledgeItem
+  type AdminKnowledgeItem,
+  type QaEffortOption,
+  type QaStyle,
+  type QaStyleOption,
+  type ReasoningEffort
 } from '../api/admin'
 
 const PAGE_SIZE = 20
@@ -230,8 +236,119 @@ onMounted(() => {
   if (saved) {
     token.value = saved
     void load()
+    void loadQa()
   }
 })
+
+/* ---------------- 问答设置（模型 / 回答方式 / 思考强度） ---------------- */
+
+/**
+ * 回答方式与思考强度的选项**由后端下发**，前端不写死一份。
+ * 这样词表改了（引擎加了一档强度）不用改前端两处。
+ */
+const qaStyles = ref<QaStyleOption[]>([])
+const qaEfforts = ref<QaEffortOption[]>([])
+const qaModels = ref<{ id: string; name: string; status: string }[]>([])
+const qaModelId = ref('')
+const qaStyle = ref<QaStyle>('knowledge')
+const qaEffort = ref<ReasoningEffort>('')
+const qaLoading = ref(false)
+const qaSaving = ref(false)
+/** 引擎没连上时的原因；空串 = 正常 */
+const qaModelsError = ref('')
+/** 已保存、但现在生效中的值（回显用，避免和正在编辑的值混为一谈） */
+const qaCurrent = ref({ modelId: '', modelName: '', style: 'knowledge', reasoningEffort: '' })
+const qaUpdatedAt = ref('')
+
+/** 已存的模型在引擎列表里查不到 → 老师得重新选一个，别装作一切正常 */
+const qaModelMissing = computed(
+  () => Boolean(qaCurrent.value.modelId) && !qaModels.value.some((m) => m.id === qaCurrent.value.modelId)
+)
+
+/** 引擎里正在下载/下载失败的模型，选了大概率答不出来 */
+function qaModelDisabled(status: string): boolean {
+  return status !== 'active'
+}
+
+function modelLabel(name: string, status: string): string {
+  return status === 'active' ? name : `${name}（${status === 'downloading' ? '下载中' : '不可用'}）`
+}
+
+function styleLabel(value: string): string {
+  return qaStyles.value.find((s) => s.value === value)?.label ?? value
+}
+
+function effortLabel(value: string): string {
+  return qaEfforts.value.find((e) => e.value === value)?.label ?? value
+}
+
+async function loadQa(): Promise<void> {
+  if (!token.value) return
+  qaLoading.value = true
+  try {
+    const d = await fetchQaSettings(token.value)
+    qaModels.value = d.models
+    qaStyles.value = d.styles ?? []
+    qaEfforts.value = d.efforts ?? []
+    qaModelId.value = d.currentModelId
+    qaStyle.value = d.style
+    qaEffort.value = d.reasoningEffort
+    qaModelsError.value = d.modelsError ?? ''
+    qaUpdatedAt.value = d.updatedAt
+    qaCurrent.value = {
+      modelId: d.currentModelId,
+      modelName: d.currentModelName,
+      style: d.style,
+      reasoningEffort: d.reasoningEffort
+    }
+  } catch (err) {
+    const response = (
+      err as { response?: { status?: number; data?: { error?: { message?: string } } } }
+    ).response
+    qaModelsError.value =
+      response?.data?.error?.message ?? '问答设置拉取失败，看看后端（:4000）在不在。'
+  } finally {
+    qaLoading.value = false
+  }
+}
+
+/** 保存。存完以后端回显的为准 —— 别自己乐观更新，那样后端拒了界面还显示成功 */
+async function submitQa(): Promise<void> {
+  qaSaving.value = true
+  try {
+    const d = await saveQaSettings(token.value, {
+      modelId: qaModelId.value,
+      style: qaStyle.value,
+      reasoningEffort: qaEffort.value
+    })
+    qaModelId.value = d.currentModelId
+    qaStyle.value = d.style
+    qaEffort.value = d.reasoningEffort
+    qaModels.value = d.models.length ? d.models : qaModels.value
+    qaModelsError.value = d.modelsError ?? ''
+    qaUpdatedAt.value = d.updatedAt
+    qaCurrent.value = {
+      modelId: d.currentModelId,
+      modelName: d.currentModelName,
+      style: d.style,
+      reasoningEffort: d.reasoningEffort
+    }
+    ElMessage.success('已保存，问答立刻按新设置走')
+  } catch (err) {
+    const response = (
+      err as { response?: { status?: number; data?: { error?: { message?: string } } } }
+    ).response
+    ElMessage.error(response?.data?.error?.message ?? '保存失败，看看后端（:4000）在不在')
+  } finally {
+    qaSaving.value = false
+  }
+}
+
+/** 「进入」按钮：口令对上了才去拉问答设置 */
+async function enterAdmin(): Promise<void> {
+  await load()
+  if (!errorText.value) await loadQa()
+}
 </script>
 
 <template>
@@ -261,9 +378,9 @@ onMounted(() => {
           type="password"
           show-password
           placeholder="管理口令（backend/.env 里的 ADMIN_STATS_TOKEN）"
-          @keyup.enter="load"
+          @keyup.enter="enterAdmin"
         />
-        <el-button type="primary" :loading="loading" @click="load">进入</el-button>
+        <el-button type="primary" :loading="loading" @click="enterAdmin">进入</el-button>
       </div>
       <p v-if="errorText" class="err">{{ errorText }}</p>
     </el-card>
@@ -278,6 +395,81 @@ onMounted(() => {
         <span class="dot">·</span>
         <span>已带标签 <b class="ok">{{ taggedCount }}</b></span>
       </div>
+
+      <!-- 问答设置：老师在这里换回答模型 / 回答方式 / 思考强度，不用去碰引擎 -->
+      <el-card shadow="never" class="qa-card">
+        <div class="qa-head">
+          <h3 class="qa-title">问答设置</h3>
+          <span class="qa-now">
+            当前生效：{{ qaCurrent.modelName || '引擎默认模型' }} ·
+            {{ styleLabel(qaCurrent.style) }} ·
+            思考强度{{ qaCurrent.reasoningEffort ? effortLabel(qaCurrent.reasoningEffort) : '跟随模型' }}
+          </span>
+        </div>
+
+        <p v-if="qaModelsError" class="qa-warn">{{ qaModelsError }}</p>
+        <p v-else-if="qaModelMissing" class="qa-warn">
+          之前选的模型（{{ qaCurrent.modelId }}）在引擎里已经找不到了，请重新选一个并保存。
+        </p>
+
+        <div class="qa-grid">
+          <div class="qa-field">
+            <label>回答模型</label>
+            <el-select
+              v-model="qaModelId"
+              :loading="qaLoading"
+              :disabled="qaLoading || Boolean(qaModelsError)"
+              placeholder="跟随引擎默认"
+              style="width: 100%"
+            >
+              <el-option value="" label="跟随引擎默认（不指定）" />
+              <el-option
+                v-for="m in qaModels"
+                :key="m.id"
+                :value="m.id"
+                :label="modelLabel(m.name, m.status)"
+                :disabled="qaModelDisabled(m.status)"
+              />
+            </el-select>
+          </div>
+
+          <div class="qa-field">
+            <label>回答方式</label>
+            <el-radio-group v-model="qaStyle">
+              <el-radio v-for="s in qaStyles" :key="s.value" :value="s.value">
+                {{ s.label }}
+              </el-radio>
+            </el-radio-group>
+            <p class="qa-hint">{{ qaStyles.find((s) => s.value === qaStyle)?.hint || '' }}</p>
+          </div>
+
+          <div class="qa-field">
+            <label>思考强度</label>
+            <el-select v-model="qaEffort" placeholder="跟随模型" style="width: 100%">
+              <el-option value="" label="跟随模型（不指定）" />
+              <el-option
+                v-for="e in qaEfforts"
+                :key="e.value"
+                :value="e.value"
+                :label="e.label"
+              />
+            </el-select>
+            <p class="qa-hint">
+              这个是引擎真实支持的参数（reasoning_effort）。选「跟随模型」表示不下发，
+              由所选模型自己决定能不能思考。
+            </p>
+          </div>
+        </div>
+
+        <div class="qa-foot">
+          <el-button type="primary" :loading="qaSaving" @click="submitQa">
+            {{ qaSaving ? '保存中…' : '保存设置' }}
+          </el-button>
+          <span v-if="qaUpdatedAt" class="qa-time">
+            上次保存：{{ qaUpdatedAt.slice(0, 16).replace('T', ' ') }}
+          </span>
+        </div>
+      </el-card>
 
       <div class="kb-bar">
         <el-input v-model="keyword" placeholder="按标题或文件夹筛选" clearable />
@@ -481,6 +673,59 @@ onMounted(() => {
   align-items: center;
   gap: 12px;
   margin-bottom: 10px;
+}
+.qa-card {
+  margin: 0 0 14px;
+  border-radius: 10px;
+}
+.qa-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.qa-title {
+  margin: 0;
+  font-size: 15px;
+  color: #1f3a24;
+}
+.qa-now {
+  font-size: 12px;
+  color: #6b7d6b;
+}
+.qa-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+.qa-field label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: #33473a;
+}
+.qa-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #8a9a8a;
+}
+.qa-warn {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: #b26a00;
+}
+.qa-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+.qa-time {
+  font-size: 12px;
+  color: #8a9a8a;
+  font-variant-numeric: tabular-nums;
 }
 .kb-bar .count {
   font-size: 13px;

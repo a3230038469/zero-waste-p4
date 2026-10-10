@@ -2,19 +2,32 @@
  * 管理接口 —— 老师用的后台（2026-10-08 本地演示版新增）
  *
  *   GET /api/admin/knowledge   列出知识库里的全部资料（管理视角，含解析状态）
+ *   GET|PUT /api/admin/qa-settings   问答设置（模型 / 回答方式 / 思考强度）
  *
  * 鉴权：请求头 X-Admin-Token，值 = backend/.env 的 ADMIN_STATS_TOKEN（fail closed，
  *       与统计看板 GET /api/track/stats 同一套口径）。
  * 口径：所有操作都由后端代理 WeKnora 引擎，前端永不直连引擎（铁律 2）；
  *       本文件不改 docs.ts / auth.ts / track.ts 的任何既有行为。
  *
- * 已实现：列出资料、上传资料。
- * 待做：删除资料。
+ * 已实现：列出资料、上传资料、删除资料、注册用户列表、问答设置（GET/PUT /qa-settings）。
  */
 import { PrismaClient } from '@prisma/client'
 import express, { Router, type NextFunction, type Request, type Response } from 'express'
 
-import { invalidateEngineListCache } from '../weknora/index.js'
+import { invalidateEngineListCache, listQaModels, type QaModelOption } from '../weknora/index.js'
+import {
+  QA_STYLES,
+  REASONING_EFFORTS,
+  REASONING_LABELS,
+  STYLE_HINTS,
+  STYLE_LABELS,
+  loadQaSettings,
+  saveQaSettings,
+  type MaybeEffort,
+  type QaSettings,
+  type QaStyle,
+  type ReasoningEffort
+} from '../weknora/qa-settings.js'
 
 const prisma = new PrismaClient()
 
@@ -400,6 +413,188 @@ router.get('/users', async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       error: { code: 'USERS_QUERY_FAILED', message: `读用户列表失败：${message}` }
+    })
+  }
+})
+
+/**
+ * ─────────────────────────────────────────────────────────────────
+ * 问答设置（T3：模型 / 回答方式 / 思考强度）
+ * ─────────────────────────────────────────────────────────────────
+ *
+ * 口径：
+ *   - **只改我们自己的设置文件**，不碰引擎数据库、不调
+ *     `PUT /api/v1/initialization/config/*`（那个会清空知识库分块配置，实测踩过）
+ *   - 模型列表从引擎 `GET /api/v1/models` 现拉现用（引擎**不支持** ?type= 过滤，
+ *     所以由 weknora 层按 type === 'KnowledgeQA' 过滤）
+ *   - 取不到模型列表时接口**仍然 200**，把原因放在 modelsError 里 ——
+ *     这样老师还能看到「当前生效的是什么」，而不是一个空白页
+ */
+
+/** 组装 GET/PUT 共用的响应体（PUT 存完也要回显同一个形状，前端存完直接刷新用） */
+function qaSettingsPayload(settings: QaSettings, models: QaModelOption[], modelsError: string) {
+  const hit = models.find((m) => m.id === settings.modelId)
+  return {
+    success: true,
+    currentModelId: settings.modelId,
+    // 已存的模型在引擎里查不到时给空串（前端据此提示「重新选一个」），
+    // 别拿 id 冒充模型名 —— 那样老师会以为自己选的是个叫 uuid 的模型
+    currentModelName: hit ? hit.name : '',
+    models,
+    style: settings.style,
+    styles: QA_STYLES.map((value) => ({
+      value,
+      label: STYLE_LABELS[value],
+      hint: STYLE_HINTS[value]
+    })),
+    reasoningEffort: settings.reasoningEffort,
+    efforts: REASONING_EFFORTS.map((value) => ({ value, label: REASONING_LABELS[value] })),
+    modelsError,
+    updatedAt: settings.updatedAt
+  }
+}
+
+/** GET /api/admin/qa-settings —— 读当前设置 + 引擎可用模型 */
+router.get('/qa-settings', async (req: Request, res: Response) => {
+  if (!assertAdmin(req, res)) return
+
+  if (!env('WEKNORA_API_KEY')) {
+    res.status(503).json({
+      success: false,
+      error: {
+        code: 'ENGINE_NOT_CONFIGURED',
+        message: '还没配 WEKNORA_API_KEY，取不到可选模型'
+      }
+    })
+    return
+  }
+
+  let models: QaModelOption[] = []
+  let modelsError = ''
+  try {
+    models = await listQaModels()
+  } catch (err) {
+    // 降级：设置照样返回，只是模型列表空着 + 给个原因
+    modelsError = err instanceof Error ? err.message : '未知错误'
+  }
+
+  res.json(qaSettingsPayload(loadQaSettings(), models, modelsError))
+})
+
+/** 请求体校验：三个字段都可选，只校验传了的那些 */
+function isEffortToken(value: unknown): value is ReasoningEffort {
+  return typeof value === 'string' && (REASONING_EFFORTS as readonly string[]).includes(value)
+}
+
+/**
+ * PUT /api/admin/qa-settings —— 保存设置
+ *
+ * ⚠️ 鉴权用 requireAdmin 中间件排在**读请求体之前**（与上传接口同一考量）。
+ */
+router.put('/qa-settings', requireAdmin, async (req: Request, res: Response) => {
+  const body: unknown = req.body
+  const obj: Record<string, unknown> = isRecordLike(body) ? body : {}
+  const current = loadQaSettings()
+
+  let nextModelId = current.modelId
+  if ('modelId' in obj) {
+    const value = obj.modelId
+    if (value !== undefined && typeof value !== 'string') {
+      res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_MODEL_ID', message: 'modelId 得是字符串' }
+      })
+      return
+    }
+    nextModelId = String(value ?? '').trim()
+  }
+
+  let nextStyle: QaStyle = current.style
+  if ('style' in obj) {
+    const value = obj.style
+    if (value !== 'quick' && value !== 'knowledge') {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_STYLE',
+          message: `style 只能是 quick 或 knowledge，收到：${JSON.stringify(value ?? null)}`
+        }
+      })
+      return
+    }
+    nextStyle = value
+  }
+
+  // 空串 = 交给引擎默认；非空必须是引擎认的那 8 个值之一（否则引擎会 400）
+  let nextEffort: MaybeEffort = current.reasoningEffort
+  if ('reasoningEffort' in obj) {
+    const value = obj.reasoningEffort
+    if (value === undefined || value === null || value === '') {
+      nextEffort = ''
+    } else if (!isEffortToken(value)) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_REASONING_EFFORT',
+          message: `思考强度只能是 ${REASONING_EFFORTS.join(' / ')} 或留空（跟随引擎默认）`
+        }
+      })
+      return
+    } else {
+      nextEffort = value
+    }
+  }
+
+  // 模型必须真实存在：引擎对不存在的 summary_model_id 会**静默回退**到默认模型
+  // （照样返回 200，不换模型）。不校验的话，老师选了模型却完全不知道没生效。
+  if (nextModelId && !env('WEKNORA_API_KEY')) {
+    res.status(503).json({
+      success: false,
+      error: {
+        code: 'ENGINE_NOT_CONFIGURED',
+        message: '还没配 WEKNORA_API_KEY，验不了模型是否可用'
+      }
+    })
+    return
+  }
+  let models: QaModelOption[] = []
+  if (nextModelId) {
+    try {
+      models = await listQaModels()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '未知错误'
+      res.status(502).json({
+        success: false,
+        error: { code: 'ENGINE_UNREACHABLE', message: `连不上引擎，没法验模型是否可用：${message}` }
+      })
+      return
+    }
+    if (!models.some((m) => m.id === nextModelId)) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'MODEL_NOT_AVAILABLE',
+          message: '引擎里没有这个模型（可能已被删除），请重新选一个'
+        }
+      })
+      return
+    }
+  }
+
+  try {
+    const saved = saveQaSettings({
+      modelId: nextModelId,
+      style: nextStyle,
+      reasoningEffort: nextEffort,
+      updatedAt: ''
+    })
+    // PUT 不带 modelId 时不用为了回显去连引擎（省一次往返，也避免引擎挂了就存不了风格）
+    res.json(qaSettingsPayload(saved, nextModelId ? models : [], ''))
+  } catch (err) {
+    const message = err instanceof Error ? err.message : '未知错误'
+    res.status(500).json({
+      success: false,
+      error: { code: 'SAVE_FAILED', message: `保存问答设置失败：${message}` }
     })
   }
 })

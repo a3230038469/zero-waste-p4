@@ -135,3 +135,88 @@ export async function fetchUserList(token: string): Promise<AdminUserList> {
   })
   return res.data
 }
+
+/* ------------------------------------------------------------------ *
+ * 问答设置（模型 / 回答方式 / 思考强度）
+ * ------------------------------------------------------------------ */
+
+/** 回答方式。取值与后端契约一致，**别自创别名** */
+export type QaStyle = 'quick' | 'knowledge'
+
+/** 思考强度。引擎原生参数 reasoning_effort 的 8 个合法取值；'' = 跟随引擎默认 */
+export type ReasoningEffort =
+  | ''
+  | 'off'
+  | 'auto'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max'
+
+/** 引擎侧的一个可选问答模型 */
+export interface QaModelOption {
+  id: string
+  name: string
+  type: string
+  status: string
+}
+
+export interface QaStyleOption {
+  value: QaStyle
+  label: string
+  hint: string
+}
+
+export interface QaEffortOption {
+  value: ReasoningEffort
+  label: string
+}
+
+/**
+ * 问答设置的读取结果。
+ *
+ * ⚠️ `modelsError` 非空说明引擎没连上、`models` 是空的（接口本身仍是 200，
+ * 已保存的设置照常返回）。这时要把原因显示出来，别给老师一个空白下拉框。
+ */
+export interface QaSettingsPayload {
+  success: boolean
+  currentModelId: string
+  /** 在 models 里查不到时为空串 —— 此时 currentModelId 可能指向一个已被删掉的模型 */
+  currentModelName: string
+  models: QaModelOption[]
+  style: QaStyle
+  styles: QaStyleOption[]
+  reasoningEffort: ReasoningEffort
+  efforts: QaEffortOption[]
+  modelsError: string
+  updatedAt: string
+}
+
+/** 读问答设置（管理视角） */
+export async function fetchQaSettings(token: string): Promise<QaSettingsPayload> {
+  const res = await http.get<QaSettingsPayload>('/admin/qa-settings', {
+    headers: { 'X-Admin-Token': token },
+    silent: true
+  })
+  return res.data
+}
+
+/** 保存问答设置。三个字段都可选，只传要改的；传空串 = 清掉该项、跟随引擎默认 */
+export interface QaSettingsPatch {
+  modelId?: string
+  style?: QaStyle
+  reasoningEffort?: ReasoningEffort
+}
+
+export async function saveQaSettings(
+  token: string,
+  patch: QaSettingsPatch
+): Promise<QaSettingsPayload> {
+  const res = await http.put<QaSettingsPayload>('/admin/qa-settings', patch, {
+    headers: { 'X-Admin-Token': token },
+    silent: true
+  })
+  return res.data
+}

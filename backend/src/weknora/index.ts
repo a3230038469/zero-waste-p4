@@ -25,6 +25,7 @@ import {
 } from './types.js'
 import { parseSseStream } from './sse.js'
 import { baseNameOf, unzipFirstEntry } from './zip.js'
+import { buildEngineOverrides, buildStyledQuery, loadQaSettings } from './qa-settings.js'
 
 export * from './types.js'
 /** 流终止判断也要给路由层用（判 complete/stop/error，别用 done） */
@@ -575,6 +576,50 @@ export async function exchangeEmbedToken(): Promise<EmbedToken> {
 }
 
 /* ------------------------------------------------------------------ *
+ * 问答可选模型（T3 用）
+ * ------------------------------------------------------------------ */
+
+/** 引擎侧的一个问答模型选项（只回前端要用的字段，别把引擎内部结构整个倒出去） */
+export interface QaModelOption {
+  id: string
+  name: string
+  /** 引擎模型类型，能回答知识库问题的是 KnowledgeQA */
+  type: string
+  /** active / downloading / download_failed */
+  status: string
+}
+
+/**
+ * 列引擎当前可用的**知识问答模型**（老师后台「问答设置」用）。
+ *
+ * ⚠️ 引擎的 `GET /api/v1/models` **不支持 `?type=` 过滤参数** ——
+ * 它后端一个 query 都不读（WeKnora 前端那个 `listModels(type)` 是在浏览器里
+ * 过滤的，纯客户端行为）。所以这里必须自己按 type 过滤。
+ *
+ * ⚠️ name 优先取 `name` 而不是 `display_name`：前者是模型真实身份
+ * （如 LongCat-2.5-Preview），后者可能只是运营随手起的标签（如「测试」），
+ * 老师选模型时看真实名字更有用。
+ */
+export async function listQaModels(): Promise<QaModelOption[]> {
+  const payload = await engineJson('/api/v1/models')
+  const rows = extractArray(payload)
+  const models: QaModelOption[] = []
+  for (const raw of rows) {
+    if (!isRecord(raw)) continue
+    if (pickString(raw, ['type']) !== 'KnowledgeQA') continue
+    const id = pickString(raw, ['id'])
+    if (!id) continue
+    models.push({
+      id,
+      name: pickString(raw, ['name', 'display_name']) || id,
+      type: 'KnowledgeQA',
+      status: pickString(raw, ['status'])
+    })
+  }
+  return models
+}
+
+/* ------------------------------------------------------------------ *
  * 流式问答（B07 用，路由见 routes/ask.ts）
  * ------------------------------------------------------------------ */
 
@@ -618,7 +663,16 @@ export async function createAskSession(title: string): Promise<string> {
   return id
 }
 
-/** 问一次知识库，拿到事件异步迭代器（调用方负责转成 HTTP SSE 流） */
+/**
+ * 问一次知识库，拿到事件异步迭代器（调用方负责转成 HTTP SSE 流）
+ *
+ * ⚠️ 老师后台「问答设置」在这里生效（T3）：
+ *   - 现读 backend/data/qa-settings.json（不缓存，改完下一次提问就生效）
+ *   - 设了模型 → body 带 `summary_model_id`（**不是 model_id**，传了会被静默忽略）
+ *   - 设了思考强度 → body 带 `reasoning_effort`（引擎原生参数）
+ *   - 回答方式 → 在 query 前面拼一段风格指令
+ *   读设置永远读不炸（文件坏了退回默认值），不会把问答主功能带崩。
+ */
 export async function askKnowledgeBase(params: {
   sessionId: string
   query: string
@@ -639,6 +693,13 @@ export async function askKnowledgeBase(params: {
   const url = `${engineBaseUrl().replace(/\/+$/, '')}/api/v1/knowledge-chat/${encodeURIComponent(
     params.sessionId
   )}`
+
+  const qaSettings = loadQaSettings()
+  const askBody: Record<string, unknown> = {
+    query: buildStyledQuery(params.query, qaSettings.style),
+    knowledge_base_ids: kbIds,
+    ...buildEngineOverrides(qaSettings)
+  }
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), ASK_TIMEOUT_MS)
@@ -662,7 +723,7 @@ export async function askKnowledgeBase(params: {
         Accept: 'text/event-stream',
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ query: params.query, knowledge_base_ids: kbIds })
+      body: JSON.stringify(askBody)
     })
   } catch (err) {
     cleanup()
