@@ -18,10 +18,17 @@ import { useAuth } from '../composables/useAuth'
 const router = useRouter()
 const { user, isLoggedIn, fetchMe, logout } = useAuth()
 
+/**
+ * 导航项。`/chat` 是 T5 的 AI 问答独立页（带会话历史，可接着聊）。
+ *
+ * ⚠️ 放在「关于项目」**旁边**（而不是末尾）：问答是这个站最主动的入口，
+ *    藏在最后一项等于埋起来。`exact: false` 让 `/chat` 与它的子路径都能高亮。
+ */
 const NAV = [
   { to: '/', label: '首页', exact: true },
   { to: '/shelf', label: '资料库', exact: false },
   { to: '/insights', label: '数据概览', exact: false },
+  { to: '/chat', label: 'AI 问答', exact: false },
   { to: '/about', label: '关于项目', exact: false }
 ]
 
