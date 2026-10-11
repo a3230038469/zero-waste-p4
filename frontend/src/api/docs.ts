@@ -14,9 +14,20 @@ import type { DocItem, DocListResponse, FacetItem, FacetsResponse } from './type
 /** 接真实后端时改为 false（联调前必切，否则页面显示的是假数据） */
 const USE_MOCK = false
 
-/** 资料详情（对齐 GET /api/docs/:id「单份资料完整信息」，含正文） */
+/** 资料详情（对齐 GET /api/docs/:id「单份资料完整信息」，含正文与原始出处） */
 export interface DocDetail extends DocItem {
-  content: string
+  /**
+   * 内置正文。
+   * ⚠️ 本地资料模式（读索引）下详情接口**不返回**该字段 —— 知识库以原件为准，
+   *    不转载正文。页面必须按「可能没有」处理，否则整页会崩。
+   */
+  content?: string
+  /**
+   * 原始出处链接。
+   * 注意：目录类资料（台账未登记来源链接）里这一项是空字符串，
+   * 详情页遇到空串就不显示该行，而不是显示一个空链接。
+   */
+  sourceUrl?: string
 }
 
 /** 书架页查询参数（对齐接口约定，多选维度用数组承载） */
@@ -231,9 +242,21 @@ function sanitizeFileName(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, '_').trim()
 }
 
-/** 下载文件名：年份-机构-标题（接口约定） */
+/**
+ * 下载文件名：年份-机构-标题（接口约定）。
+ *
+ * ⚠️ 扩展名只在**标题自身没有**时才补 `.pdf`。
+ * 引擎来源的标题本身就是带扩展名的文件名（如 `13-优先控制化学品名录….pdf`），
+ * 无条件拼 `.pdf` 会得到 `2020-机构-xxx.pdf.pdf`（后端 `buildDownloadName()`
+ * 已修过同一个坑，这里与之保持同一口径，否则 `a.download` 会覆盖服务端给的名字）。
+ */
 export function buildDownloadFileName(doc: DocItem): string {
-  return sanitizeFileName(`${doc.year}-${doc.org}-${doc.title}`)
+  const year = doc.year > 0 ? String(doc.year) : '年份待补'
+  const source = sanitizeFileName(doc.title || '未命名')
+  const dot = source.lastIndexOf('.')
+  const stem = dot > 0 ? source.slice(0, dot) : source
+  const ext = dot > 0 ? source.slice(dot) : '.pdf'
+  return sanitizeFileName(`${year}-${doc.org || '机构待补'}-${stem}${ext}`)
 }
 
 /** 前端生成最小可渲染 PDF（假数据用，英文内容避免内嵌中文字体） */
@@ -287,23 +310,62 @@ function saveBlob(blob: Blob, fileName: string): void {
   URL.revokeObjectURL(url)
 }
 
-/** 下载原件（mock：前端生成的 PDF；真实：GET /api/docs/:id/download 文件流） */
+/**
+ * 把「blob 方式请求失败」的响应还原成后端给的中文提示。
+ *
+ * 为什么需要：`responseType: 'blob'` 时 axios 把错误体也当二进制，
+ * 统一拦截器读 `err.response.data.error.message` 只会拿到 undefined，
+ * 最后弹给用户的是 `Request failed with status code 404` 这种没法看的文案。
+ * 这里把 blob 读回文本、尝试解析后端信封 `{success:false,error:{message}}`，
+ * 拿不到再退回一句人话。
+ */
+async function describeBlobError(err: unknown, fallback: string): Promise<string> {
+  const data = (err as { response?: { data?: unknown } })?.response?.data
+  if (data instanceof Blob) {
+    try {
+      const text = await data.text()
+      const parsed = JSON.parse(text) as { error?: { message?: string } }
+      const message = parsed?.error?.message
+      if (typeof message === 'string' && message.trim()) return message
+    } catch {
+      // 不是 JSON（可能真是二进制内容）——走下面的兜底
+    }
+  }
+  return fallback
+}
+
+/** 下载原件（mock：前端生成的 PDF；真实：GET /api/docs/:id/download 文件流）
+ *
+ * 失败时抛 `Error`，message 是可直接展示给用户的中文；
+ * `silent: true` 是为了不让统一拦截器再补一条 `Request failed with status code 404`。 */
 export async function downloadDoc(doc: DocItem): Promise<void> {
-  const fileName = `${buildDownloadFileName(doc)}.pdf`
+  const fileName = buildDownloadFileName(doc)
   if (USE_MOCK) {
     await delay(300)
     saveBlob(buildMockPdf(doc), fileName)
     return
   }
-  // 真实接口可能要求 Authorization，用 blob 方式下载以携带请求头
-  const res = await http.get<Blob>(`/docs/${doc.id}/download`, { responseType: 'blob' })
-  saveBlob(res.data, fileName)
+  try {
+    // 下载接口可能要求 Authorization，用 blob 方式下载以携带请求头
+    const res = await http.get<Blob>(`/docs/${doc.id}/download`, {
+      responseType: 'blob',
+      silent: true
+    })
+    saveBlob(res.data, fileName)
+  } catch (err) {
+    throw new Error(await describeBlobError(err, '下载失败，请稍后再试或直接联系管理员'))
+  }
 }
 
 /**
- * 获取在线预览地址（mock：blob URL；真实：后端预览接口）。
- * ⚠️ 未决问题：iframe 无法携带 Authorization 头，真实接口需支持
- *    query 传 token 或匿名预览，需与韶茹确认后调整。
+ * 获取在线预览地址（mock：blob URL；真实：先取回文件再转 blob URL）。
+ *
+ * 为什么不是直接把接口地址丢给 iframe：iframe 拿不到 HTTP 状态码，
+ * 接口报错时用户看到的是**框里一段 JSON**（云端演示版没有资料原件，
+ * 预览必然 404），没有任何提示。这里先请求一次，失败就抛出中文原因，
+ * 成功则转成 blob URL 交给 iframe。预览本身已由 LARGE_FILE_LIMIT 卡在 20MB 内，
+ * 整份读进内存是可接受的。
+ *
  * 调用方负责 revokeObjectURL（对非 blob URL 调用无副作用）。
  */
 export async function getPreviewUrl(doc: DocItem): Promise<string> {
@@ -311,7 +373,15 @@ export async function getPreviewUrl(doc: DocItem): Promise<string> {
     await delay(300)
     return URL.createObjectURL(buildMockPdf(doc))
   }
-  return `${http.defaults.baseURL}/docs/${doc.id}/preview`
+  try {
+    const res = await http.get<Blob>(`/docs/${doc.id}/preview`, {
+      responseType: 'blob',
+      silent: true
+    })
+    return URL.createObjectURL(res.data)
+  } catch (err) {
+    throw new Error(await describeBlobError(err, '预览失败，请稍后再试或改用下载原件'))
+  }
 }
 
 /* ---------------- 对外出口 ---------------- */

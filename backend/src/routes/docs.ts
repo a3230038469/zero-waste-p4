@@ -27,6 +27,7 @@ import {
   type KbFacets,
   type SortMode
 } from '../weknora/index.js'
+import { duplicateOf } from '../data/duplicates.js'
 import { recordEvent } from '../track/store.js'
 
 const router = Router()
@@ -182,13 +183,16 @@ function buildFacets(docs: KbDocInternal[], query: DocsQuery): KbFacets {
   return {
     types: countBy(forType, (d) => [d.type]).sort(byCountThenValue),
     orgs: countBy(forOrg, (d) => [d.org]).sort(byCountThenValue),
-    years: countBy(forYear, (d) => [String(d.year)]).sort(byYearDesc),
+    // 年份 0 = 台账未填。它不是「0 年」，放进下拉会让用户看到一个没有意义的「0」选项，
+    // 且选中它等于筛「年份缺失」这种内部口径。对外展示站直接不列，详情页按「年份不详」显示。
+    years: countBy(forYear, (d) => (d.year > 0 ? [String(d.year)] : [])).sort(byYearDesc),
     tags: countBy(forTag, (d) => d.tags).sort(byCountThenValue)
   }
 }
 
 /** 只把契约七字段交给前端，内部字段（fileName / filePath / sourceUrl…）不外泄 */
 function toPublicDoc(doc: KbDocInternal): KbDoc {
+  const keepId = duplicateOf(doc.id)
   return {
     id: doc.id,
     title: doc.title,
@@ -196,7 +200,9 @@ function toPublicDoc(doc: KbDocInternal): KbDoc {
     year: doc.year,
     type: doc.type,
     tags: doc.tags,
-    size: doc.size
+    size: doc.size,
+    // 副本标记：只有确实是副本时才出现该字段（避免给 605 份正常资料都挂一个 undefined 字段）
+    ...(keepId ? { duplicateOf: keepId } : {})
   }
 }
 

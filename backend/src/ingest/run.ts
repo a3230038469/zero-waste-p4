@@ -27,8 +27,15 @@ import type {
 /** 默认的大小核对容差：声明值与实际值相差超过 5% 就记一条 */
 const DEFAULT_SIZE_TOLERANCE = 0.05
 
-/** 只认 PDF（后续要收别的格式，在这里放行） */
-const ALLOWED_EXTENSIONS = new Set(['.pdf'])
+/**
+ * 允许入索引的扩展名。
+ *
+ * 2026-10-10 放宽：真实附件包（六尺巷 260929）617 份里有 15 份不是 PDF
+ * ——9 份 .docx、5 份 .doc、1 份 .xlsx。原先只放行 .pdf 会把它们误判成
+ * 「元数据说有、目录里没有」。后端 weknora 的 guessContentType 本来就认
+ * 这几个扩展名（见 CONTENT_TYPES），所以这里只是把准入对齐实现。
+ */
+const ALLOWED_EXTENSIONS = new Set(['.pdf', '.doc', '.docx', '.xls', '.xlsx'])
 
 export interface ImportOptions {
   metaFile: string

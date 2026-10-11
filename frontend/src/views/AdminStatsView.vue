@@ -12,10 +12,12 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
+import { ADMIN_TOKEN_KEY } from '../api/admin'
 import { fetchStats, type StatsSummary, type TrackEventName } from '../api/track'
 
-/** 口令在 localStorage 的键名 */
-const TOKEN_KEY = 'zwp.adminToken'
+/** 口令在 localStorage 的键名（与资料管理 / 注册用户两页共用；不在这里另写一份字面量，
+ *  否则改键名时三个后台页会各存一份口令，老师得反复输） */
+const TOKEN_KEY = ADMIN_TOKEN_KEY
 
 /** 自动刷新间隔（毫秒） */
 const AUTO_REFRESH_MS = 30_000
@@ -352,22 +354,22 @@ onUnmounted(() => {
   gap: 18px;
   margin: 12px 0 4px;
   padding-bottom: 8px;
-  border-bottom: 1px solid #e6ece6;
+  border-bottom: 1px solid var(--zw-line);
   font-size: 14px;
 }
 .admin-nav a {
-  color: #5f6f5f;
+  color: var(--zw-muted);
   text-decoration: none;
   padding: 2px 2px 6px;
   border-bottom: 2px solid transparent;
 }
 .admin-nav a:hover {
-  color: #1f3a24;
+  color: var(--zw-green-ink);
 }
 .admin-nav a.router-link-active {
-  color: #1f3a24;
+  color: var(--zw-green-ink);
   font-weight: 500;
-  border-bottom-color: #2e7d32;
+  border-bottom-color: var(--zw-green);
 }
 .token-row {
   display: flex;
@@ -436,7 +438,7 @@ onUnmounted(() => {
 }
 .panel-hint {
   font-size: 12px;
-  color: #8a9a8a;
+  color: var(--zw-faint);
   font-weight: 400;
 }
 .bars {
@@ -499,7 +501,7 @@ onUnmounted(() => {
 }
 .trend-date {
   font-size: 11px;
-  color: #8a9a8a;
+  color: var(--zw-faint);
   white-space: nowrap;
 }
 .facts {

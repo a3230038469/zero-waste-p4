@@ -1,0 +1,575 @@
+{
+  "generatedFrom": "元数据表_v3-35份（静柔 B09）",
+  "count": 35,
+  "items": [
+    {
+      "id": "k-1",
+      "title": "浅析固体废物污染防治及管理",
+      "org": "生态环境与保护",
+      "year": 2019,
+      "type": "研究报告",
+      "tags": [
+        "固体废物",
+        "污染防治"
+      ],
+      "size": 954204,
+      "sourceUrl": "https://doi.org/10.32629/eep.v2i5.269",
+      "fileName": "浅析固体废物污染防治及管理.pdf",
+      "filePath": "kb/浅析固体废物污染防治及管理.pdf",
+      "sizeDeclared": 954204
+    },
+    {
+      "id": "k-2",
+      "title": "浅析固体废物污染防治与管理",
+      "org": "生态环境与保护",
+      "year": 2020,
+      "type": "研究报告",
+      "tags": [
+        "固体废物",
+        "污染防治"
+      ],
+      "size": 859832,
+      "sourceUrl": "https://doi.org/10.32629/eep.v2i11.542",
+      "fileName": "浅析固体废物污染防治与管理.pdf",
+      "filePath": "kb/浅析固体废物污染防治与管理.pdf",
+      "sizeDeclared": 859832
+    },
+    {
+      "id": "k-3",
+      "title": "环境工程建设中固体废物治理",
+      "org": "地质研究与环境保护",
+      "year": 2025,
+      "type": "研究报告",
+      "tags": [
+        "固体废物",
+        "环境工程"
+      ],
+      "size": 262144,
+      "sourceUrl": "https://doi.org/10.37155/2811-0595-0404-24",
+      "fileName": "环境工程建设中固体废物治理.pdf",
+      "filePath": "kb/环境工程建设中固体废物治理.pdf",
+      "sizeDeclared": 262144
+    },
+    {
+      "id": "k-4",
+      "title": "环境工程中垃圾处理利用的探究",
+      "org": "生态环境与保护",
+      "year": 2020,
+      "type": "研究报告",
+      "tags": [
+        "环境工程"
+      ],
+      "size": 943718,
+      "sourceUrl": "https://doi.org/10.32629/eep.v3i1.623",
+      "fileName": "环境工程中垃圾处理利用的探究.pdf",
+      "filePath": "kb/环境工程中垃圾处理利用的探究.pdf",
+      "sizeDeclared": 943718
+    },
+    {
+      "id": "k-5",
+      "title": "浅谈环境工程中固体废物的治理",
+      "org": "智能城市应用",
+      "year": 2021,
+      "type": "研究报告",
+      "tags": [
+        "固体废物",
+        "环境工程"
+      ],
+      "size": 1069548,
+      "sourceUrl": "https://doi.org/10.33142/sca.v4i3.4022",
+      "fileName": "浅谈环境工程中固体废物的治理.pdf",
+      "filePath": "kb/浅谈环境工程中固体废物的治理.pdf",
+      "sizeDeclared": 1069548
+    },
+    {
+      "id": "k-6",
+      "title": "浅析垃圾填埋场环境污染风险及防控",
+      "org": "工程学研究与实用",
+      "year": 2022,
+      "type": "研究报告",
+      "tags": [
+        "填埋处置",
+        "污染防治"
+      ],
+      "size": 230687,
+      "sourceUrl": "https://doi.org/10.37155/2717-5316-0310-69",
+      "fileName": "浅析垃圾填埋场环境污染风险及防控.pdf",
+      "filePath": "kb/浅析垃圾填埋场环境污染风险及防控.pdf",
+      "sizeDeclared": 230687
+    },
+    {
+      "id": "k-7",
+      "title": "浅谈固体废物的污染防治与管理对策",
+      "org": "地质研究与环境保护",
+      "year": 2023,
+      "type": "研究报告",
+      "tags": [
+        "固体废物",
+        "污染防治"
+      ],
+      "size": 220201,
+      "sourceUrl": "https://doi.org/10.37155/2811-0595-0206-4",
+      "fileName": "浅谈固体废物的污染防治与管理对策.pdf",
+      "filePath": "kb/浅谈固体废物的污染防治与管理对策.pdf",
+      "sizeDeclared": 220201
+    },
+    {
+      "id": "k-8",
+      "title": "浅谈生活垃圾焚烧发电厂环境保护管理",
+      "org": "地质研究与环境保护",
+      "year": 2023,
+      "type": "研究报告",
+      "tags": [
+        "焚烧处置",
+        "污染防治"
+      ],
+      "size": 241172,
+      "sourceUrl": "https://doi.org/10.37155/2811-0595-0208-70",
+      "fileName": "浅谈生活垃圾焚烧发电厂环境保护管理.pdf",
+      "filePath": "kb/浅谈生活垃圾焚烧发电厂环境保护管理.pdf",
+      "sizeDeclared": 241172
+    },
+    {
+      "id": "k-9",
+      "title": "工业固体废物现状及环境保护防治方法分析",
+      "org": "生态环境与保护",
+      "year": 2020,
+      "type": "研究报告",
+      "tags": [
+        "固体废物",
+        "污染防治"
+      ],
+      "size": 859832,
+      "sourceUrl": "https://doi.org/10.32629/eep.v2i11.514",
+      "fileName": "工业固体废物现状及环境保护防治方法分析.pdf",
+      "filePath": "kb/工业固体废物现状及环境保护防治方法分析.pdf",
+      "sizeDeclared": 859832
+    },
+    {
+      "id": "k-10",
+      "title": "循环经济模式下生态环境保护的实践与反思",
+      "org": "地质研究与环境保护",
+      "year": 2025,
+      "type": "研究报告",
+      "tags": [
+        "循环经济",
+        "污染防治"
+      ],
+      "size": 230687,
+      "sourceUrl": "https://doi.org/10.37155/2811-0595-0405-6",
+      "fileName": "循环经济模式下生态环境保护的实践与反思.pdf",
+      "filePath": "kb/循环经济模式下生态环境保护的实践与反思.pdf",
+      "sizeDeclared": 230687
+    },
+    {
+      "id": "k-11",
+      "title": "固体废弃物资源化利用中的环境工程技术创新",
+      "org": "工程学研究与实用",
+      "year": 2025,
+      "type": "研究报告",
+      "tags": [
+        "资源化利用",
+        "固体废物",
+        "环境工程"
+      ],
+      "size": 241172,
+      "sourceUrl": "https://doi.org/10.37155/2717-5316-0606-55",
+      "fileName": "固体废弃物资源化利用中的环境工程技术创新.pdf",
+      "filePath": "kb/固体废弃物资源化利用中的环境工程技术创新.pdf",
+      "sizeDeclared": 241172
+    },
+    {
+      "id": "k-12",
+      "title": "农业废弃物资源化利用与环境污染综合治理五位一体生态循环",
+      "org": "生态环境与保护",
+      "year": 2020,
+      "type": "研究报告",
+      "tags": [
+        "农业废弃物",
+        "资源化利用",
+        "循环经济"
+      ],
+      "size": 1017119,
+      "sourceUrl": "https://doi.org/10.32629/eep.v3i6.873",
+      "fileName": "农业废弃物资源化利用与环境污染综合治理五位一体生态循环.pdf",
+      "filePath": "kb/农业废弃物资源化利用与环境污染综合治理五位一体生态循环.pdf",
+      "sizeDeclared": 1017119
+    },
+    {
+      "id": "k-13",
+      "title": "生态环境工程咨询在城市固体废弃物处理与资源化利用中的探讨",
+      "org": "地质研究与环境保护",
+      "year": 2024,
+      "type": "研究报告",
+      "tags": [
+        "资源化利用",
+        "固体废物",
+        "环境工程"
+      ],
+      "size": 251658,
+      "sourceUrl": "https://doi.org/10.37155/2811-0595-0305-15",
+      "fileName": "生态环境工程咨询在城市固体废弃物处理与资源化利用中的探讨.pdf",
+      "filePath": "kb/生态环境工程咨询在城市固体废弃物处理与资源化利用中的探讨.pdf",
+      "sizeDeclared": 251658
+    },
+    {
+      "id": "k-14",
+      "title": "农村垃圾分类现状分析",
+      "org": "城市建筑与发展",
+      "year": 2025,
+      "type": "研究报告",
+      "tags": [
+        "垃圾分类",
+        "农村治理"
+      ],
+      "size": 251658,
+      "sourceUrl": "https://doi.org/10.37155/2717-557x-0609-32",
+      "fileName": "农村垃圾分类现状分析.pdf",
+      "filePath": "kb/农村垃圾分类现状分析.pdf",
+      "sizeDeclared": 251658
+    },
+    {
+      "id": "k-15",
+      "title": "垃圾填埋场稳定性分析",
+      "org": "工程管理与技术探讨",
+      "year": 2024,
+      "type": "研究报告",
+      "tags": [
+        "填埋处置"
+      ],
+      "size": 230687,
+      "sourceUrl": "https://doi.org/10.37155/2717-5189-0621-13",
+      "fileName": "垃圾填埋场稳定性分析.pdf",
+      "filePath": "kb/垃圾填埋场稳定性分析.pdf",
+      "sizeDeclared": 230687
+    },
+    {
+      "id": "k-16",
+      "title": "危险废物处理现状研究",
+      "org": "地质研究与环境保护",
+      "year": 2023,
+      "type": "研究报告",
+      "tags": [
+        "危险废物"
+      ],
+      "size": 251658,
+      "sourceUrl": "https://doi.org/10.37155/2811-0595-0204-10",
+      "fileName": "危险废物处理现状研究.pdf",
+      "filePath": "kb/危险废物处理现状研究.pdf",
+      "sizeDeclared": 251658
+    },
+    {
+      "id": "k-17",
+      "title": "园林废弃物的资源化利用",
+      "org": "工程管理与技术探讨",
+      "year": 2025,
+      "type": "研究报告",
+      "tags": [
+        "园林废弃物",
+        "资源化利用"
+      ],
+      "size": 314573,
+      "sourceUrl": "https://doi.org/10.37155/2717-5189-0714-68",
+      "fileName": "园林废弃物的资源化利用.pdf",
+      "filePath": "kb/园林废弃物的资源化利用.pdf",
+      "sizeDeclared": 314573
+    },
+    {
+      "id": "k-18",
+      "title": "农村生活垃圾分类治理探讨",
+      "org": "地质研究与环境保护",
+      "year": 2022,
+      "type": "研究报告",
+      "tags": [
+        "垃圾分类",
+        "农村治理"
+      ],
+      "size": 283116,
+      "sourceUrl": "https://doi.org/10.37155/2811-0595-0101-7",
+      "fileName": "农村生活垃圾分类治理探讨.pdf",
+      "filePath": "kb/农村生活垃圾分类治理探讨.pdf",
+      "sizeDeclared": 283116
+    },
+    {
+      "id": "k-19",
+      "title": "深圳市生活垃圾分类管理条例",
+      "org": "深圳市人民代表大会常务委员会",
+      "year": 2020,
+      "type": "政策法规",
+      "tags": [
+        "垃圾分类",
+        "地方性法规"
+      ],
+      "size": 398459,
+      "sourceUrl": "https://cgj.sz.gov.cn/attachment/0/811/811921/9043621.pdf",
+      "fileName": "P1-2020-深圳市人大-深圳市生活垃圾分类管理条例.pdf",
+      "filePath": "kb/P1-2020-深圳市人大-深圳市生活垃圾分类管理条例.pdf",
+      "sizeDeclared": 398459
+    },
+    {
+      "id": "k-20",
+      "title": "中华人民共和国固体废物污染环境防治法",
+      "org": "全国人民代表大会常务委员会",
+      "year": 2020,
+      "type": "政策法规",
+      "tags": [
+        "固体废物",
+        "法律法规"
+      ],
+      "size": 251658,
+      "sourceUrl": "https://www.mee.gov.cn/ywgz/fgbz/fl/202004/t20200430_777580.shtml",
+      "fileName": "P2-2020-全国人大-固体废物污染环境防治法.pdf",
+      "filePath": "kb/P2-2020-全国人大-固体废物污染环境防治法.pdf",
+      "sizeDeclared": 251658
+    },
+    {
+      "id": "k-21",
+      "title": "深圳市“十四五”时期“无废城市”建设实施方案",
+      "org": "深圳市人民政府",
+      "year": 2022,
+      "type": "政策法规",
+      "tags": [
+        "无废城市",
+        "固体废物"
+      ],
+      "size": 618660,
+      "sourceUrl": "https://www.mee.gov.cn/home/ztbd/2020/wfcsjssdgz/sdjz/ssfa/202208/P020220818585091038313.pdf",
+      "fileName": "P3-2022-深圳市-十四五时期无废城市建设实施方案.pdf",
+      "filePath": "kb/P3-2022-深圳市-十四五时期无废城市建设实施方案.pdf",
+      "sizeDeclared": 618660
+    },
+    {
+      "id": "k-22",
+      "title": "深圳市“无废城市”建设试点实施方案",
+      "org": "深圳市人民政府",
+      "year": 2020,
+      "type": "政策法规",
+      "tags": [
+        "无废城市",
+        "固体废物"
+      ],
+      "size": 314573,
+      "sourceUrl": "https://www.mee.gov.cn/home/ztbd/2020/wfcsjssdgz/sdjz/ssfa/202003/P020200311602633221248.pdf",
+      "fileName": "P4-2020-深圳市-无废城市建设试点实施方案.pdf",
+      "filePath": "kb/P4-2020-深圳市-无废城市建设试点实施方案.pdf",
+      "sizeDeclared": 314573
+    },
+    {
+      "id": "k-23",
+      "title": "生活垃圾焚烧污染控制标准",
+      "org": "环境保护部,国家质量监督检验检疫总局",
+      "year": 2014,
+      "type": "标准规范",
+      "tags": [
+        "焚烧处置",
+        "国家标准"
+      ],
+      "size": 346030,
+      "sourceUrl": "https://www.envsc.cn/file/201811261429204333.pdf",
+      "fileName": "S2-2014-GB18485-生活垃圾焚烧污染控制标准.pdf",
+      "filePath": "kb/S2-2014-GB18485-生活垃圾焚烧污染控制标准.pdf",
+      "sizeDeclared": 346030
+    },
+    {
+      "id": "k-24",
+      "title": "厨余垃圾处理设施运行管理规范",
+      "org": "深圳市市场监督管理局",
+      "year": 2024,
+      "type": "标准规范",
+      "tags": [
+        "厨余垃圾",
+        "地方标准"
+      ],
+      "size": 314573,
+      "sourceUrl": "https://cgj.sz.gov.cn/attachment/1/1409/1409552/11124499.pdf",
+      "fileName": "S3-2024-DB4403T423-厨余垃圾处理设施运行管理规范.pdf",
+      "filePath": "kb/S3-2024-DB4403T423-厨余垃圾处理设施运行管理规范.pdf",
+      "sizeDeclared": 314573
+    },
+    {
+      "id": "k-25",
+      "title": "固体废物再生利用污染防治技术导则（HJ 1091-2020）",
+      "org": "生态环境部",
+      "year": 2020,
+      "type": "标准规范",
+      "tags": [
+        "固体废物",
+        "再生利用",
+        "污染防治"
+      ],
+      "size": 503316,
+      "sourceUrl": "https://www.mee.gov.cn/ywgz/fgbz/bz/bzwb/jcffbz/202001/W020200115500479970734.pdf",
+      "fileName": "S4-2020-生态环境部-HJ1091-2020固体废物再生利用污染防治技术导则.pdf",
+      "filePath": "kb/S4-2020-生态环境部-HJ1091-2020固体废物再生利用污染防治技术导则.pdf",
+      "sizeDeclared": 503316
+    },
+    {
+      "id": "k-26",
+      "title": "生活垃圾分类设施设备设置规范（DB5101/T 3—2025）",
+      "org": "成都市市场监督管理局",
+      "year": 2025,
+      "type": "标准规范",
+      "tags": [
+        "生活垃圾分类",
+        "设施设备"
+      ],
+      "size": 3261071,
+      "sourceUrl": "https://scjg.chengdu.gov.cn/cdscjgj/c133654/2025-11/24/04eae6a1f8ae43479e707c19803f433e/files/2fa067bd4a4d40c68f5c1de6d57fe4fc.pdf",
+      "fileName": "S5-2025-成都市市场监督管理局-DB5101T3-2025生活垃圾分类设施设备设置规范.pdf",
+      "filePath": "kb/S5-2025-成都市市场监督管理局-DB5101T3-2025生活垃圾分类设施设备设置规范.pdf",
+      "sizeDeclared": 3261071
+    },
+    {
+      "id": "k-27",
+      "title": "海南省生活垃圾分类宣传手册",
+      "org": "海南省住房和城乡建设厅",
+      "year": 2020,
+      "type": "案例工具",
+      "tags": [
+        "垃圾分类",
+        "宣传手册"
+      ],
+      "size": 314573,
+      "sourceUrl": "https://zjt.hainan.gov.cn/szjt/lj01/202006/198b37a1a0254a1ca2ae81a30d87564d/files/a6e7eaafa6b54af2ba26adf18834e92e.pdf",
+      "fileName": "C2-2020-海南省住建厅-生活垃圾分类宣传手册.pdf",
+      "filePath": "kb/C2-2020-海南省住建厅-生活垃圾分类宣传手册.pdf",
+      "sizeDeclared": 314573
+    },
+    {
+      "id": "k-28",
+      "title": "包头市“无废城市”建设试点工作总结报告",
+      "org": "包头市人民政府",
+      "year": 2021,
+      "type": "案例工具",
+      "tags": [
+        "无废城市",
+        "工业固体废物",
+        "危险废物"
+      ],
+      "size": 3093299,
+      "sourceUrl": "https://www.mee.gov.cn/home/ztbd/2020/wfcsjssdgz/sdjz/ldms/202107/P020210719507456385292.pdf",
+      "fileName": "C3-2021-包头市-无废城市试点建设工作总结报告.pdf",
+      "filePath": "kb/C3-2021-包头市-无废城市试点建设工作总结报告.pdf",
+      "sizeDeclared": 3093299
+    },
+    {
+      "id": "k-29",
+      "title": "绍兴市“无废城市”建设试点工作总结报告",
+      "org": "绍兴市人民政府",
+      "year": 2021,
+      "type": "案例工具",
+      "tags": [
+        "无废城市",
+        "生活垃圾分类",
+        "资源化利用"
+      ],
+      "size": 5284823,
+      "sourceUrl": "https://www.mee.gov.cn/home/ztbd/2020/wfcsjssdgz/sdjz/ldms/202107/P020210719507141709956.pdf",
+      "fileName": "C4-2021-绍兴市-无废城市建设试点工作总结报告.pdf",
+      "filePath": "kb/C4-2021-绍兴市-无废城市建设试点工作总结报告.pdf",
+      "sizeDeclared": 5284823
+    },
+    {
+      "id": "k-30",
+      "title": "三亚市“无废城市”建设试点工作总结报告",
+      "org": "三亚市人民政府",
+      "year": 2021,
+      "type": "案例工具",
+      "tags": [
+        "无废城市",
+        "旅游城市",
+        "固体废物"
+      ],
+      "size": 4225761,
+      "sourceUrl": "https://www.mee.gov.cn/home/ztbd/2020/wfcsjssdgz/sdjz/ldms/202107/P020210719507279618217.pdf",
+      "fileName": "C5-2021-三亚市-无废城市建设试点工作总结报告.pdf",
+      "filePath": "kb/C5-2021-三亚市-无废城市建设试点工作总结报告.pdf",
+      "sizeDeclared": 4225761
+    },
+    {
+      "id": "k-31",
+      "title": "徐州市“无废城市”建设试点工作总结报告",
+      "org": "徐州市人民政府",
+      "year": 2021,
+      "type": "案例工具",
+      "tags": [
+        "无废城市",
+        "建筑垃圾",
+        "农业固体废物"
+      ],
+      "size": 754975,
+      "sourceUrl": "https://www.mee.gov.cn/home/ztbd/2020/wfcsjssdgz/sdjz/ldms/202105/P020250423524655373631.pdf",
+      "fileName": "C6-2021-徐州市-无废城市建设试点工作总结报告.pdf",
+      "filePath": "kb/C6-2021-徐州市-无废城市建设试点工作总结报告.pdf",
+      "sizeDeclared": 754975
+    },
+    {
+      "id": "k-32",
+      "title": "“无废城市”建设进展研究报告（2024年）",
+      "org": "生态环境部固体废物与化学品管理技术中心",
+      "year": 2024,
+      "type": "研究报告",
+      "tags": [
+        "无废城市",
+        "进展评估",
+        "固体废物"
+      ],
+      "size": 27095204,
+      "sourceUrl": "https://www.meescc.cn/zxly/gtfwgl/202512/W020251230542600132073.pdf",
+      "fileName": "R1-2024-生态环境部固管中心-无废城市建设进展研究报告2024年.pdf",
+      "filePath": "kb/R1-2024-生态环境部固管中心-无废城市建设进展研究报告2024年.pdf",
+      "sizeDeclared": 27095204
+    },
+    {
+      "id": "k-33",
+      "title": "中国再生资源回收行业发展报告（2019）",
+      "org": "商务部,中国物资再生协会",
+      "year": 2019,
+      "type": "研究报告",
+      "tags": [
+        "再生资源回收",
+        "循环经济",
+        "废塑料"
+      ],
+      "size": 660603,
+      "sourceUrl": "https://images.mofcom.gov.cn/ltfzs/201911/20191111161709299.pdf",
+      "fileName": "R2-2019-商务部-中国再生资源回收行业发展报告2019.pdf",
+      "filePath": "kb/R2-2019-商务部-中国再生资源回收行业发展报告2019.pdf",
+      "sizeDeclared": 660603
+    },
+    {
+      "id": "k-34",
+      "title": "全国固体废物污染环境防治信息发布情况研究报告（2024年）",
+      "org": "生态环境部固体废物与化学品管理技术中心",
+      "year": 2024,
+      "type": "研究报告",
+      "tags": [
+        "固体废物",
+        "信息发布",
+        "年度报告"
+      ],
+      "size": 5337252,
+      "sourceUrl": "https://imgs.h2o-china.com/news/2025/06/1750037206145262.pdf",
+      "fileName": "R3-2024-生态环境部固管中心-全国固体废物污染环境防治信息发布情况研究报告2024年.pdf",
+      "filePath": "kb/R3-2024-生态环境部固管中心-全国固体废物污染环境防治信息发布情况研究报告2024年.pdf",
+      "sizeDeclared": 5337252
+    },
+    {
+      "id": "k-35",
+      "title": "2018年全国大、中城市固体废物污染环境防治年报",
+      "org": "生态环境部",
+      "year": 2018,
+      "type": "研究报告",
+      "tags": [
+        "固体废物",
+        "年度报告",
+        "城市统计"
+      ],
+      "size": 1614807,
+      "sourceUrl": "https://www.mee.gov.cn/hjzl/sthjzk/gtfwwrfz/201901/P020250401552358805330.pdf",
+      "fileName": "R4-2018-生态环境部-全国大中城市固体废物污染环境防治年报.pdf",
+      "filePath": "kb/R4-2018-生态环境部-全国大中城市固体废物污染环境防治年报.pdf",
+      "sizeDeclared": 1614807
+    }
+  ]
+}

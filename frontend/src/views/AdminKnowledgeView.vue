@@ -5,8 +5,14 @@
  * 路由：/admin/knowledge
  * 数据源：GET /api/admin/knowledge（需请求头 X-Admin-Token）
  *
- * 已接：列出全部资料、上传新资料（上传后引擎在后台解析，状态先变「处理中」）。
- * 全部已接：列出全部资料、上传（可一并填标签）、删除、下载。
+ * 已接：列出全部资料、上传（可一并填标签）、删除、下载、问答设置（T3，2026-10-10）。
+ *   上传后引擎在后台解析，状态先显示「处理中」。
+ *   删除成功后延迟 3 秒再刷新 —— 引擎删除有几秒延迟，列表会短暂仍返回它。
+ *
+ * 2026-10-11 合并适配（第三方）：本站改造新增了全局设计令牌（src/styles/global.css），
+ *   本页原先的硬编码色值（#1f3a24 / #6b7d6b / #8a9a8a …）与之是两套体系，
+ *   会让 T3 新增的「问答设置」卡片看起来像另一个站拼进来的。
+ *   已把色值统一收敛到 var(--zw-*)，视觉不变、以后调色只需改一处。
  */
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -597,24 +603,24 @@ async function enterAdmin(): Promise<void> {
 .kb-title {
   margin: 0 0 6px;
   font-size: 22px;
-  color: #1f3a24;
+  color: var(--zw-green-ink);
 }
 .kb-sub {
   margin: 0;
   font-size: 13px;
-  color: #5f6f5f;
+  color: var(--zw-muted);
 }
 .kb-actions {
   padding-top: 4px;
 }
 .file-input {
   font-size: 13px;
-  color: #33473a;
+  color: var(--zw-text);
 }
 .picked {
   margin-left: 10px;
   font-size: 13px;
-  color: #6b7d6b;
+  color: var(--zw-muted);
 }
 .token-card {
   margin: 14px 0;
@@ -627,29 +633,29 @@ async function enterAdmin(): Promise<void> {
 .err {
   margin: 8px 0 0;
   font-size: 13px;
-  color: #b26a00;
+  color: var(--zw-amber);
 }
 .admin-nav {
   display: flex;
   gap: 18px;
   margin: 12px 0 4px;
   padding-bottom: 8px;
-  border-bottom: 1px solid #e6ece6;
+  border-bottom: 1px solid var(--zw-line);
   font-size: 14px;
 }
 .admin-nav a {
-  color: #5f6f5f;
+  color: var(--zw-muted);
   text-decoration: none;
   padding: 2px 2px 6px;
   border-bottom: 2px solid transparent;
 }
 .admin-nav a:hover {
-  color: #1f3a24;
+  color: var(--zw-green-ink);
 }
 .admin-nav a.router-link-active {
-  color: #1f3a24;
+  color: var(--zw-green-ink);
   font-weight: 500;
-  border-bottom-color: #2e7d32;
+  border-bottom-color: var(--zw-green);
 }
 .kb-stat {
   display: flex;
@@ -657,16 +663,16 @@ async function enterAdmin(): Promise<void> {
   gap: 8px;
   margin: 4px 0 10px;
   font-size: 14px;
-  color: #33473a;
+  color: var(--zw-text);
 }
 .kb-stat .ok {
-  color: #2e7d32;
+  color: var(--zw-green);
 }
 .kb-stat .bad {
   color: #c45656;
 }
 .kb-stat .dot {
-  color: #b9c6b9;
+  color: var(--zw-line-strong);
 }
 .kb-bar {
   display: flex;
@@ -688,11 +694,11 @@ async function enterAdmin(): Promise<void> {
 .qa-title {
   margin: 0;
   font-size: 15px;
-  color: #1f3a24;
+  color: var(--zw-green-ink);
 }
 .qa-now {
   font-size: 12px;
-  color: #6b7d6b;
+  color: var(--zw-muted);
 }
 .qa-grid {
   display: grid;
@@ -703,18 +709,18 @@ async function enterAdmin(): Promise<void> {
   display: block;
   margin-bottom: 6px;
   font-size: 13px;
-  color: #33473a;
+  color: var(--zw-text);
 }
 .qa-hint {
   margin: 6px 0 0;
   font-size: 12px;
   line-height: 1.6;
-  color: #8a9a8a;
+  color: var(--zw-faint);
 }
 .qa-warn {
   margin: 0 0 12px;
   font-size: 13px;
-  color: #b26a00;
+  color: var(--zw-amber);
 }
 .qa-foot {
   display: flex;
@@ -724,12 +730,12 @@ async function enterAdmin(): Promise<void> {
 }
 .qa-time {
   font-size: 12px;
-  color: #8a9a8a;
+  color: var(--zw-faint);
   font-variant-numeric: tabular-nums;
 }
 .kb-bar .count {
   font-size: 13px;
-  color: #6b7d6b;
+  color: var(--zw-muted);
 }
 .kb-table {
   background: #fff;
@@ -750,18 +756,18 @@ async function enterAdmin(): Promise<void> {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #33473a;
+  color: var(--zw-text);
 }
 .meta-year {
-  color: #6b7d6b;
+  color: var(--zw-muted);
   font-variant-numeric: tabular-nums;
 }
 .no-meta {
-  color: #b9c6b9;
+  color: var(--zw-line-strong);
 }
 .dlg-hint {
   margin: 0;
   font-size: 12px;
-  color: #8a9a8a;
+  color: var(--zw-faint);
 }
 </style>
