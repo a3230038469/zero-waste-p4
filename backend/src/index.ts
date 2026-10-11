@@ -23,6 +23,7 @@ import authRouter from './routes/auth.js'
 import embedRouter from './routes/embed.js'
 import healthRouter from './routes/health.js'
 import askRouter from './routes/ask.js' // 韶茹
+import chatRouter from './routes/chat.js' // 韶茹（T5：独立问答页的会话接口）
 import trackRouter from './routes/track.js' // 韶茹
 import adminRouter from './routes/admin.js' // 本地演示：老师后台（管理资料）
 import overviewRouter from './routes/overview.js' // 对外展示站：整库数据概览
@@ -45,6 +46,7 @@ app.use('/api/docs', docsRouter) // 韶茹
 app.use('/api/auth', authRouter) // 月月
 app.use('/api/embed', embedRouter) // 韶茹
 app.use('/api/ask', askRouter) // 韶茹（B07 问答窗口用）
+app.use('/api/chat', chatRouter) // 韶茹（T5：/chat 页的会话增删查 + 带 conversationId 的接着聊）
 app.use('/api/track', trackRouter) // 韶茹（埋点 + 看板）
 app.use('/api/admin', adminRouter) // 本地演示：老师后台（管理资料）
 app.use('/api/overview', overviewRouter) // 对外展示站：整库数据概览（GET /api/overview）

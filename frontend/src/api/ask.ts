@@ -20,11 +20,23 @@
  */
 import http, { TOKEN_KEY } from './http'
 
-/** 一条流事件（与后端四个 type 一一对应） */
-export interface AskStreamEvent {
-  type: 'answer' | 'thinking' | 'done' | 'error'
-  content: string
+/** 来源卡片的一条（T4：回答里 `【资料名：…】` / `<kb doc="…" />` 解析出来的） */
+export interface AskSource {
+  /** 展示用资料名 */
+  name: string
+  /** 站内详情页地址，后端给的形如 `/doc/<id>` */
+  url: string
 }
+
+/**
+ * 一条流事件。
+ *
+ * 五个 type：`answer` / `thinking` / `done` / `error` 带 `content`；
+ * `sources`（T4 新增）只带 `items`，不带 content。
+ */
+export type AskStreamEvent =
+  | { type: 'answer' | 'thinking' | 'done' | 'error'; content: string }
+  | { type: 'sources'; items: AskSource[] }
 
 export interface AskOptions {
   query: string
@@ -32,6 +44,13 @@ export interface AskOptions {
   includeThinking?: boolean
   /** 指定知识库；不传用后端 .env 里的默认库 */
   knowledgeBaseIds?: string[]
+  /**
+   * T5：带上 = 「接着聊」。
+   *
+   * 后端会复用这个会话的引擎 session（AI 记得上文），并把本轮问答落库。
+   * **不传**就是一次性问答 —— 首页旧气泡就是这么调的，行为与加这个字段之前完全一致。
+   */
+  conversationId?: string
   /** 中止（用户关窗口 / 组件卸载）——会真正断开上游，不让引擎白跑 */
   signal?: AbortSignal
   /** 每收到一条事件回调一次 */
@@ -62,7 +81,8 @@ export async function askStream(options: AskOptions): Promise<void> {
     body: JSON.stringify({
       query: options.query,
       includeThinking: options.includeThinking === true,
-      ...(options.knowledgeBaseIds ? { knowledgeBaseIds: options.knowledgeBaseIds } : {})
+      ...(options.knowledgeBaseIds ? { knowledgeBaseIds: options.knowledgeBaseIds } : {}),
+      ...(options.conversationId ? { conversationId: options.conversationId } : {})
     }),
     ...(options.signal ? { signal: options.signal } : {})
   })
@@ -130,18 +150,47 @@ function parseFrame(frame: string): AskStreamEvent | null {
   }
   if (dataLines.length === 0) return null
 
+  let parsed: unknown
   try {
-    const parsed = JSON.parse(dataLines.join('\n')) as Partial<AskStreamEvent>
-    if (
-      parsed.type === 'answer' ||
-      parsed.type === 'thinking' ||
-      parsed.type === 'done' ||
-      parsed.type === 'error'
-    ) {
-      return { type: parsed.type, content: typeof parsed.content === 'string' ? parsed.content : '' }
-    }
+    parsed = JSON.parse(dataLines.join('\n'))
   } catch {
     // 中途一条脏帧不该打断整段回答
+    return null
+  }
+  if (!isRecord(parsed)) return null
+
+  if (parsed['type'] === 'sources') {
+    const items = toSources(parsed['items'])
+    // 认得这个事件但没有可用条目：返回 null，不往气泡上挂空卡片
+    return items.length > 0 ? { type: 'sources', items } : null
+  }
+  if (
+    parsed['type'] === 'answer' ||
+    parsed['type'] === 'thinking' ||
+    parsed['type'] === 'done' ||
+    parsed['type'] === 'error'
+  ) {
+    const content = parsed['content']
+    return { type: parsed['type'], content: typeof content === 'string' ? content : '' }
   }
   return null
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** 后端给的 items 逐项校验：字段不全的丢掉，不让半个 undefined 漏到模板里 */
+function toSources(raw: unknown): AskSource[] {
+  if (!Array.isArray(raw)) return []
+  const items: AskSource[] = []
+  for (const entry of raw) {
+    if (!isRecord(entry)) continue
+    const name = entry['name']
+    const url = entry['url']
+    if (typeof name !== 'string' || !name.trim()) continue
+    if (typeof url !== 'string' || !url.startsWith('/')) continue
+    items.push({ name, url })
+  }
+  return items
 }

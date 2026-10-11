@@ -8,17 +8,25 @@
  *   现改为直连自建后端 POST /api/ask（SSE 流式逐字回吐），复用 api/ask.ts。
  *   对外接口不变（askWith / v-model:open），父组件（首页）无需改动。
  * 访客免注册可问。
+ *
+ * T4 · 问答体验升级（三件事都在这个文件里）：
+ *   1. 收到后端的 `sources` 事件 → 气泡底部渲染一排可点的来源卡片（跳资料详情页）
+ *   2. 回答正文走 marked 渲染 + DOMPurify 净化；**用户自己的提问保持纯文本**
+ *   3. 检索期间轮换趣味文案，每 2.5 秒一句，出第一个字立刻停
+ *
+ * T5 · 抽出共享层（两处改动，都只减不增，本组件对外接口不变）：
+ *   - 气泡渲染（Markdown / 来源卡片 / 等待文案切句动画）→ `ChatBubble.vue`
+ *   - 等待文案与洗牌轮换 → `composables/useWaitingLines.ts`
+ *   与 `/chat` 独立页共用同一份。**首页气泡的对外接口（v-model:open、askWith、
+ *   status-change）逐字未改**，首页行为与 T4 一致；提问仍然**不带 conversationId**
+ *   （一次性问答），所以本组件完全不碰 T5 的会话存储。
  */
-import { nextTick, ref, watch } from 'vue'
+import { nextTick, onUnmounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 
+import ChatBubble, { type BubbleMessage } from './ChatBubble.vue'
+import { useWaitingLines } from '../composables/useWaitingLines'
 import { askStream } from '../api/ask'
-
-interface ChatMessage {
-  role: 'user' | 'assistant'
-  text: string
-  /** 出错的气泡（额度/网络/引擎不可用），文案用警示色 */
-  failed?: boolean
-}
 
 const emit = defineEmits<{
   /** 状态变化，便于父组件联动（如禁用示例问题按钮） */
@@ -26,26 +34,33 @@ const emit = defineEmits<{
 }>()
 
 const panelOpen = defineModel<boolean>('open', { default: false })
+const router = useRouter()
 
-const messages = ref<ChatMessage[]>([])
+const messages = ref<BubbleMessage[]>([])
 const draft = ref('')
 const busy = ref(false)
+/** 正在流式输出的那条消息的下标（流结束后段落浮现动画才触发） */
+const streamingIdx = ref(-1)
 const bodyRef = ref<HTMLElement | null>(null)
 let controller: AbortController | null = null
 
 /** 空面板时的快捷问题（点了直接问） */
 const EXAMPLES = ['厨余垃圾怎么处理？', '什么是零废弃？', '社区堆肥需要注意什么？']
 
-/**
- * 知识库引用标签（<kb doc="…" chunk_id="…" kb_id="…" />）对读者太吵，
- * 渲染时去掉；顺带压掉替换后留下的多余空行。
+/* ------------------------------------------------------------------ *
+ * T4-2 Markdown 渲染 / T4-3 等待文案
+ * ------------------------------------------------------------------ *
+ * T5：这两块已抽到 ChatBubble.vue 与 useWaitingLines.ts，与 /chat 独立页共用。
+ * 本文件现在只负责「气泡列表 + 流式收发」，不再自带渲染与轮播实现。
  */
-const SOURCE_TAG = /<kb\s+doc="[^"]*"[^>]*\/?>/g
-function renderAnswer(text: string): string {
-  return text
-    .replace(SOURCE_TAG, '')
-    .replace(/[ \t]+$/gm, '')
-    .replace(/\n{3,}/g, '\n\n')
+const waiting = useWaitingLines()
+
+function stopWaiting(): void {
+  waiting.stop()
+}
+
+function startWaiting(): void {
+  waiting.start()
 }
 
 function scrollToBottom(): void {
@@ -53,6 +68,11 @@ function scrollToBottom(): void {
     const el = bodyRef.value
     if (el) el.scrollTop = el.scrollHeight
   })
+}
+
+/** 点来源卡片：跳资料详情页（预览 / 下载按钮在详情页上） */
+function openSource(url: string): void {
+  void router.push(url)
 }
 
 /** 发一问：先落两个气泡，再把流里的 answer 逐字填进回复气泡 */
@@ -65,7 +85,9 @@ async function send(question: string): Promise<void> {
   messages.value.push({ role: 'user', text: q })
   messages.value.push({ role: 'assistant', text: '' })
   const idx = messages.value.length - 1
+  streamingIdx.value = idx
   busy.value = true
+  startWaiting()
   scrollToBottom()
 
   controller = new AbortController()
@@ -77,9 +99,13 @@ async function send(question: string): Promise<void> {
         const msg = messages.value[idx]
         if (!msg) return
         if (evt.type === 'answer') {
+          stopWaiting() // 出第一个字就停，不闪
           msg.text += evt.content
           scrollToBottom()
+        } else if (evt.type === 'sources') {
+          msg.sources = evt.items
         } else if (evt.type === 'error') {
+          stopWaiting()
           msg.failed = true
           msg.text = msg.text || evt.content || 'AI 暂时不可用'
         }
@@ -97,8 +123,11 @@ async function send(question: string): Promise<void> {
       msg.text = err instanceof Error ? err.message : '请求失败，请稍后再试'
     }
   } finally {
+    stopWaiting()
     busy.value = false
     controller = null
+    // 段落浮现动画在 streamingIdx 归 -1 的那一刻触发（ChatBubble 里 settled 类名）
+    streamingIdx.value = -1
     scrollToBottom()
   }
 }
@@ -122,6 +151,13 @@ function onKeydown(event: KeyboardEvent): void {
 defineExpose({ askWith })
 
 watch(busy, (b) => emit('status-change', b ? 'loading' : 'ready'), { immediate: true })
+
+// 组件没了就把定时器和上游连接一起收掉，别让引擎在没人看的页面上继续跑
+onUnmounted(() => {
+  stopWaiting()
+  controller?.abort()
+  controller = null
+})
 </script>
 
 <template>
@@ -139,11 +175,16 @@ watch(busy, (b) => emit('status-change', b ? 'loading' : 'ready'), { immediate: 
             问一句试试，比如「厨余垃圾怎么处理？」答案会从零废弃知识库里找。
           </p>
 
-          <div v-for="(m, i) in messages" :key="i" class="msg" :class="m.role">
-            <div class="bubble" :class="{ failed: m.failed }">
-              <span v-if="m.role === 'assistant' && busy && !m.text" class="typing">正在查资料…</span>
-              <template v-else>{{ renderAnswer(m.text) }}</template>
-            </div>
+          <div v-for="(m, i) in messages" :key="i" class="row" :class="m.role">
+            <!-- T5：渲染（Markdown / 来源卡片 / 等待文案）已抽到 ChatBubble.vue，
+                 与 /chat 独立页共用同一份。本组件只管气泡列表与流式收发。 -->
+            <ChatBubble
+              :message="m"
+              :streaming="i === streamingIdx"
+              :waiting="i === streamingIdx && !m.text && !m.failed"
+              :waiting-text="waiting.text.value"
+              @open-source="openSource"
+            />
           </div>
         </div>
 
@@ -235,35 +276,16 @@ watch(busy, (b) => emit('status-change', b ? 'loading' : 'ready'), { immediate: 
   line-height: 1.6;
   color: #7b8b7b;
 }
-.msg {
+/* T5：气泡本身的样式（配色 / Markdown / 来源卡片 / 等待文案）全在 ChatBubble.vue。
+   这里只留「谁在左边谁在右边」的排布。 */
+.row {
   display: flex;
   margin-bottom: 8px;
 }
-.msg.user {
+.row.user {
   justify-content: flex-end;
 }
-.bubble {
-  max-width: 86%;
-  padding: 8px 12px;
-  border-radius: 10px;
-  font-size: 13px;
-  line-height: 1.7;
-  white-space: pre-wrap;
-  word-break: break-word;
-  background: #f3f8f3;
-  color: #24352a;
-}
-.msg.user .bubble {
-  background: var(--zw-green, #2e7d32);
-  color: #fff;
-}
-.bubble.failed {
-  background: #fff7e6;
-  color: #b26a00;
-}
-.typing {
-  color: #6b7d6b;
-}
+
 .ask-examples {
   display: flex;
   flex-wrap: wrap;

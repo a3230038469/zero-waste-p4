@@ -8,6 +8,7 @@
  *     如需回退，删掉带「韶茹」注释的这几行即可，不影响其余路由。
  *   - 对外展示站改造（2026-10-10）：新增 `/insights` 数据概览、`/about` 关于项目。
  *     这两个页面的内容**全部来自真实数据与已核事实**，没有一段是编的（见页面内注释）。
+ *   - T5（2026-10-12）：新增 `/chat` AI 问答独立页（会话存数据库，可接着聊）。
  */
 import { createRouter, createWebHistory } from 'vue-router'
 
@@ -20,6 +21,8 @@ const router = createRouter({
     { path: '/shelf', name: 'shelf', component: () => import('../views/ShelfView.vue') },
     { path: '/insights', name: 'insights', component: () => import('../views/InsightsView.vue') },
     { path: '/about', name: 'about', component: () => import('../views/AboutView.vue') },
+    // T5：AI 问答独立页（左会话列表 / 右对话流，会话存数据库，可接着聊）
+    { path: '/chat', name: 'chat', component: () => import('../views/ChatView.vue') },
     { path: '/doc/:id', name: 'doc', component: () => import('../views/DocDetailView.vue') },
     { path: '/auth', name: 'auth', component: () => import('../views/AuthView.vue') },
     // 韶茹：数据看板（POST /api/track + GET /api/track/stats 的配套页）
