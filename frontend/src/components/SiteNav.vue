@@ -21,15 +21,15 @@ const { user, isLoggedIn, fetchMe, logout } = useAuth()
 /**
  * 导航项。`/chat` 是 T5 的 AI 问答独立页（带会话历史，可接着聊）。
  *
- * ⚠️ 放在「关于项目」**旁边**（而不是末尾）：问答是这个站最主动的入口，
- *    藏在最后一项等于埋起来。`exact: false` 让 `/chat` 与它的子路径都能高亮。
+ * 顺序（2026-10-12 按需求调整）：关于项目 → 首页 → 资料库 → 数据概览 → AI 问答。
+ * ⚠️ 只调了本数组的排列顺序，样式、hover、高亮逻辑、Logo、登录态一律未动。
  */
 const NAV = [
+  { to: '/about', label: '关于项目', exact: false },
   { to: '/', label: '首页', exact: true },
   { to: '/shelf', label: '资料库', exact: false },
   { to: '/insights', label: '数据概览', exact: false },
-  { to: '/chat', label: 'AI 问答', exact: false },
-  { to: '/about', label: '关于项目', exact: false }
+  { to: '/chat', label: 'AI 问答', exact: false }
 ]
 
 function onLogout(): void {
