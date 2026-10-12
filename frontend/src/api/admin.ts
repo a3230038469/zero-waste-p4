@@ -109,6 +109,35 @@ export async function deleteKnowledge(token: string, id: string): Promise<void> 
   })
 }
 
+/** 重新上传的结果。`metaRestored=false` 时看 metaNote 知道标签为什么没带回来 */
+export interface ReuploadResult {
+  success: boolean
+  message: string
+  metaNote: string
+  data: { id: string; fileName: string; metaRestored: boolean }
+}
+
+/**
+ * 解析失败 → 重新上传（后端一站式完成：取回原件 → 删旧记录 → 传回去 → 补回标签）。
+ *
+ * 老师本地不需要留原件，所以调用方不用传文件；旧 id 传进去，新 id 从
+ * `data.id` 拿（**一定换成了新 id**，别再用旧 id 去查详情）。
+ *
+ * ⚠️ 传的是大文件（几十兆 PDF 常见），默认 20s 超时不够，这里放到 5 分钟。
+ */
+export async function reuploadKnowledge(token: string, id: string): Promise<ReuploadResult> {
+  const res = await http.post<ReuploadResult>(
+    `/admin/knowledge/${encodeURIComponent(id)}/reupload`,
+    null,
+    {
+      headers: { 'X-Admin-Token': token },
+      silent: true,
+      timeout: 300_000
+    }
+  )
+  return res.data
+}
+
 /** 管理视角的一个注册用户（手机号已脱敏） */
 export interface AdminUserItem {
   id: string

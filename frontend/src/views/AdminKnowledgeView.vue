@@ -5,7 +5,8 @@
  * 路由：/admin/knowledge
  * 数据源：GET /api/admin/knowledge（需请求头 X-Admin-Token）
  *
- * 已接：列出全部资料、上传（可一并填标签）、删除、下载、问答设置（T3，2026-10-10）。
+ * 已接：列出全部资料、上传（可一并填标签）、删除、下载、问答设置（T3，2026-10-10）、
+ *   解析失败行的「重新上传」（T6，2026-10-12：后端取回原件→删旧→重传→补回标签）。
  *   上传后引擎在后台解析，状态先显示「处理中」。
  *   删除成功后延迟 3 秒再刷新 —— 引擎删除有几秒延迟，列表会短暂仍返回它。
  *
@@ -23,6 +24,7 @@ import {
   deleteKnowledge,
   fetchKnowledgeList,
   fetchQaSettings,
+  reuploadKnowledge,
   saveQaSettings,
   uploadKnowledge,
   type AdminKnowledgeItem,
@@ -66,10 +68,19 @@ function hasMeta(row: AdminKnowledgeItem): boolean {
   return Boolean(row.meta && (row.meta.org || row.meta.year || row.meta.type))
 }
 
+/**
+ * 引擎解析状态 → 表格里显示的文字。
+ *
+ * ⚠️ 引擎「还在处理」不止一个值：实测有 pending / processing / finalizing 三种
+ * （重新上传、新上传的资料都会经过它们）。别只认 `processing` —— 漏一个老师
+ * 就会在表格里看到一串英文（2026-10-12 实测踩中）。
+ */
 function statusTag(status: string): { type: 'success' | 'warning' | 'danger' | 'info'; text: string } {
   if (status === 'completed') return { type: 'success', text: '已入库' }
   if (status === 'failed') return { type: 'danger', text: '解析失败' }
-  if (status === 'processing') return { type: 'warning', text: '处理中' }
+  if (status === 'pending' || status === 'processing' || status === 'finalizing') {
+    return { type: 'warning', text: '处理中' }
+  }
   return { type: 'info', text: status || '未知' }
 }
 
@@ -171,6 +182,49 @@ async function confirmDelete(row: AdminKnowledgeItem): Promise<void> {
     }
   } finally {
     deletingId.value = ''
+  }
+}
+
+/* ---------------- 重新上传（T6：解析失败 → 删旧重传） ---------------- */
+
+/** 正在重新上传的那一行 id；空串 = 没有。用它做 loading，只转这一行不转全表 */
+const reuploadingId = ref('')
+
+async function confirmReupload(row: AdminKnowledgeItem): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      `「${row.title}」上次解析失败了。要重新上传吗？` +
+        '系统会从引擎里取回原件、删掉这份失败的、再原样传一遍，机构/年份/类型标签都会保留。',
+      '重新上传',
+      { type: 'warning', confirmButtonText: '重新上传', cancelButtonText: '取消' }
+    )
+  } catch {
+    return // 用户点了取消
+  }
+
+  reuploadingId.value = row.id
+  try {
+    const result = await reuploadKnowledge(token.value, row.id)
+    ElMessage.success('已重新上传，引擎正在解析')
+    // 标签没带回来时**额外**说明一句，别让老师以为标签还在
+    if (result.metaNote) ElMessage.warning(result.metaNote)
+    // 链路上刚删过旧记录，而引擎删除有几秒延迟（列表会短暂仍返回它），
+    // 等一下再刷新，免得表格里同时出现新旧两份、以为重传了两遍
+    await new Promise((resolve) => setTimeout(resolve, 2000))
+    await load()
+  } catch (err) {
+    const response = (
+      err as { response?: { status?: number; data?: { error?: { message?: string } } } }
+    ).response
+    const message = response?.data?.error?.message ?? '重新上传失败，看看后端（:4000）在不在'
+    if (response?.status === 404) {
+      ElMessage.warning(message)
+      await load()
+    } else {
+      ElMessage.error(message)
+    }
+  } finally {
+    reuploadingId.value = ''
   }
 }
 
@@ -515,9 +569,19 @@ async function enterAdmin(): Promise<void> {
         <el-table-column label="入库时间" width="108" align="center">
           <template #default="scope">{{ shortDate(scope.row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="132" align="center" fixed="right">
+        <el-table-column label="操作" width="196" align="center" fixed="right">
           <template #default="scope">
             <el-button link type="primary" size="small" @click="download(scope.row)">下载</el-button>
+            <el-button
+              v-if="scope.row.parseStatus === 'failed'"
+              link
+              type="warning"
+              size="small"
+              :loading="reuploadingId === scope.row.id"
+              @click="confirmReupload(scope.row)"
+            >
+              重新上传
+            </el-button>
             <el-button
               link
               type="danger"
