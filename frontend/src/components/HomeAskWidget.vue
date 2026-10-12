@@ -27,6 +27,7 @@ import { useRouter } from 'vue-router'
 import ChatBubble, { type BubbleMessage } from './ChatBubble.vue'
 import { useWaitingLines } from '../composables/useWaitingLines'
 import { askStream } from '../api/ask'
+import { ASK_DISCLAIMER, ASK_SCOPE_NOTE, NO_ANSWER_TEXT } from '../utils/askCopy'
 
 const emit = defineEmits<{
   /** 状态变化，便于父组件联动（如禁用示例问题按钮） */
@@ -113,8 +114,10 @@ async function send(question: string): Promise<void> {
     })
     const msg = messages.value[idx]
     if (msg && !msg.text) {
-      msg.failed = true
-      msg.text = 'AI 没有返回内容，请稍后再试'
+      // 与 /chat 独立页同一口径（utils/askCopy.ts）：库里没有就说库里没有，
+      // 不让访客以为是自己的网络或浏览器出了问题。
+      msg.noAnswer = true
+      msg.text = NO_ANSWER_TEXT
     }
   } catch (err) {
     const msg = messages.value[idx]
@@ -205,6 +208,9 @@ onUnmounted(() => {
             发送
           </el-button>
         </div>
+
+        <!-- 常驻作答范围 + 免责声明（PRD 要求；文案与 /chat 共用 utils/askCopy.ts） -->
+        <p class="ask-note">{{ ASK_SCOPE_NOTE }} · {{ ASK_DISCLAIMER }}</p>
       </section>
     </transition>
 
@@ -298,6 +304,14 @@ onUnmounted(() => {
   gap: 8px;
   padding: 10px 12px;
   border-top: 1px solid #eef4ee;
+}
+/* 常驻说明：小字、两行内自动换行，不占太多面板高度 */
+.ask-note {
+  margin: 0;
+  padding: 0 12px 9px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #8aa08c;
 }
 .pop-enter-active,
 .pop-leave-active {

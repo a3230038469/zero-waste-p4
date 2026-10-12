@@ -26,12 +26,18 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 
 import type { AskSource } from '../api/ask'
+import { NO_ANSWER_LABEL, NO_SOURCE_NOTE } from '../utils/askCopy'
 
 export interface BubbleMessage {
   role: 'user' | 'assistant'
   text: string
   /** 出错的气泡（额度/网络/引擎不可用），文案用警示色 */
   failed?: boolean
+  /**
+   * 库内没有可用资料（后端 noAnswer 口径：正常收尾但正文为空）。
+   * 与 failed 分开：**它不是故障**，是「知识库里确实没有」，不该用警示色吓用户。
+   */
+  noAnswer?: boolean
   /** 回答引用的资料卡片。同一份资料后端已去重 */
   sources?: AskSource[]
 }
@@ -94,10 +100,30 @@ const answerHtml = computed(() =>
 
 /** 等待文案（非空才渲染，避免空 transition） */
 const waitingText = computed(() => (props.waitingText ?? '').trim())
+
+/**
+ * 要不要显示「本条没有关联到库内资料」的提示。
+ *
+ * 只在**流真正结束**（streaming=false）且满足全部条件时显示，否则会在等待期间闪出来：
+ *   - assistant、有正文、不是错误、不是拒答
+ *   - 没有来源卡片（sources 为空 = 后端 resolveCitationSources 没解析出引用）
+ *
+ * ⚠️ 只提示、**不改写正文**：T4 的解析兼容四种引用形态，但仍可能遇到模型没写引用标记的
+ *    情况。这种情况下把模型的话篡改成「没资料」比不提示更糟，所以只补一句实话。
+ */
+const showNoSourceNote = computed(
+  () =>
+    props.message.role === 'assistant' &&
+    !props.streaming &&
+    !props.message.failed &&
+    !props.message.noAnswer &&
+    props.message.text.trim() !== '' &&
+    (!props.message.sources || props.message.sources.length === 0)
+)
 </script>
 
 <template>
-  <div class="bubble" :class="[message.role, { failed: message.failed }]">
+  <div class="bubble" :class="[message.role, { failed: message.failed, 'no-answer': message.noAnswer }]">
     <!-- 等待期：轮换文案；出第一个字就换成正文，不闪。fade + out-in = 淡出后淡入，不叠影 -->
     <transition v-if="waiting && waitingText" name="fade" mode="out-in">
       <span :key="waitingText" class="typing">{{ waitingText }}</span>
@@ -112,6 +138,12 @@ const waitingText = computed(() => (props.waitingText ?? '').trim())
             与 --max-warnings 0 冲突，所以带理由就地收口，不全局关规则。 -->
     <!-- eslint-disable-next-line vue/no-v-html -->
     <div v-else class="md" :class="{ settled: !streaming }" v-html="answerHtml"></div>
+
+    <!-- 拒答标签：明确告诉用户这是「库里没有」，而不是 AI 坏了 -->
+    <p v-if="message.noAnswer" class="no-answer-label">{{ NO_ANSWER_LABEL }}</p>
+
+    <!-- 有正文但没解析到引用：如实补一句，不篡改模型输出 -->
+    <p v-if="showNoSourceNote" class="no-source">{{ NO_SOURCE_NOTE }}</p>
 
     <!-- 来源卡片：点一下跳资料详情页（预览 / 下载在那页）。
          appear + stagger 索引 = 流结束时逐个弹入 -->
@@ -157,6 +189,30 @@ const waitingText = computed(() => (props.waitingText ?? '').trim())
 .bubble.failed {
   background: #fff7e6;
   color: #b26a00;
+}
+/* 拒答气泡：不是故障，用中性色 + 虚线边（与 failed 的警示橙区分开） */
+.bubble.no-answer {
+  background: #f7faf7;
+  border: 1px dashed #cfdccf;
+  color: #3f5245;
+}
+.no-answer-label {
+  margin: 8px 0 0;
+  padding-top: 6px;
+  border-top: 1px dashed #dfe9df;
+  font-size: 11px;
+  color: #8aa08c;
+  white-space: normal;
+}
+/* 无来源提示：一行小字，位置与来源卡片一致（虚线分隔），但不可点 */
+.no-source {
+  margin: 8px 0 0;
+  padding-top: 6px;
+  border-top: 1px dashed #dfe9df;
+  font-size: 11px;
+  line-height: 1.7;
+  color: #8aa08c;
+  white-space: normal;
 }
 .plain {
   white-space: pre-wrap;

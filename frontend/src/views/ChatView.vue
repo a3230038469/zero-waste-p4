@@ -12,12 +12,13 @@
  *   - 删会话 = 真删数据库记录，不是本地隐藏（刷新后不会再冒出来）
  */
 import { computed, nextTick, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import ChatBubble, { type BubbleMessage } from '../components/ChatBubble.vue'
 import { useWaitingLines } from '../composables/useWaitingLines'
 import { askStream } from '../api/ask'
+import { ASK_DISCLAIMER, ASK_SCOPE_NOTE, NO_ANSWER_TEXT } from '../utils/askCopy'
 import {
   createConversation,
   deleteConversation,
@@ -26,6 +27,7 @@ import {
   type ConversationSummary
 } from '../api/chat'
 
+const route = useRoute()
 const router = useRouter()
 
 /** 会话列表（后端已按最近活动倒序） */
@@ -59,6 +61,14 @@ const waiting = useWaitingLines()
 
 /** 空面板时的快捷问题 */
 const EXAMPLES = ['厨余垃圾怎么处理？', '什么是零废弃？', '社区堆肥需要注意什么？']
+
+/**
+ * 从资料库零结果带过来的检索词（PRD 场景 D 兜底）。
+ *
+ * 只用来**预填**输入框，不自动发送：用户可能想改问法，自动发还会白烧一次引擎额度。
+ * 显示一行说明是必要的——否则用户会觉得「我明明是搜出来的，怎么话已经在框里了」。
+ */
+const pulledKeyword = ref('')
 
 /** 有会话才显示对话框；一个都没有时给引导（别摆一个空输入框让人不知从哪下手） */
 const hasConversation = computed(() => conversations.value.length > 0)
@@ -204,8 +214,10 @@ async function send(question: string): Promise<void> {
     })
     const msg = messages.value[idx]
     if (msg && !msg.text) {
-      msg.failed = true
-      msg.text = 'AI 没有返回内容，请稍后再试'
+      // 后端 noAnswer 口径（本次正常收尾但正文为空）→ 按 PRD 用固定拒答模板，
+      // 不留一句「请稍后再试」让用户以为是自己网络的问题。**不算 failed**：不是故障。
+      msg.noAnswer = true
+      msg.text = NO_ANSWER_TEXT
     }
   } catch (err) {
     const msg = messages.value[idx]
@@ -267,6 +279,13 @@ function relativeTime(iso: string): string {
 }
 
 onMounted(async () => {
+  // 场景 D 兜底：资料库零结果跳过来时带 ?q=关键词，预填进输入框（不自动发）
+  const incoming = typeof route.query.q === 'string' ? route.query.q.trim() : ''
+  if (incoming) {
+    pulledKeyword.value = incoming
+    draft.value = incoming
+  }
+
   try {
     const items = await listConversations()
     conversations.value = items
@@ -281,6 +300,8 @@ onMounted(async () => {
     ElMessage.error(errorText(err, '加载对话列表失败'))
   } finally {
     loading.value = false
+    // 预填来的词直接给上焦点：用户一路点过来，少一次点击就开始输入
+    if (incoming) focusInput()
   }
 })
 </script>
@@ -329,7 +350,9 @@ onMounted(async () => {
     <section class="main">
       <header class="main-head">
         <span class="main-title">{{ activeTitle }}</span>
-        <span class="main-tip">答案只从零废弃知识库里找，引用可点开原文</span>
+        <!-- 作答范围与免责声明已移到输入框下方常驻（见 .foot-note），这里只说来源可核对，
+             两处不重复说同一句话 -->
+        <span class="main-tip">引用可点开原文核对</span>
       </header>
 
       <div ref="bodyRef" class="stream">
@@ -361,6 +384,11 @@ onMounted(async () => {
         </el-button>
       </div>
 
+      <!-- 场景 D 兜底：说明这个词是从资料库带过来的，免得用户以为是系统乱填的 -->
+      <p v-if="pulledKeyword && messages.length === 0" class="pulled">
+        已把你在资料库里搜的「<strong>{{ pulledKeyword }}</strong>」带过来，可以直接发送，也可以改一改再问。
+      </p>
+
       <div class="foot">
         <el-input
           ref="inputRef"
@@ -373,6 +401,10 @@ onMounted(async () => {
           发送
         </el-button>
       </div>
+
+      <!-- 常驻说明（PRD：作答范围 + 免责声明）。不写在气泡上——气泡是「这次回答」，
+           这两句是「整个问答能力」的口径，属于界面而非某一条回答。 -->
+      <p class="foot-note">{{ ASK_SCOPE_NOTE }}；{{ ASK_DISCLAIMER }}</p>
     </section>
   </div>
 </template>
@@ -565,7 +597,27 @@ onMounted(async () => {
   display: flex;
   gap: 10px;
   padding: 12px 18px;
-  border-top: 1px solid var(--zw-line);
+}
+/* 场景 D 带过来的检索词说明：一条淡色提示，不抢输入框 */
+.pulled {
+  margin: 0;
+  padding: 0 18px 8px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--zw-muted);
+}
+.pulled strong {
+  color: var(--zw-green-deep);
+  font-weight: 600;
+}
+/* 常驻作答范围 + 免责声明 */
+.foot-note {
+  margin: 0;
+  padding: 8px 18px 12px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--zw-faint);
+  border-top: 1px dashed var(--zw-line);
 }
 
 /* ---- 窄屏：侧栏收到上方变成横向可滚条，对话流占满下方 ---- */

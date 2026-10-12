@@ -131,9 +131,16 @@ function resetAll(): void {
   onFilterChange()
 }
 
-/** 零结果时引导去首页问 AI（首页有问答入口） */
+/**
+ * 零结果时引导去问 AI，并**把用户刚搜的词带过去**。
+ *
+ * PRD 场景 D 兜底：零结果 → 「试试问 AI」→ 关键词预填。
+ * 只预填不自动发送：一是用户可能想改问法，二是白烧一次引擎额度。
+ * 关键词为空（纯靠筛选筛空的）就只跳页面，不带一个空参数。
+ */
 function goAskAi(): void {
-  void router.push('/')
+  const q = keyword.value.trim()
+  void router.push(q ? { path: '/chat', query: { q } } : { path: '/chat' })
 }
 
 /** 把地址栏参数灌进筛选状态。首页的主题/类型入口就是靠这一步生效的。 */
