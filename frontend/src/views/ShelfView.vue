@@ -18,6 +18,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { getDocs, getFacets, type DocListQuery } from '../api/docs'
 import type { DocListResponse, FacetsResponse } from '../api/types'
 import DocCard from '../components/DocCard.vue'
+import { cardToneVars, toneVars } from '../utils/typeTone'
 
 const PAGE_SIZE = 20
 
@@ -42,15 +43,30 @@ const total = computed(() => list.value?.total ?? 0)
  * 类型标签：库里实际存在的类型全列（不写死）。
  * 为什么不能只写死四个 —— 库里另有「研究实践报告」「各类标准」「国内政策法规」
  * 「国际公约」「科学认知」等类型（合计 100 多份），写死就永远筛不到它们。
+ *
+ * 2026-10-13：每类附一套专属配色（`style` 里是 CSS 变量），标签选中/悬停、
+ * 以及卡片左侧竖线与悬停渐变都读同一份色值，改色只改 utils/typeTone.ts 一处。
+ * 「全部」不带色（style 为 undefined），保持它原来的主绿样式不变。
  */
-const typeTabs = computed(() => {
+interface TypeTab {
+  value: string
+  label: string
+  count: number
+  style?: Record<string, string>
+}
+
+const typeTabs = computed<TypeTab[]>(() => {
   const all = facets.value.types.map((t) => t.value).filter(Boolean)
   const totalAll = facets.value.types.reduce((sum, t) => sum + t.count, 0)
-  return [{ value: '', label: '全部', count: totalAll }, ...all.map((v) => ({
-    value: v,
-    label: v,
-    count: facets.value.types.find((t) => t.value === v)?.count ?? 0
-  }))]
+  return [
+    { value: '', label: '全部', count: totalAll },
+    ...all.map((v) => ({
+      value: v,
+      label: v,
+      count: facets.value.types.find((t) => t.value === v)?.count ?? 0,
+      style: toneVars(v)
+    }))
+  ]
 })
 
 interface ActiveChip {
@@ -192,7 +208,8 @@ watch(
         type="button"
         role="tab"
         class="type-tab"
-        :class="{ 'is-active': activeType === t.value }"
+        :class="{ 'is-active': activeType === t.value, 'type-tab--tone': !!t.style }"
+        :style="t.style"
         :aria-selected="activeType === t.value"
         @click="activeType = t.value; onFilterChange()"
       >
@@ -288,7 +305,9 @@ watch(
 
     <template v-else-if="items.length > 0">
       <div class="cards">
-        <DocCard v-for="doc in items" :key="doc.id" :doc="doc" />
+        <!-- 分类色以 CSS 变量挂在卡片根节点上：DocCard 组件本身不动，
+             首页/概览页用的还是它原来的样式 -->
+        <DocCard v-for="doc in items" :key="doc.id" :doc="doc" :style="cardToneVars(doc.type)" />
       </div>
 
       <div class="pager">
@@ -380,6 +399,58 @@ watch(
   background: rgba(255, 255, 255, 0.22);
 }
 
+/* 分类专属配色（2026-10-13）。
+   只作用于带 --tone 的标签；「全部」没有 --tone，仍是上面那套主绿原样式。
+   放在原有规则之后：同优先级时后者生效，不必靠 !important。
+   所有文字色都由 utils/typeTone.ts 按对比度算过，不是手挑的。 */
+.type-tab--tone {
+  border-color: var(--tone-line);
+  color: var(--tone-text);
+}
+
+.type-tab--tone:hover {
+  border-color: var(--tone);
+  background: var(--tone-soft);
+  color: var(--tone-chip-text); /* 浅底上要换更深的字，否则对比度会被吃掉 */
+}
+
+.type-tab--tone .tab-count {
+  color: var(--tone-chip-text);
+  background: var(--tone-soft);
+}
+
+/* 选中：底色用该分类色，文字色按对比度自动取白或深墨绿 */
+.type-tab--tone.is-active {
+  background: var(--tone);
+  border-color: var(--tone);
+  color: var(--tone-ink);
+}
+
+.type-tab--tone.is-active .tab-count {
+  color: var(--tone-ink);
+  background: var(--tone-chip-active-bg);
+}
+
+/* 分类图标（2026-10-13 新增）。
+   实现：图标以 SVG 遮罩（--tone-icon）上形、以 background-color（--tone-icon-color）上色。
+   正因为「形状」与「颜色」是分开的两个变量，下面卡片标签里引用同一对变量时，
+   拿到的必然是同形同色的图标 —— 两处一致是结构保证的，不靠人去对齐两段代码。
+   图标色是独立的多色盘（utils/typeTone.ts 的 TYPE_ICON_COLOR），与标签底色那套绿系无关。 */
+.type-tab--tone::before {
+  content: '';
+  flex: none;
+  width: 16px;
+  height: 16px;
+  background-color: var(--tone-icon-color);
+  -webkit-mask: var(--tone-icon) center / contain no-repeat;
+  mask: var(--tone-icon) center / contain no-repeat;
+}
+
+/* 选中时底色换成该分类实底，彩色图标压在上面读不清，改用与文字同色的一套取色 */
+.type-tab--tone.is-active::before {
+  background-color: var(--tone-ink);
+}
+
 /* 工具栏 */
 .toolbar {
   display: flex;
@@ -468,6 +539,58 @@ watch(
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
   gap: 16px;
+}
+
+/* ---- 资料卡片样式（仅本页，2026-10-13 改）----
+   DocCard 组件本身一行未改：这里用「本页 scope 选择器 + 更高优先级」覆盖它的左色带与悬停。
+   首页「最新收录」走的仍是 DocCard 原样式（数据概览页没有用这个组件）。
+   优先级说明：DocCard 内是 `.doc-card[data-v-子组件]`（1 类 + 1 属性），
+   这里是 `.cards .doc-card[data-v-本页]`（2 类 + 1 属性），后者胜，因此不依赖样式注入顺序。 */
+.cards .doc-card::before {
+  /* 需求：默认只保留左侧一条细竖边框，颜色 = 该资料所属分类色 */
+  width: 3px;
+  background: var(--tone, var(--zw-green-soft));
+}
+
+.cards .doc-card {
+  /* 悬停渐变画在「背景层」而不是覆盖层：文字永远在它上面，不存在盖住文字的可能 */
+  background-color: var(--zw-surface);
+  background-image: radial-gradient(circle at 50% 50%, var(--tone-glow, transparent), transparent 72%);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 0% 0%;
+  transition:
+    background-size 0.45s cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 0.22s ease,
+    box-shadow 0.22s ease,
+    border-color 0.22s ease;
+}
+
+.cards .doc-card:hover {
+  /* 由中心向四周铺开（0 → 150%）；透明度在 typeTone 里已压到 0.18，只是淡淡一层底色 */
+  background-size: 150% 150%;
+}
+
+/* 卡片里的分类标签：补上与顶部分类导航**同一枚**图标（同一个 --tone-icon 形状、
+   同一个 --tone-icon-color 颜色）。除此之外标签原有的文字、配色、圆角、内距一律未动。
+
+   为什么要用 :deep()：.type-badge 在 DocCard 组件内部，元素带的是子组件的 scope 属性，
+   本页的 scoped 选择器直接写它匹配不到；而选择器整体挂在 `.cards` 之下，
+   所以只作用于本页的卡片网格 —— 首页「最近收录」用的 .doc-grid 完全不受影响。 */
+.cards :deep(.doc-card .type-badge) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cards :deep(.doc-card .type-badge)::before {
+  content: '';
+  flex: none;
+  width: 13px;
+  height: 13px;
+  background-color: var(--tone-icon-color);
+  -webkit-mask: var(--tone-icon) center / contain no-repeat;
+  mask: var(--tone-icon) center / contain no-repeat;
 }
 
 .skeleton-card {

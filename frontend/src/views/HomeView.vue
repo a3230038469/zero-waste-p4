@@ -109,8 +109,9 @@ onMounted(() => {
         <span class="hl">整理成每个人都能用的资料库</span>
       </h1>
       <p class="hero-lead">
-        我们系统收录零废弃与废弃物管理领域的政策法规、研究报告、标准规范与实践工具，
-        来源公开、条目可溯。你可以按主题浏览、按关键词检索，也可以直接向 AI 助手提问。
+        很高兴看到你也在关注零废弃这件事，我们欣赏每一位在这条路上前行的同行者。秉承礼让共建的理念，
+        我们整理收录零废弃与废弃物管理领域的政策法规、研究报告、标准规范与实践工具，所有资料来源公开、
+        条目可溯源。你可以按主题浏览、按关键词检索，也可以直接向 AI 助手提问，希望对你有帮助。
       </p>
 
       <div class="search-row">
@@ -254,11 +255,38 @@ onMounted(() => {
   flex-direction: column;
 }
 
-/* ---------------- 首屏 ---------------- */
+/* ---------------- 首屏 ----------------
+   2026-10-13：首屏整体居中（眉标 / 标题 / 描述 / 搜索行 / 常见检索标签），
+   只改对齐方式，元素顺序与彼此的间距关系一律未动：hero 限宽居中，
+   搜索行、描述各自限宽后 margin:auto 居中，标签行靠 justify-content 居中。 */
 
 .hero {
-  padding: 32px 0 12px;
+  position: relative;
+  padding: 32px 0 26px;
   max-width: 780px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+/* 首屏与下方内容之间的分隔线（2026-10-13 加强）。
+   比全局默认的 --zw-line 明显得多：2px、中段落到深绿、两端渐隐，
+   既能分开「介绍区」和「库内容」，又不会像一条实心粗线那样割裂版面。 */
+.hero::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--zw-green-soft) 22%,
+    var(--zw-green-deep) 50%,
+    var(--zw-green-soft) 78%,
+    transparent
+  );
 }
 
 .hero h1 {
@@ -278,7 +306,7 @@ onMounted(() => {
   font-size: 16px;
   line-height: 1.9;
   color: var(--zw-muted);
-  margin: 0 0 26px;
+  margin: 0 auto 26px;
   max-width: 40em;
 }
 
@@ -286,6 +314,7 @@ onMounted(() => {
   display: flex;
   gap: 10px;
   max-width: 640px;
+  margin: 0 auto;
 }
 
 .search-input {
@@ -306,6 +335,7 @@ onMounted(() => {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: center;
   gap: 8px;
   margin-top: 14px;
 }

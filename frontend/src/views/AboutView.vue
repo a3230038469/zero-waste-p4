@@ -11,6 +11,8 @@
  *   `待基金会确认` 占位块，**不编造**。理由：对外网站一旦印上假信息，是对方要承担的后果。
  */
 import { computed, onMounted, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+
 import { getOverview } from '../api/overview'
 import type { DocOverview } from '../api/types'
 import { formatBytes, formatCount, formatYearSpan } from '../utils/format'
@@ -35,18 +37,80 @@ const facts = computed(() => {
   ]
 })
 
-/** 目录锚点 */
+/** 目录锚点（顺序与页面区块顺序一致） */
 const SECTIONS = [
+  { id: 'foundation', label: '关于基金会' },
   { id: 'about', label: '项目简介' },
   { id: 'use', label: '怎么用' },
   { id: 'data', label: '数据来源与口径' },
   { id: 'cite', label: '引用与转载' },
   { id: 'contact', label: '联系与共建' }
 ]
+
+/**
+ * 基金会官网地址。
+ *
+ * ⚠️ 未确认前保持空串。本页的写作纪律是不编造基金会对外口径，域名尤其不能猜——
+ *    猜错会把使用者送到别人抢注的站点上去，风险比留空大得多。
+ *    空串时「确认前往」不跳转，只给一句「链接待确认」；拿到官方链接后填在这里即可，
+ *    其余代码无需改动。
+ */
+const FOUNDATION_SITE = ''
+
+/**
+ * 弹窗左侧的装饰图案：站点绿三色（深绿/浅绿/墨绿）组成的双色叶片。
+ * 用内联 SVG 而不是图标库——`@element-plus/icons-vue` 不在依赖里，为一个图案装一整个库不值当。
+ */
+const LEAF_SVG = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <path d="M12 20.5c0-6.2 3.4-10.4 8.5-11.2-.6 7-4.4 10.6-8.5 11.2Z" fill="#2e7d32" />
+  <path d="M12 20.5C7.9 19.9 4.1 16.3 3.5 9.3c5.1.8 8.5 5 8.5 11.2Z" fill="#66bb6a" />
+  <path d="M12 20.5V10.2" stroke="#1b5e20" stroke-width="1.5" stroke-linecap="round" />
+</svg>`
+
+/**
+ * 详情查看 —— 先弹确认框，用户点「确认前往」才离开本页。
+ *
+ * 弹窗内容用内联样式：ElMessageBox 挂到 body 上，页面里的 scoped 样式管不到它，
+ * 而往全局样式表里加类会波及其他页面，所以样式就地写在 HTML 字符串里。
+ * 主色直接用站点绿的字面值（#2e7d32 / #1b5e20 / #66bb6a / #e9f3e9），
+ * 与 `--zw-green*`、`--zw-mint` 同值，不依赖变量在弹窗里能否解析。
+ */
+async function openFoundationSite(): Promise<void> {
+  const hasLink = FOUNDATION_SITE.length > 0
+  const sub = hasLink ? '将在新标签页打开，本站页面不会关闭。' : '官网链接待基金会确认，确认后暂不跳转。'
+  const html = `<div style="display:flex;align-items:center;gap:14px;text-align:left;">
+  <span style="flex:none;width:46px;height:46px;border-radius:15px;background:#e9f3e9;display:flex;align-items:center;justify-content:center;">${LEAF_SVG}</span>
+  <div style="min-width:0;">
+    <p style="margin:0;font-size:15px;font-weight:600;color:#16241a;line-height:1.6;">即将跳转至安徽省六尺巷慈善基金会官网</p>
+    <p style="margin:4px 0 0;font-size:13px;color:#66786a;line-height:1.6;">${sub}</p>
+  </div>
+</div>`
+
+  try {
+    await ElMessageBox({
+      title: '跳转确认',
+      message: html,
+      dangerouslyUseHTMLString: true,
+      showCancelButton: true,
+      confirmButtonText: '确认前往',
+      cancelButtonText: '取消'
+    })
+  } catch {
+    return // 取消：关闭弹窗，停留在本页
+  }
+
+  if (!hasLink) {
+    ElMessage.info('基金会官网链接待确认，暂不能跳转')
+    return
+  }
+  window.open(FOUNDATION_SITE, '_blank', 'noopener,noreferrer')
+}
 </script>
 
 <template>
   <div class="about">
+    <!-- 页头（2026-10-13 复原）：回到「居中改版之前」的样子 —— 左对齐、标题与一句定位说明，
+         居版本加的底部强分隔线一并撤掉。只动这一块，页内目录及各板块一律未碰。 -->
     <header class="page-head">
       <p class="zw-eyebrow">关于项目</p>
       <h1>零废弃知识库</h1>
@@ -58,6 +122,62 @@ const SECTIONS = [
     <nav class="anchor-nav" aria-label="本页目录">
       <a v-for="s in SECTIONS" :key="s.id" :href="`#${s.id}`">{{ s.label }}</a>
     </nav>
+
+    <!-- 关于基金会（2026-10-13 新增，同日按要求上移到「项目简介」之前）。
+         顺序理由：进页面先交代「这是谁做的」，再讲库本身；其余区块顺序一律未动。 -->
+    <section id="foundation" class="block">
+      <h2 class="zw-h2 fund-title">关于基金会</h2>
+
+      <div class="fund-card zw-card zw-card--pad">
+        <p class="fund-org">安徽省六尺巷慈善基金会</p>
+
+        <div class="fund-item">
+          <h3>基金会简介</h3>
+          <p>
+            以「六尺巷」包容礼让的文化精神为内核，立足公益慈善领域，围绕生态环保、社区发展、
+            公益人才培育等方向开展公益项目，推动知识共享、行业协作与可持续公益生态建设。
+          </p>
+        </div>
+
+        <div class="fund-item">
+          <h3>与知识库的关系</h3>
+          <p>
+            零废弃知识库是安徽省六尺巷慈善基金会建设的公开知识平台，面向环保、公益及相关领域
+            工作人员，提供资料查询、案例参考、知识学习与行业交流支持。
+          </p>
+        </div>
+
+        <div class="fund-item">
+          <h3>机构宗旨</h3>
+          <p class="fund-motto">
+            传承礼让精神，践行公益使命；凝聚多方力量，共建可持续的公益生态。
+          </p>
+        </div>
+
+        <div class="fund-item">
+          <h3>核心方向</h3>
+          <ul class="fund-list">
+            <li>生态环保与零废弃项目推广</li>
+            <li>社区公益建设</li>
+            <li>公众环境教育</li>
+            <li>公益行业人才赋能</li>
+            <li>知识共享与行业协作</li>
+          </ul>
+        </div>
+
+        <div class="fund-item">
+          <h3>合作说明</h3>
+          <p>
+            面向环保、公益领域同行开放交流与合作，包括项目协作、案例共享、知识共建、线下交流等。
+          </p>
+        </div>
+
+        <!-- 详情查看：先弹确认框，用户确认后才离开本页 -->
+        <div class="fund-actions">
+          <el-button link type="primary" @click="openFoundationSite">详情查看</el-button>
+        </div>
+      </div>
+    </section>
 
     <!-- 项目简介 -->
     <section id="about" class="block">
@@ -235,6 +355,8 @@ const SECTIONS = [
   margin: 0 auto;
 }
 
+/* 页头（2026-10-13 复原）：左对齐、无分隔线，与居中改版之前一致。
+   居中版加的 `.page-head::after` 强分隔线与 `.page-head-sub` 行宽限制已同步撤掉。 */
 .page-head {
   padding: 12px 0 4px;
 }
@@ -288,6 +410,78 @@ const SECTIONS = [
 
 .prose strong {
   color: var(--zw-ink);
+}
+
+/* 关于基金会：标题沿用 .zw-h2 的字号（26px / 22px，与「项目简介」完全一致），
+   只换成深绿以便在页面上一眼认出；字重来自全局 h2 规则（700），无需重复声明。 */
+.fund-title {
+  color: var(--zw-green-deep);
+}
+
+.fund-card {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin: 16px 0 6px;
+}
+
+.fund-org {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--zw-green-ink);
+  letter-spacing: 0.01em;
+}
+
+.fund-item h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--zw-green-deep);
+}
+
+.fund-item p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.9;
+  color: var(--zw-text);
+}
+
+/* 宗旨：浅底色块单独成段，让这句话在整块文字里被读到 */
+.fund-motto {
+  background: var(--zw-mint-2);
+  border-left: 3px solid var(--zw-green-soft);
+  border-radius: 0 var(--zw-radius-sm) var(--zw-radius-sm) 0;
+  padding: 12px 16px;
+  color: var(--zw-ink);
+}
+
+/* 核心方向：浅底标签，逐条可读，不用花哨装饰 */
+.fund-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fund-list li {
+  font-size: 13px;
+  color: var(--zw-ink);
+  background: var(--zw-mint);
+  border-radius: 999px;
+  padding: 5px 14px;
+}
+
+/* 详情查看：与正文用一条细分隔线分开，避免看起来像正文的一部分 */
+.fund-actions {
+  padding-top: 14px;
+  border-top: 1px solid var(--zw-line);
+}
+
+.fund-actions :deep(.el-button) {
+  font-size: 14px;
 }
 
 /* 事实格 */
