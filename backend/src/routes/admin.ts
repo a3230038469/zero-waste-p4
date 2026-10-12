@@ -3,6 +3,7 @@
  *
  *   GET /api/admin/knowledge   列出知识库里的全部资料（管理视角，含解析状态）
  *   GET|PUT /api/admin/qa-settings   问答设置（模型 / 回答方式 / 思考强度）
+ *   POST /api/admin/knowledge/:id/reupload   解析失败 → 删旧重传（T6）
  *
  * 鉴权：请求头 X-Admin-Token，值 = backend/.env 的 ADMIN_STATS_TOKEN（fail closed，
  *       与统计看板 GET /api/track/stats 同一套口径）。
@@ -10,12 +11,14 @@
  *       本文件不改 docs.ts / auth.ts / track.ts 的任何既有行为。
  *
  * 已实现：列出资料、上传资料、删除资料、查看注册用户（T1 三项已补齐）、
- *         问答设置 GET/PUT /qa-settings（T3，2026-10-10）。
+ *         问答设置 GET/PUT /qa-settings（T3，2026-10-10）、
+ *         解析失败一键重新上传（T6，2026-10-12）。
  */
 import { PrismaClient } from '@prisma/client'
 import express, { Router, type NextFunction, type Request, type Response } from 'express'
 
 import { invalidateEngineListCache, listQaModels, type QaModelOption } from '../weknora/index.js'
+import { baseNameOf, unzipFirstEntry } from '../weknora/zip.js'
 import {
   QA_STYLES,
   REASONING_EFFORTS,
@@ -304,6 +307,373 @@ router.post(
     }
   }
 )
+
+/* ------------------------------------------------------------------ *
+ * 解析失败 → 重新上传（T6：删旧 + 重传，不走引擎的「重新解析」）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 「重新上传」链路的单步超时（毫秒）。
+ *
+ * 这一步要把大文件从引擎下载回来、再原样传回去，几十兆的 PDF 很正常，
+ * 所以上限给得比别的接口宽；但必须有上限 —— 否则老师点一下可能转好几分钟。
+ */
+const REUPLOAD_TIMEOUT_MS = 120_000
+
+/**
+ * fetch 的原生 Response 类型。
+ *
+ * ⚠️ 本文件顶部 `import ... { type Response } from 'express'` 把全局的 `Response`
+ * 抢走了（Express 的响应对象），直接写 `Response` 会绑到它身上，typecheck 报一片错。
+ * 所以这里从 fetch 的返回值反推出原生类型。
+ */
+type FetchResponse = Awaited<ReturnType<typeof fetch>>
+
+/**
+ * 引擎一次调用（带 X-API-Key 与超时）。
+ *
+ * ⚠️ 只把「连不上 / 超时」统一抛成 Error，**HTTP 状态码由路由层按每一步自己判**
+ * —— 因为同样一个 !ok，在取原件那步是 502，在取详情那步可能是 404（记录已不在）。
+ * 沿用本文件既有的 fetch 风格（不新造 HTTP 层，与上传/删除同一套）。
+ */
+async function engineCall(url: string, init: RequestInit): Promise<FetchResponse> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), REUPLOAD_TIMEOUT_MS)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } catch (err) {
+    const aborted = err instanceof Error && err.name === 'AbortError'
+    throw new Error(aborted ? '请求超时' : '连不上引擎地址')
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** 重新上传链路用到的引擎地址与密钥 */
+interface EngineCtx {
+  base: string
+  apiKey: string
+  kbId: string
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+/**
+ * 等一份资料真正从库里退场。
+ *
+ * ⚠️ 引擎的删除是**异步**的：DELETE 只是先把记录标成 `deleting`，真正消失还有几秒
+ * （`docs/接口约定.md` 里那条「删除后有几秒延迟」说的就是它）。
+ * 这期间把同一个文件传回去，引擎会判成 `duplicate_file`(409) —— 2026-10-12 真机实测。
+ *
+ * 判定标准（二者之一即可）：
+ *   - GET 单条接口已经取不到（404）
+ *   - parse_status 已经是 `deleting`（引擎自己的退场中标记，对外列表已不返回它）
+ *
+ * 顺带实测到的引擎判定规则：重复文件按**内容 hash** 判，不是按文件名 ——
+ * 同名不同内容能传进去，改名同内容会 409。所以这里等的是「旧记录退场」，
+ * 不需要去改名绕。
+ */
+async function waitRecordGone(ctx: EngineCtx, id: string, timeoutMs = 15_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    let gone = false
+    try {
+      const res = await engineCall(`${ctx.base}/api/v1/knowledge/${encodeURIComponent(id)}`, {
+        method: 'GET',
+        headers: { 'X-API-Key': ctx.apiKey }
+      })
+      if (res.status === 404) {
+        gone = true
+      } else if (res.ok) {
+        const raw: unknown = await res.json()
+        const rec = isRecordLike(raw) && isRecordLike(raw['data']) ? raw['data'] : raw
+        gone = isRecordLike(rec) && str(rec['parse_status']) === 'deleting'
+      }
+    } catch {
+      // 引擎抖一下不算「已退场」，继续等；到点还没退干净由调用方决定怎么办
+    }
+    if (gone) return true
+    await sleep(500)
+  }
+  return false
+}
+
+/**
+ * 引擎的 custom_metadata 只接受**字符串 / 数字 / 布尔**（数组、对象会被拒），
+ * 这里逐项挑能写的，原样带回；挑不出来的直接丢 —— 宁可少写一项，也别整份 PUT 失败。
+ */
+function sanitizeCustomMeta(raw: unknown): Record<string, string | number | boolean> {
+  const out: Record<string, string | number | boolean> = {}
+  if (!isRecordLike(raw)) return out
+  for (const [key, value] of Object.entries(raw)) {
+    if (!key.trim()) continue
+    if (typeof value === 'string') {
+      const text = value.trim()
+      if (text) out[key] = text
+    } else if (typeof value === 'number' && Number.isFinite(value)) {
+      out[key] = value
+    } else if (typeof value === 'boolean') {
+      out[key] = value
+    }
+    // 数组 / 对象 / null → 引擎会拒，跳过
+  }
+  return out
+}
+
+/**
+ * POST /api/admin/knowledge/:id/reupload —— 解析失败的一键「重新上传」
+ *
+ * 链路（每步都有独立错误映射，别让老师看到一句没头没尾的报错）：
+ *   1. POST batch-download {ids:[id]}  → zip 字节 → zip.ts 拆出原件
+ *   2. GET  /api/v1/knowledge/:id       → 旧记录的 custom_metadata 与原文件名
+ *   3. DELETE /api/v1/knowledge/:id     → 删掉解析失败的那份
+ *   4. POST batch 的 knowledge/file     → FormData 把原件原样传回去
+ *   5. PUT  /api/v1/knowledge/:newId    → 把 custom_metadata 原样写回
+ *   6. invalidateEngineListCache()      → 书架别再拿旧缓存
+ *
+ * 为什么不用引擎的「重新解析」：那条路是异步任务，状态要轮询、失败原因难读；
+ * 本需求要的是**确定性的**「换一份重传」，老师点完就能看到状态变回处理中。
+ * 老师本地不需要留原件 —— 原件全程只在引擎与本进程内存里过一遍。
+ *
+ * ⚠️ 本接口**没有请求体**，鉴权用 requireAdmin 中间件排在最前（与上传同一考量）。
+ */
+router.post('/knowledge/:id/reupload', requireAdmin, async (req: Request, res: Response) => {
+  const base = (env('WEKNORA_BASE_URL') || 'http://localhost:8080').replace(/\/+$/, '')
+  const apiKey = env('WEKNORA_API_KEY')
+  const kbId = env('WEKNORA_KB_ID')
+  if (!apiKey || !kbId) {
+    res.status(503).json({
+      success: false,
+      error: {
+        code: 'ENGINE_NOT_CONFIGURED',
+        message: '还没配 WEKNORA_API_KEY / WEKNORA_KB_ID，重新上传不了'
+      }
+    })
+    return
+  }
+
+  const id = String(req.params.id ?? '').trim()
+  if (!id) {
+    res.status(400).json({
+      success: false,
+      error: { code: 'BAD_REQUEST', message: '没给要重新上传哪一份（缺资料编号）' }
+    })
+    return
+  }
+
+  const authed = { 'X-API-Key': apiKey }
+
+  try {
+    /* 步骤 1：把原件从引擎取回来 ---------------------------------------- */
+    const dl = await engineCall(
+      `${base}/api/v1/knowledge-bases/${encodeURIComponent(kbId)}/knowledge/batch-download`,
+      {
+        method: 'POST',
+        headers: { ...authed, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: [id] })
+      }
+    )
+    if (dl.status === 404) {
+      res.status(404).json({
+        success: false,
+        error: { code: 'KNOWLEDGE_NOT_FOUND', message: '这份资料已经不在库里了' }
+      })
+      return
+    }
+    if (!dl.ok) {
+      res.status(502).json({
+        success: false,
+        error: {
+          code: 'ENGINE_UNREACHABLE',
+          message: `引擎暂时连不上（取原件时返回 HTTP ${dl.status}），稍后再试一次`
+        }
+      })
+      return
+    }
+
+    // zip 拆不出文件时不立刻报错：先看第 2 步的记录还在不在 ——
+    // 记录已经被人删掉也会拆不出文件，那该报的是 404 而不是「没取回原件」。
+    let original: { name: string; data: Buffer } | null = null
+    let unzipError = ''
+    try {
+      original = unzipFirstEntry(Buffer.from(await dl.arrayBuffer()))
+    } catch (err) {
+      unzipError = err instanceof Error ? err.message : '未知错误'
+    }
+
+    /* 步骤 2：读旧记录（拿元数据 + 原文件名） ---------------------------- */
+    const detailRes = await engineCall(`${base}/api/v1/knowledge/${encodeURIComponent(id)}`, {
+      method: 'GET',
+      headers: authed
+    })
+    if (detailRes.status === 404) {
+      res.status(404).json({
+        success: false,
+        error: { code: 'KNOWLEDGE_NOT_FOUND', message: '这份资料已经不在库里了' }
+      })
+      return
+    }
+    if (!detailRes.ok) {
+      res.status(502).json({
+        success: false,
+        error: {
+          code: 'ENGINE_UNREACHABLE',
+          message: `引擎暂时连不上（读资料信息时返回 HTTP ${detailRes.status}），稍后再试一次`
+        }
+      })
+      return
+    }
+
+    // ⚠️ 引擎单条接口外面包了一层 {success,data:{…}}，不解包 metadata 全是空
+    // （2026-10-08 实测踩中，见 weknora/getDoc 的同一处注释）
+    const detailRaw: unknown = await detailRes.json()
+    const detail =
+      isRecordLike(detailRaw) && isRecordLike(detailRaw['data']) ? detailRaw['data'] : detailRaw
+    const detailRec: EngineKnowledge = isRecordLike(detail) ? detail : {}
+    const customMeta = sanitizeCustomMeta(detailRec.custom_metadata)
+
+    if (!original) {
+      res.status(502).json({
+        success: false,
+        error: {
+          code: 'ENGINE_BAD_PAYLOAD',
+          message: '没能从引擎取回原件',
+          detail: `引擎返回的下载包里没有文件条目：${unzipError}`
+        }
+      })
+      return
+    }
+
+    /* 步骤 3：删掉解析失败的旧记录 ---------------------------------------- */
+    const del = await engineCall(`${base}/api/v1/knowledge/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: authed
+    })
+    if (del.status === 404) {
+      res.status(404).json({
+        success: false,
+        error: { code: 'KNOWLEDGE_NOT_FOUND', message: '这份资料已经不在库里了' }
+      })
+      return
+    }
+    if (!del.ok) {
+      res.status(502).json({
+        success: false,
+        error: {
+          code: 'DELETE_FAILED',
+          message: `旧记录删不掉（引擎返回 HTTP ${del.status}），没敢重传，原件还在库里`
+        }
+      })
+      return
+    }
+
+    // 引擎删除是异步的（记录先标 deleting）。这期间重传同一个文件会被判成
+    // duplicate_file(409)，所以删完必须等它真的退场，见 waitRecordGone 的实测注释。
+    const ctx: EngineCtx = { base, apiKey, kbId }
+    const oldGone = await waitRecordGone(ctx, id)
+    if (!oldGone) {
+      res.status(502).json({
+        success: false,
+        error: {
+          code: 'ENGINE_STILL_DELETING',
+          message: '引擎还在清理刚删掉的那份（没清理完之前传回去会被判成重复文件），请过十几秒再点一次「重新上传」'
+        }
+      })
+      return
+    }
+
+    /* 步骤 4：把原件传回去 ------------------------------------------------ */
+    const fileName = str(detailRec.file_name) || baseNameOf(original.name)
+    const uploadUrl = `${base}/api/v1/knowledge-bases/${encodeURIComponent(kbId)}/knowledge/file`
+
+    // 409 再补一次：引擎那边判重复的时机与「标记 deleting」不完全同步，
+    // 偶发会慢半拍。给一次有上限的等待重试，不做死循环。
+    let upStatus = 0
+    let upText = ''
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      // FormData 是一次性的，每次重试都得重新构造
+      const form = new FormData()
+      form.append('file', new Blob([new Uint8Array(original.data)]), fileName)
+      form.append('fileName', fileName)
+
+      const res = await engineCall(uploadUrl, { method: 'POST', headers: authed, body: form })
+      upStatus = res.status
+      upText = await res.text()
+      if (res.ok || res.status !== 409) break
+      await waitRecordGone(ctx, id, 8000)
+    }
+
+    let upPayload: unknown = upText.slice(0, 400)
+    try {
+      upPayload = JSON.parse(upText)
+    } catch {
+      // 引擎偶尔回非 JSON，保留原文片段给老师看
+    }
+
+    if (upStatus < 200 || upStatus >= 300) {
+      res.status(502).json({
+        success: false,
+        error: {
+          code: 'UPLOAD_FAILED',
+          message:
+            upStatus === 409
+              ? '引擎说这份文件还在库里（刚删掉的那份可能还没清干净），请过十几秒再点一次「重新上传」'
+              : `引擎拒绝了这次上传（HTTP ${upStatus}）`,
+          detail: upPayload
+        }
+      })
+      return
+    }
+
+    const newId = extractCreatedId(upPayload)
+    if (!newId) {
+      // 文件其实已经进去了，只是引擎没回编号 —— 如实说，让老师自己看列表确认
+      res.status(502).json({
+        success: false,
+        error: {
+          code: 'ENGINE_BAD_PAYLOAD',
+          message: '引擎收下了文件但没返回新条目编号，请到列表里确认一下状态',
+          detail: upPayload
+        }
+      })
+      return
+    }
+
+    /* 步骤 5：把业务元数据原样写回 ---------------------------------------- */
+    let metaRestored = false
+    let metaNote = ''
+    if (Object.keys(customMeta).length === 0) {
+      metaNote = '这份资料原本就没有机构/年份/类型标签，没什么可补的'
+    } else {
+      const put = await engineCall(`${base}/api/v1/knowledge/${encodeURIComponent(newId)}`, {
+        method: 'PUT',
+        headers: { ...authed, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ custom_metadata: customMeta })
+      })
+      metaRestored = put.ok
+      if (!put.ok) metaNote = `文件已重新上传，但标签没能写回去（引擎返回 HTTP ${put.status}）`
+    }
+
+    /* 步骤 6：新资料进来了，让书架列表缓存立刻失效 -------------------------- */
+    invalidateEngineListCache()
+
+    res.json({
+      success: true,
+      message: metaRestored
+        ? '已重新上传，机构/年份/类型标签也带回来了；引擎正在解析'
+        : '已重新上传，引擎正在解析',
+      metaNote,
+      data: { id: newId, fileName, metaRestored }
+    })
+  } catch (err) {
+    // 只剩「连不上 / 超时」会走到这里（其余每步各自 return 掉了）
+    const reason = err instanceof Error ? err.message : '未知错误'
+    res.status(502).json({
+      success: false,
+      error: { code: 'ENGINE_UNREACHABLE', message: `引擎暂时连不上（${reason}），稍后再试一次` }
+    })
+  }
+})
 
 /** 手机号脱敏：中间四位打码（138 0000 8888 → 138****8888） */
 function maskPhone(phone: string): string {
