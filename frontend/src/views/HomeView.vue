@@ -262,7 +262,7 @@ onMounted(() => {
 }
 
 .hero h1 {
-  font-size: 40px;
+  font-size: var(--zw-fs-display);
   line-height: 1.32;
   margin: 0 0 18px;
   letter-spacing: -0.02em;
@@ -275,7 +275,7 @@ onMounted(() => {
 }
 
 .hero-lead {
-  font-size: 16px;
+  font-size: var(--zw-fs-lg);
   line-height: 1.9;
   color: var(--zw-muted);
   margin: 0 0 26px;
@@ -311,7 +311,7 @@ onMounted(() => {
 }
 
 .hot-label {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-faint);
 }
 
@@ -320,14 +320,14 @@ onMounted(() => {
   background: rgba(255, 255, 255, 0.7);
   color: var(--zw-muted);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   padding: 4px 12px;
   border-radius: 999px;
   cursor: pointer;
   transition:
-    color 0.16s ease,
-    border-color 0.16s ease,
-    background 0.16s ease;
+    color var(--zw-dur-fast) var(--zw-ease),
+    border-color var(--zw-dur-fast) var(--zw-ease),
+    background var(--zw-dur-fast) var(--zw-ease);
 }
 
 .hot-chip:hover {
@@ -360,12 +360,12 @@ onMounted(() => {
 }
 
 .stat-label {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-muted);
 }
 
 .stat-value {
-  font-size: 26px;
+  font-size: var(--zw-fs-h2);
   font-weight: 700;
   color: var(--zw-green-deep);
   line-height: 1.2;
@@ -373,14 +373,14 @@ onMounted(() => {
 
 .stat-value em {
   font-style: normal;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   font-weight: 500;
   color: var(--zw-muted);
   margin-left: 3px;
 }
 
 .stat-more {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-green);
   text-decoration: none;
   white-space: nowrap;
@@ -401,7 +401,7 @@ onMounted(() => {
 }
 
 .sec-link {
-  font-size: 14px;
+  font-size: var(--zw-fs-body);
   color: var(--zw-green);
   text-decoration: none;
   white-space: nowrap;
@@ -432,9 +432,9 @@ onMounted(() => {
   font: inherit;
   cursor: pointer;
   transition:
-    border-color 0.18s ease,
-    box-shadow 0.18s ease,
-    transform 0.18s ease;
+    border-color var(--zw-dur) var(--zw-ease),
+    box-shadow var(--zw-dur) var(--zw-ease),
+    transform var(--zw-dur) var(--zw-ease);
 }
 
 .topic-chip:hover {
@@ -444,7 +444,7 @@ onMounted(() => {
 }
 
 .topic-name {
-  font-size: 14px;
+  font-size: var(--zw-fs-body);
   color: var(--zw-ink);
   font-weight: 600;
   /* 像「食物/有机废弃物」这种长主题名要截断而不是换行 —— 一换行整行格子就参差不齐 */
@@ -455,7 +455,7 @@ onMounted(() => {
 
 .topic-count {
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-teal);
   background: var(--zw-teal-soft);
   border-radius: 999px;
@@ -484,9 +484,9 @@ onMounted(() => {
   cursor: pointer;
   text-align: left;
   transition:
-    border-color 0.18s ease,
-    box-shadow 0.18s ease,
-    transform 0.18s ease;
+    border-color var(--zw-dur) var(--zw-ease),
+    box-shadow var(--zw-dur) var(--zw-ease),
+    transform var(--zw-dur) var(--zw-ease);
 }
 
 .type-card:hover {
@@ -497,13 +497,13 @@ onMounted(() => {
 }
 
 .type-name {
-  font-size: 15px;
+  font-size: var(--zw-fs-body);
   font-weight: 600;
   color: var(--zw-ink);
 }
 
 .type-count {
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-muted);
 }
 
@@ -536,7 +536,7 @@ onMounted(() => {
 .about-list li {
   position: relative;
   padding-left: 20px;
-  font-size: 14px;
+  font-size: var(--zw-fs-body);
   line-height: 1.7;
   color: var(--zw-text);
 }
@@ -553,7 +553,7 @@ onMounted(() => {
 }
 
 .about-link {
-  font-size: 14px;
+  font-size: var(--zw-fs-body);
   color: var(--zw-green-deep);
   text-decoration: none;
   font-weight: 600;
@@ -582,13 +582,13 @@ onMounted(() => {
   background: #fff;
   color: var(--zw-text);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   padding: 7px 13px;
   border-radius: 999px;
   cursor: pointer;
   transition:
-    color 0.16s ease,
-    border-color 0.16s ease;
+    color var(--zw-dur-fast) var(--zw-ease),
+    border-color var(--zw-dur-fast) var(--zw-ease);
 }
 
 .sample-chip:hover:not(:disabled) {

@@ -40,6 +40,8 @@ const { user, isLoggedIn, fetchMe } = useAuth()
 
 const loading = ref(false)
 const doc = ref<DocDetail | null>(null)
+/** 详情加载失败（接口错误，可重试；与「资料不存在」区分开） */
+const loadError = ref(false)
 const previewLoading = ref(false)
 const previewUrl = ref('')
 const previewVisible = ref(false)
@@ -71,6 +73,7 @@ async function fetchDetail(): Promise<void> {
   loading.value = true
   doc.value = null
   related.value = []
+  loadError.value = false
   try {
     doc.value = await getDocDetail(id)
     // 标签标题换成资料名：转发出去时读者第一眼看到的就是它
@@ -78,6 +81,10 @@ async function fetchDetail(): Promise<void> {
       document.title = `${doc.value.title} · ${SITE_TITLE}`
       void fetchRelated(doc.value)
     }
+  } catch {
+    // 接口挂了和「资料不存在」是两回事：前者可重试，后者只能回资料库。
+    // 没有这一分支时两种情况都落到下面的 404 卡片，会误导用户。
+    loadError.value = true
   } finally {
     loading.value = false
   }
@@ -233,6 +240,15 @@ watch(
       <el-skeleton :rows="6" animated />
     </div>
 
+    <!-- 接口失败：可重试的错误态（区别于下面的 404） -->
+    <div v-else-if="loadError" class="detail-card zw-card">
+      <div class="zw-error">
+        <p class="zw-error__title">资料加载失败</p>
+        <p class="zw-error__desc">网络或服务暂时不可用，稍后重试一般就能恢复。</p>
+        <button type="button" class="zw-error__retry" @click="fetchDetail">重试</button>
+      </div>
+    </div>
+
     <div v-else-if="!doc" class="detail-card zw-card">
       <el-result icon="warning" title="404" sub-title="这份资料不存在或已下架">
         <template #extra>
@@ -367,7 +383,7 @@ watch(
   border: 0;
   background: none;
   font: inherit;
-  font-size: 14px;
+  font-size: var(--zw-fs-body);
   color: var(--zw-green);
   cursor: pointer;
   padding: 4px 0;
@@ -390,7 +406,7 @@ watch(
 }
 
 .type-badge {
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   font-weight: 600;
   color: var(--zw-green-deep);
   background: var(--zw-mint);
@@ -400,7 +416,7 @@ watch(
 
 .year,
 .size {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-faint);
 }
 
@@ -410,7 +426,7 @@ watch(
 
 .doc-title {
   margin: 0 0 20px;
-  font-size: 27px;
+  font-size: var(--zw-fs-h1);
   line-height: 1.42;
   color: var(--zw-ink);
 }
@@ -438,13 +454,13 @@ watch(
 
 .meta-grid dt {
   flex-shrink: 0;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-muted);
 }
 
 .meta-grid dd {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--zw-fs-body);
   color: var(--zw-ink);
   overflow-wrap: anywhere;
 }
@@ -462,7 +478,7 @@ watch(
 }
 
 .tags-label {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-muted);
 }
 
@@ -471,7 +487,7 @@ watch(
   background: #fff;
   color: var(--zw-teal);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   padding: 3px 12px;
   border-radius: 999px;
   cursor: pointer;
@@ -485,7 +501,7 @@ watch(
 .dup-notice {
   margin: 0 0 18px;
   padding: 10px 14px;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   line-height: 1.8;
   color: #8a5a12;
   background: var(--zw-amber-soft);
@@ -506,12 +522,12 @@ watch(
 
 .action-hint {
   margin: 10px 0 0;
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-faint);
 }
 
 .doc-content {
-  font-size: 15px;
+  font-size: var(--zw-fs-body);
   line-height: 1.95;
   color: var(--zw-text);
 }
@@ -537,7 +553,7 @@ watch(
 
 .no-content-text {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   line-height: 1.8;
   color: var(--zw-muted);
   text-indent: 0;
@@ -557,7 +573,7 @@ watch(
   padding: 8px 14px;
   background: var(--zw-green);
   color: #fff;
-  font-size: 14px;
+  font-size: var(--zw-fs-body);
 }
 
 .preview-close {
@@ -574,7 +590,7 @@ watch(
 
 .cite-note {
   margin: 20px 0 0;
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   line-height: 1.8;
   color: var(--zw-faint);
 }
@@ -586,7 +602,7 @@ watch(
 /* 反馈入口——低调但找得到：不抢主操作，也不藏进角落 */
 .feedback-entry {
   margin: 14px 0 0;
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-faint);
 }
 
@@ -595,7 +611,7 @@ watch(
   background: none;
   padding: 0;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-green);
   cursor: pointer;
   text-decoration: underline;

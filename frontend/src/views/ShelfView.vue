@@ -32,6 +32,8 @@ const keyword = ref('')
 const sort = ref<'year_desc' | 'newest'>('year_desc')
 const page = ref(1)
 const loading = ref(false)
+/** 列表加载失败（接口错误，可重试；与「无结果」区分） */
+const loadError = ref(false)
 const list = ref<DocListResponse | null>(null)
 const facets = ref<FacetsResponse>({ types: [], orgs: [], years: [], tags: [] })
 
@@ -97,8 +99,13 @@ function buildQuery(): DocListQuery {
 
 async function fetchList(): Promise<void> {
   loading.value = true
+  loadError.value = false
   try {
     list.value = await getDocs(buildQuery())
+  } catch {
+    // 接口失败与「筛选无结果」是两回事：前者给重试，后者才引导换条件。
+    // 没有这一分支时失败也会落到底部的「没有匹配的资料」，用户会被带偏。
+    loadError.value = true
   } finally {
     loading.value = false
   }
@@ -279,6 +286,13 @@ watch(
       </div>
     </div>
 
+    <!-- 接口失败：可重试的错误态（区别于「没有匹配的资料」） -->
+    <div v-else-if="loadError" class="zw-error load-error">
+      <p class="zw-error__title">资料列表加载失败</p>
+      <p class="zw-error__desc">网络或服务暂时不可用，稍后重试一般就能恢复。</p>
+      <button type="button" class="zw-error__retry" @click="onFilterChange">重试</button>
+    </div>
+
     <template v-else-if="items.length > 0">
       <div class="cards">
         <DocCard v-for="doc in items" :key="doc.id" :doc="doc" />
@@ -313,13 +327,13 @@ watch(
 }
 
 .page-head h1 {
-  font-size: 30px;
+  font-size: var(--zw-fs-h1);
   margin: 0 0 10px;
 }
 
 .page-head strong {
   color: var(--zw-green);
-  font-size: 20px;
+  font-size: var(--zw-fs-h3);
   margin: 0 3px;
 }
 
@@ -339,14 +353,14 @@ watch(
   background: var(--zw-surface);
   color: var(--zw-text);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--zw-fs-body);
   padding: 7px 14px;
   border-radius: 999px;
   cursor: pointer;
   transition:
-    border-color 0.16s ease,
-    background 0.16s ease,
-    color 0.16s ease;
+    border-color var(--zw-dur-fast) var(--zw-ease),
+    background var(--zw-dur-fast) var(--zw-ease),
+    color var(--zw-dur-fast) var(--zw-ease);
 }
 
 .type-tab:hover {
@@ -361,7 +375,7 @@ watch(
 }
 
 .tab-count {
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-muted);
   background: var(--zw-mint-2);
   border-radius: 999px;
@@ -406,7 +420,7 @@ watch(
 .opt-count {
   float: right;
   color: var(--zw-faint);
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
 }
 
 /* 已选条件 */
@@ -422,7 +436,7 @@ watch(
 }
 
 .active-label {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-muted);
 }
 
@@ -431,7 +445,7 @@ watch(
   background: #fff;
   color: var(--zw-green-deep);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   padding: 3px 10px;
   border-radius: 999px;
   cursor: pointer;
@@ -445,7 +459,7 @@ watch(
   border: 0;
   background: none;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-muted);
   text-decoration: underline;
   cursor: pointer;
@@ -470,6 +484,14 @@ watch(
   padding: 20px;
 }
 
+/* 加载失败卡片：跟骨架屏卡片同样的外框，保持网格节奏 */
+.load-error {
+  border: 1px solid var(--zw-line);
+  border-radius: var(--zw-radius);
+  background: var(--zw-surface);
+  box-shadow: var(--zw-shadow-sm);
+}
+
 .pager {
   display: flex;
   justify-content: center;
@@ -478,7 +500,7 @@ watch(
 
 .empty-tip {
   margin: 0 0 14px;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-muted);
 }
 
