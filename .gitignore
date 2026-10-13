@@ -42,3 +42,5 @@ backend/data/track/
 
 # 问答设置（T3：老师后台选的回答模型/方式/强度，属本机运行状态，不进仓库）
 backend/data/qa-settings.json
+# 待审投稿文件与元数据（B09 公众上传：含投稿人手机号，绝不进仓库）
+backend/data/contributions/
