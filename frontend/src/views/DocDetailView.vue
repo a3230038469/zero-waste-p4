@@ -9,6 +9,8 @@
  *   3. 新增「相关推荐」：按本文主题标签拉同主题资料，给「看完这份还想看什么」一个出口。
  *   4. 新增「复制分享链接」：对外站点的资料页是要发给人看的。
  *   5. 补引用提示（著作权归原发布机构），与「关于项目」页的口径一致。
+ *   6. 新增「反馈这份资料」入口（B09，2026-10-12）：访客发现标题/机构/年份有误、
+ *      文件打不开时，得有地方说话；反馈走 FeedbackDialog → POST /api/track。
  *
  * 埋点说明：预览/下载的权威计数由**服务端**在 `/api/docs/:id/preview|download`
  * 里各记一条（见 backend/src/routes/docs.ts），前端不必重复上报。
@@ -20,6 +22,7 @@ import { LARGE_FILE_LIMIT, downloadDoc, getDocDetail, getDocs, getPreviewUrl, ty
 import type { DocItem } from '../api/types'
 import { useAuth } from '../composables/useAuth'
 import DocCard from '../components/DocCard.vue'
+import FeedbackDialog from '../components/FeedbackDialog.vue'
 import { formatBytes, formatYear } from '../utils/format'
 
 const route = useRoute()
@@ -31,6 +34,8 @@ const doc = ref<DocDetail | null>(null)
 const previewLoading = ref(false)
 const previewUrl = ref('')
 const previewVisible = ref(false)
+/** 反馈弹窗（资料级） */
+const feedbackVisible = ref(false)
 
 /** 同主题推荐（排除自己） */
 const related = ref<DocItem[]>([])
@@ -288,6 +293,21 @@ watch(
           著作权归原发布机构所有，本站仅作收录与索引；引用请注明原始出处，详见
           <RouterLink to="/about#cite">引用与转载说明</RouterLink>。
         </p>
+
+        <!-- 反馈入口：访客发现条目有误 / 文件打不开时的出口（B09） -->
+        <p class="feedback-entry">
+          标题、机构、年份有误，或文件打不开？
+          <button type="button" class="feedback-link" @click="feedbackVisible = true">
+            反馈这份资料
+          </button>
+        </p>
+
+        <FeedbackDialog
+          v-model="feedbackVisible"
+          scope="doc"
+          :doc-id="doc.id"
+          :doc-title="doc.title"
+        />
       </article>
 
       <!-- 相关推荐 -->
@@ -528,6 +548,28 @@ watch(
 
 .cite-note a {
   color: var(--zw-green);
+}
+
+/* 反馈入口——低调但找得到：不抢主操作，也不藏进角落 */
+.feedback-entry {
+  margin: 14px 0 0;
+  font-size: 12px;
+  color: var(--zw-faint);
+}
+
+.feedback-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--zw-green);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.feedback-link:hover {
+  color: var(--zw-green-deep);
 }
 
 /* 相关推荐 */
