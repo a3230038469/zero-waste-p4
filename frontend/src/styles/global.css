@@ -199,3 +199,177 @@ h4 {
     font-size: 22px;
   }
 }
+
+/* ------------------------------------------------------------------ *
+ * 交互态与状态公共类（视觉系统设计 · 月月 · 2026-10-13）
+ *
+ * 变量定义见 tokens.css；本段只放「公共类」，全部为追加，不改上方任何规则。
+ * 七种状态：悬停 / 按下 / 键盘焦点 / 禁用 / 加载 / 空态 / 错误。
+ * ------------------------------------------------------------------ */
+
+/* —— 1. 键盘焦点：全站统一焦点环，鼠标点击不出现、Tab 才出现 —— */
+
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: var(--zw-focus-ring);
+  border-radius: var(--zw-radius-sm);
+}
+
+/* —— 2. 可点卡片：悬停上浮 + 阴影升级，按下下沉 —— */
+
+.zw-card--clickable {
+  cursor: pointer;
+  transition:
+    transform var(--zw-dur) var(--zw-ease),
+    box-shadow var(--zw-dur) var(--zw-ease),
+    border-color var(--zw-dur-fast) var(--zw-ease);
+}
+
+.zw-card--clickable:hover,
+.zw-card--clickable:focus-visible {
+  transform: translateY(-2px);
+  box-shadow: var(--zw-shadow);
+  border-color: var(--zw-line-strong);
+}
+
+.zw-card--clickable:active {
+  transform: translateY(1px);
+  box-shadow: var(--zw-shadow-sm);
+  transition-duration: var(--zw-dur-fast);
+}
+
+/* —— 3. 行内文字链接：悬停加深，焦点也可见 —— */
+
+.zw-link {
+  color: var(--zw-green);
+  text-decoration: none;
+  cursor: pointer;
+  transition: color var(--zw-dur-fast) var(--zw-ease);
+}
+
+.zw-link:hover,
+.zw-link:focus-visible {
+  color: var(--zw-green-deep);
+}
+
+/* —— 4. 禁用态：统一降透明 + 禁止光标，不响应悬停 —— */
+
+.zw-disabled,
+[disabled].zw-card--clickable {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* —— 5. 骨架屏：加载占位，避免闪一下空白 —— */
+
+.zw-skeleton {
+  border-radius: var(--zw-radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--zw-line) 25%,
+    var(--zw-mint) 37%,
+    var(--zw-line) 63%
+  );
+  background-size: 400% 100%;
+  animation: zw-skeleton-wave 1.4s ease infinite;
+}
+
+@keyframes zw-skeleton-wave {
+  0% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0 50%;
+  }
+}
+
+/* —— 6. 空态：图标 + 一句人话 + 一个出口 —— */
+
+.zw-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--zw-space-3);
+  padding: var(--zw-space-9) var(--zw-space-6);
+  text-align: center;
+  color: var(--zw-muted);
+}
+
+.zw-empty__title {
+  font-size: var(--zw-fs-h3);
+  font-weight: var(--zw-fw-semibold);
+  color: var(--zw-text);
+}
+
+.zw-empty__desc {
+  font-size: var(--zw-fs-sm);
+  line-height: var(--zw-lh-sm);
+  margin: 0;
+}
+
+/* —— 7. 错误态：红字 + 原因 + 可重试 —— */
+
+.zw-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--zw-space-3);
+  padding: var(--zw-space-8) var(--zw-space-6);
+  text-align: center;
+  color: var(--zw-danger);
+}
+
+.zw-error__title {
+  font-size: var(--zw-fs-h3);
+  font-weight: var(--zw-fw-semibold);
+}
+
+.zw-error__desc {
+  font-size: var(--zw-fs-sm);
+  line-height: var(--zw-lh-sm);
+  color: var(--zw-muted);
+  margin: 0;
+}
+
+.zw-error__retry {
+  color: var(--zw-danger);
+  border: 1px solid currentcolor;
+  background: transparent;
+  border-radius: var(--zw-radius-sm);
+  padding: var(--zw-space-2) var(--zw-space-5);
+  font-size: var(--zw-fs-body);
+  cursor: pointer;
+  transition: background-color var(--zw-dur-fast) var(--zw-ease);
+}
+
+.zw-error__retry:hover,
+.zw-error__retry:focus-visible {
+  background: var(--zw-danger-soft);
+}
+
+/* —— 8. Element Plus 对齐：焦点环 / 悬停 / 禁用跟随本站令牌 —— */
+
+/* 输入框与选择器：键盘焦点环统一（Element 默认只换边框色，不够显眼） */
+:where(.el-input__inner, .el-textarea__inner, .el-select__wrapper):focus-visible {
+  outline: none;
+  box-shadow: var(--zw-focus-ring);
+}
+
+/* 按钮悬停统一走主色加深，而不是 Element 的亮色偏移 */
+.el-button--primary:hover,
+.el-button--primary:focus-visible {
+  background: var(--zw-green-deep);
+  border-color: var(--zw-green-deep);
+}
+
+/* 按钮加载中：转圈与文字间距，防止换行跳动 */
+.el-button.is-loading {
+  gap: var(--zw-space-2);
+}
+
+/* 表单校验错误：错误文字统一走语义色（Element 默认红与站内不一致） */
+.el-form-item.is-error .el-form-item__error {
+  color: var(--zw-danger);
+}
