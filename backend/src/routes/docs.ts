@@ -28,6 +28,14 @@ import {
   type SortMode
 } from '../weknora/index.js'
 import { duplicateOf } from '../data/duplicates.js'
+import {
+  JOINT_ORG_VALUE,
+  buildOrgFacets,
+  isJointOrg,
+  orgKey,
+  searchOrgFacets,
+  srcTableLabel
+} from '../data/orgs.js'
 import { recordEvent } from '../track/store.js'
 
 const router = Router()
@@ -37,7 +45,7 @@ const DEFAULT_PAGE_SIZE = 20
 /** 每页上限，契约封顶 100 */
 const MAX_PAGE_SIZE = 100
 
-type Dim = 'type' | 'org' | 'year' | 'tag'
+type Dim = 'type' | 'org' | 'year' | 'tag' | 'srcTable'
 
 /* ------------------------------------------------------------------ *
  * 查询参数解析
@@ -81,9 +89,13 @@ function parseQuery(req: Request): DocsQuery {
 
   return {
     type: toStringArray(req.query.type),
-    org: toStringArray(req.query.org),
+    // T8：机构值过一遍归一（别名 → 主名，联合发文串整体当一个键），
+    // 与筛选器算出来的键、资料侧的键落在同一套上，否则「选的」和「筛的」对不上。
+    org: toStringArray(req.query.org).map(orgKey).filter(Boolean),
     year: toStringArray(req.query.year),
     tag: toStringArray(req.query.tag),
+    // T8：所属方向（传数据原值，不动显示名）
+    srcTable: toStringArray(req.query.srcTable),
     q,
     page,
     pageSize,
@@ -107,6 +119,22 @@ function matchesKeyword(doc: KbDocInternal, keyword: string): boolean {
 }
 
 /**
+ * 机构维度是否命中。
+ *
+ * T8 起机构不再是「原始串全等」，而是**归一键全等**（见 data/orgs.ts）：
+ *   · 单机构值 → 主名比对（选「联合国环境规划署」能筛到写作 `UNEP` 的资料）；
+ *   · 联合发文 → 整体当作一个键（选中它只筛**恰好这几家**联合署名的资料），
+ *     与下拉里标的数字严格一致；
+ *   · `__joint__` → 「联合发文」汇总项，筛所有多家机构署名的资料。
+ */
+function matchesOrg(doc: KbDocInternal, selected: string[]): boolean {
+  if (selected.length === 0) return true
+  const joint = isJointOrg(doc.org)
+  const key = orgKey(doc.org)
+  return selected.some((value) => (value === JOINT_ORG_VALUE ? joint : key === value))
+}
+
+/**
  * 按条件筛选。
  *
  * skipDim 用于算筛选项数量：算某个维度的下拉数量时，**不带该维度自己的条件**，
@@ -118,9 +146,7 @@ function filterDocs(docs: KbDocInternal[], query: DocsQuery, skipDim?: Dim): KbD
     if (skipDim !== 'type' && dimValues(query, 'type').length && !query.type.includes(doc.type)) {
       return false
     }
-    if (skipDim !== 'org' && dimValues(query, 'org').length && !query.org.includes(doc.org)) {
-      return false
-    }
+    if (skipDim !== 'org' && !matchesOrg(doc, query.org)) return false
     if (
       skipDim !== 'year' &&
       dimValues(query, 'year').length &&
@@ -130,6 +156,13 @@ function filterDocs(docs: KbDocInternal[], query: DocsQuery, skipDim?: Dim): KbD
     }
     if (skipDim !== 'tag' && dimValues(query, 'tag').length) {
       if (!doc.tags.some((tag) => query.tag.includes(tag))) return false
+    }
+    if (
+      skipDim !== 'srcTable' &&
+      dimValues(query, 'srcTable').length &&
+      !query.srcTable.includes(doc.srcTable)
+    ) {
+      return false
     }
     return true
   })
@@ -179,14 +212,23 @@ function buildFacets(docs: KbDocInternal[], query: DocsQuery): KbFacets {
   const forOrg = filterDocs(docs, query, 'org')
   const forYear = filterDocs(docs, query, 'year')
   const forTag = filterDocs(docs, query, 'tag')
+  const forSrcTable = filterDocs(docs, query, 'srcTable')
 
   return {
     types: countBy(forType, (d) => [d.type]).sort(byCountThenValue),
-    orgs: countBy(forOrg, (d) => [d.org]).sort(byCountThenValue),
+    // T8：机构下拉只列**单机构且出现 ≥2 次**的（老库实测 41 个），
+    // 另加一条「联合发文」汇总 —— 长串不单独列，只显示短标签。
+    // 其余（含 296 个只出现一次的机构）仍可搜到：见下面 facets 路由的 orgSearch 分支。
+    orgs: buildOrgFacets(forOrg),
     // 年份 0 = 台账未填。它不是「0 年」，放进下拉会让用户看到一个没有意义的「0」选项，
     // 且选中它等于筛「年份缺失」这种内部口径。对外展示站直接不列，详情页按「年份不详」显示。
     years: countBy(forYear, (d) => (d.year > 0 ? [String(d.year)] : [])).sort(byYearDesc),
-    tags: countBy(forTag, (d) => d.tags).sort(byCountThenValue)
+    tags: countBy(forTag, (d) => d.tags).sort(byCountThenValue),
+    // T8：所属方向。value 用数据原值（保证筛得准），label 给对外中文名。
+    // 数据源里没有方向时这里是空数组 —— 前端据此不渲染该筛选项，而不是摆一个筛不中的假选项。
+    srcTables: countBy(forSrcTable, (d) => (d.srcTable ? [d.srcTable] : []))
+      .map((item) => ({ ...item, label: srcTableLabel(item.value) }))
+      .sort(byCountThenValue)
   }
 }
 
@@ -238,7 +280,25 @@ router.get(
   guard(async (req, res) => {
     const query = parseQuery(req)
     const docs = await listFiles()
-    res.json(buildFacets(docs, query))
+    const facets = buildFacets(docs, query)
+
+    /**
+     * T8：机构搜索（`?orgSearch=关键字`）。
+     *
+     * 为什么要有它：默认下拉只列出现 ≥2 次的**单机构**（老库实测 41 项），而老库里
+     * 有 296 个机构值只出现一次、另有 186 个联合发文长串 —— 用户仍要能搜到它们，
+     * 否则等于「把三百多个选项藏起来」。
+     *
+     * 只在**机构这一维**上换成搜索命中（上限 20 条），其余维度照常返回，
+     * 所以响应形状与不加这个参数时完全一致（既有调用方零改动）。
+     */
+    const orgSearch = typeof req.query.orgSearch === 'string' ? req.query.orgSearch.trim() : ''
+    if (orgSearch) {
+      // 搜索池用**按其余条件筛过的**资料（与下拉数字同口径：不含机构维度自己的选择）
+      facets.orgs = searchOrgFacets(filterDocs(docs, query, 'org'), orgSearch)
+    }
+
+    res.json(facets)
   })
 )
 

@@ -94,6 +94,25 @@ const answerHtml = computed(() =>
 
 /** 等待文案（非空才渲染，避免空 transition） */
 const waitingText = computed(() => (props.waitingText ?? '').trim())
+
+/**
+ * 来源卡片副行：`机构 · 年份`（T8）。
+ *
+ * ⚠️ 这两个字段是**可选**的（见 api/ask.ts 的 AskSource）：引用自带的元数据读不到、
+ *    又没有兜底时就是空 —— 那样只显示资料名，与加这个功能之前长得一模一样，
+ *    绝不会渲染出「undefined · 年」这种半截文案。
+ */
+function sourceMeta(source: AskSource): string {
+  const org = (source.org ?? '').trim()
+  const year = (source.year ?? '').trim()
+  return [org, year ? `${year} 年` : ''].filter(Boolean).join(' · ')
+}
+
+/** 悬停提示：资料名 + 机构/年份（卡片本身窄，长标题会被省略号截掉） */
+function sourceTitle(source: AskSource): string {
+  const meta = sourceMeta(source)
+  return meta ? `${source.name}\n（${meta}）` : source.name
+}
 </script>
 
 <template>
@@ -114,7 +133,8 @@ const waitingText = computed(() => (props.waitingText ?? '').trim())
     <div v-else class="md" :class="{ settled: !streaming }" v-html="answerHtml"></div>
 
     <!-- 来源卡片：点一下跳资料详情页（预览 / 下载在那页）。
-         appear + stagger 索引 = 流结束时逐个弹入 -->
+         appear + stagger 索引 = 流结束时逐个弹入
+         T8：卡片上补「机构 · 年份」（后端从引用自带的元数据里读，读不到就不显示这两行） -->
     <transition-group
       v-if="message.role === 'assistant' && message.sources && message.sources.length > 0"
       tag="div"
@@ -128,10 +148,11 @@ const waitingText = computed(() => (props.waitingText ?? '').trim())
         type="button"
         class="chip"
         :style="{ transitionDelay: `${si * 60}ms` }"
-        :title="s.name"
+        :title="sourceTitle(s)"
         @click="emit('open-source', s.url)"
       >
-        {{ s.name }}
+        <span class="chip-name">{{ s.name }}</span>
+        <span v-if="sourceMeta(s)" class="chip-meta">{{ sourceMeta(s) }}</span>
       </button>
     </transition-group>
   </div>
@@ -194,6 +215,9 @@ const waitingText = computed(() => (props.waitingText ?? '').trim())
   white-space: normal;
 }
 .chip {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
   max-width: 100%;
   padding: 2px 8px;
   border: 1px solid #cfe0cf;
@@ -201,17 +225,30 @@ const waitingText = computed(() => (props.waitingText ?? '').trim())
   background: #fff;
   color: var(--zw-green, #2e7d32);
   font-size: 11px;
-  line-height: 1.7;
+  line-height: 1.55;
   text-align: left;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   cursor: pointer;
   transition:
     transform 0.22s ease,
     opacity 0.22s ease,
     background 0.18s ease,
     border-color 0.18s ease;
+}
+/* 资料名：窄卡片里省略号收尾（悬停有 title 给全名） */
+.chip-name {
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* T8：`机构 · 年份` 副行，弱化处理，别抢资料名 */
+.chip-meta {
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  color: #8aa08c;
 }
 .chip:hover {
   background: #f0f7f0;

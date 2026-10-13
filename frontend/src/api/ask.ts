@@ -26,6 +26,14 @@ export interface AskSource {
   name: string
   /** 站内详情页地址，后端给的形如 `/doc/<id>` */
   url: string
+  /**
+   * 【T8 追加，可选】发布机构 / 发布年份 / 类型。
+   * 后端优先读引用自带的 `knowledge_custom_metadata`，读不到退回书架清单本地关联；
+   * 都没有时这三个字段直接不出现（卡片退化成只显示资料名，与从前一致）。
+   */
+  org?: string
+  year?: string
+  type?: string
 }
 
 /**
@@ -190,7 +198,17 @@ function toSources(raw: unknown): AskSource[] {
     const url = entry['url']
     if (typeof name !== 'string' || !name.trim()) continue
     if (typeof url !== 'string' || !url.startsWith('/')) continue
-    items.push({ name, url })
+    // T8：机构 / 年份 / 类型是可选的（老后端不发这三个字段 → 卡片只显示资料名）
+    const org = entry['org']
+    const year = entry['year']
+    const type = entry['type']
+    items.push({
+      name,
+      url,
+      ...(typeof org === 'string' && org ? { org } : {}),
+      ...(typeof year === 'string' && year ? { year } : {}),
+      ...(typeof type === 'string' && type ? { type } : {})
+    })
   }
   return items
 }

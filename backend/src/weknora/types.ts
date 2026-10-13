@@ -37,6 +37,14 @@ export interface KbDocInternal extends KbDoc {
   /** 元数据表里声明的大小，仅用于人工核对 */
   sizeDeclared: number | null
   /**
+   * 【T8 追加】所属方向，来自引擎 `custom_metadata.srcTable`（如 `知识查询（零废弃）`）。
+   *
+   * 为什么只放在内部字段：书架「所属方向」筛选器要按它筛，但契约第三节的七个字段
+   * 不许增删，所以**不随列表接口外泄**。本地索引 / 演示快照没有这一项时是空串，
+   * 此时 `srcTables` 返回空数组（前端不渲染该筛选项），不会出现「筛了永远 0 条」的假选项。
+   */
+  srcTable: string
+  /**
    * 入库时间（毫秒时间戳）。引擎来源有（created_at），本地索引没有。
    * 用途：`sort=newest` 排序。引擎的 id 是 uuid，没有本地那种 k-35 数字后缀，
    * 不能再用 id 反推顺序，必须靠这个字段。
@@ -48,6 +56,15 @@ export interface KbDocInternal extends KbDoc {
 export interface FacetItem {
   value: string
   count: number
+  /**
+   * 【T8 追加，可选字段】展示名。**只影响显示**，提交筛选时仍传 `value`。
+   *
+   * 两种用法：
+   *   · 联合发文：value 是那一长串原始机构值（筛选用），label 是 `A + B 等N家`（给人看）；
+   *   · 所属方向：value 是数据里的 `知识查询（零废弃）`，label 是 `零废弃`。
+   * 不出现时前端按 `value` 显示，旧调用方行为完全不变。
+   */
+  label?: string
 }
 
 /** GET /api/docs/facets 的响应体 */
@@ -56,6 +73,12 @@ export interface KbFacets {
   orgs: FacetItem[]
   years: FacetItem[]
   tags: FacetItem[]
+  /**
+   * 【T8 追加】书架「所属方向」，来自 `custom_metadata.srcTable`。
+   * 老库实测只有两个值：`知识查询（零废弃）` 480 份、`知识查询（化学品）` 123 份。
+   * 数据源没有这一项时返回空数组（前端据此不渲染该筛选项）。
+   */
+  srcTables: FacetItem[]
 }
 
 /** 资料列表支持的排序方式 */
@@ -67,6 +90,11 @@ export interface DocsQuery {
   org: string[]
   year: string[]
   tag: string[]
+  /**
+   * 【T8 追加】所属方向（`custom_metadata.srcTable` 的原值），可重复传参多选。
+   * 单数参数名 `srcTable`，与数据字段同名，别写成 direction/topic。
+   */
+  srcTable: string[]
   q: string
   page: number
   pageSize: number

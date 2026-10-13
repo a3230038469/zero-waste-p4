@@ -25,6 +25,12 @@ export interface DocListResponse {
 export interface FacetItem {
   value: string
   count: number
+  /**
+   * 【T8 追加，可选】展示名。**只影响显示**，提交筛选时仍传 `value`。
+   * 联合发文用 `A + B 等N家`；所属方向用 `零废弃` / `化学品与健康`。
+   * 不出现时按 `value` 显示（旧接口也能跑）。
+   */
+  label?: string
 }
 
 export interface FacetsResponse {
@@ -32,6 +38,8 @@ export interface FacetsResponse {
   orgs: FacetItem[]
   years: FacetItem[]
   tags: FacetItem[]
+  /** 【T8 追加】所属方向（`srcTable`）。数据源没有方向时是空数组 → 页面不渲染该筛选项 */
+  srcTables: FacetItem[]
 }
 
 export interface CurrentUser {

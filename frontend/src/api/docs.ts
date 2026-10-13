@@ -36,6 +36,8 @@ export interface DocListQuery {
   orgs?: string[]
   years?: string[]
   tags?: string[]
+  /** 【T8 追加】所属方向，多选。值是数据原值（如 `知识查询（零废弃）`），不是显示名 */
+  srcTables?: string[]
   q?: string
   page?: number
   pageSize?: number
@@ -115,6 +117,7 @@ function filterDocs(docs: DocItem[], query: DocListQuery): DocItem[] {
   if (tags.length > 0) {
     result = result.filter((d) => tags.some((t) => d.tags.includes(t)))
   }
+  // 假数据里没有「所属方向」这一项（USE_MOCK 已关，这条只为结构对齐）
   const q = query.q?.trim()
   if (q) {
     result = result.filter((d) => d.title.includes(q) || d.org.includes(q))
@@ -169,7 +172,9 @@ async function getFacetsMock(query: DocListQuery): Promise<FacetsResponse> {
     orgs: countByValue(without('orgs'), (d) => d.org),
     years: countByValue(without('years'), (d) => String(d.year)).sort((a, b) => b.value.localeCompare(a.value)),
     tags: countByTag(without('tags')),
-    types: countByValue(MOCK_DOCS, (d) => d.type)
+    types: countByValue(MOCK_DOCS, (d) => d.type),
+    // 假数据没有所属方向（T8 的这条维度只在真实接口上有数据）
+    srcTables: []
   }
 }
 
@@ -192,6 +197,7 @@ function toHttpParams(query: DocListQuery): Record<string, unknown> {
     org: query.orgs?.length ? query.orgs : undefined,
     year: query.years?.length ? query.years : undefined,
     tag: query.tags?.length ? query.tags : undefined,
+    srcTable: query.srcTables?.length ? query.srcTables : undefined,
     q: query.q?.trim() || undefined,
     page: query.page,
     pageSize: query.pageSize,
@@ -207,6 +213,33 @@ async function getDocsHttp(query: DocListQuery): Promise<DocListResponse> {
 async function getFacetsHttp(query: DocListQuery): Promise<FacetsResponse> {
   const res = await http.get<FacetsResponse>('/docs/facets', { params: toHttpParams(query), ...REPEAT_ARRAY })
   return res.data
+}
+
+/**
+ * 机构搜索（T8）—— 调**同一个** facets 接口，只多带一个 `orgSearch`。
+ *
+ * 为什么需要：默认机构下拉只列出现 ≥2 次的单机构（老库实测 41 项），
+ * 另有 296 个机构值只出现一次、186 个联合发文长串，靠这个搜索才能找到
+ * （否则等于把它们藏起来）。
+ * 后端返回的 `orgs[]` 最多 20 条，联合发文的长串会带 `label`（`A + B 等N家`）。
+ */
+async function searchOrgsHttp(query: DocListQuery, keyword: string): Promise<FacetItem[]> {
+  const res = await http.get<FacetsResponse>('/docs/facets', {
+    params: { ...toHttpParams(query), orgSearch: keyword.trim() },
+    ...REPEAT_ARRAY
+  })
+  return res.data?.orgs ?? []
+}
+
+/** 假数据版：机构搜索（只按字符串包含匹配） */
+async function searchOrgsMock(query: DocListQuery, keyword: string): Promise<FacetItem[]> {
+  await delay(120)
+  const kw = keyword.trim().toLowerCase()
+  if (!kw) return []
+  const pool = filterDocs(MOCK_DOCS, { ...query, orgs: undefined })
+  return countByValue(pool, (d) => d.org)
+    .filter((item) => item.value.toLowerCase().includes(kw))
+    .slice(0, 20)
 }
 
 async function getDocDetailHttp(id: string): Promise<DocDetail | null> {
@@ -392,6 +425,11 @@ export function getDocs(query: DocListQuery): Promise<DocListResponse> {
 
 export function getFacets(query: DocListQuery): Promise<FacetsResponse> {
   return USE_MOCK ? getFacetsMock(query) : getFacetsHttp(query)
+}
+
+/** 【T8】机构搜索：默认下拉只列高频机构，低频的（含联合发文长串）走这里找 */
+export function searchOrgs(query: DocListQuery, keyword: string): Promise<FacetItem[]> {
+  return USE_MOCK ? searchOrgsMock(query, keyword) : searchOrgsHttp(query, keyword)
 }
 
 export function getDocDetail(id: string): Promise<DocDetail | null> {

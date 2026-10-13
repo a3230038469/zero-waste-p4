@@ -249,3 +249,107 @@ export async function saveQaSettings(
   })
   return res.data
 }
+
+/* ------------------------------------------------------------------ *
+ * 智能体设置（T7：问答走智能体 + 智能体设置上网页）
+ * ------------------------------------------------------------------ */
+
+/** 可读可改的 6 个字段 —— 引擎智能体 config 里的同名 snake_case 字段 */
+export interface AgentEditableConfig {
+  /** 系统提示词（老师那 777 字严谨约束就在这里） */
+  system_prompt: string
+  model_id: string
+  temperature: number
+  max_completion_tokens: number
+  /** fixed = 用固定兜底文案；model = 交给模型自由发挥 */
+  fallback_strategy: string
+  /** 「库内暂未收录…」那段固定文案原文 */
+  fallback_response: string
+}
+
+/** 只读展示的 4 组字段 */
+export interface AgentReadonlyConfig {
+  /** 关联的知识库 id */
+  knowledge_bases: string[]
+  /** 🔴 恒为 selected；设成 all 会把 123 份「AI系统学习」资料也拉进检索池 */
+  kb_selection_mode: string
+  /** 意图提示词：只给键名与字数，不把三大段原文塞进页面 */
+  intent_prompts: Array<{ key: string; length: number }>
+  agent_mode: string
+}
+
+export interface AgentConfigPayload {
+  success: boolean
+  agentId: string
+  name: string
+  editable: AgentEditableConfig
+  readonly: AgentReadonlyConfig
+  /** 引擎侧最后更新时间 —— 老师看得见「我这次改动生效了没」 */
+  updatedAt: string
+  /** 模型下拉的选项（取自引擎 KnowledgeQA 模型列表） */
+  models: Array<{ id: string; name: string; status: string }>
+  /** 非空说明引擎没连上、models 是空的（接口本身仍是 200） */
+  modelsError: string
+}
+
+/** 读智能体设置（管理视角） */
+export async function fetchAgentConfig(token: string): Promise<AgentConfigPayload> {
+  const res = await http.get<AgentConfigPayload>('/admin/agent', {
+    headers: { 'X-Admin-Token': token },
+    silent: true
+  })
+  return res.data
+}
+
+/**
+ * 保存请求体：每个字段都可选，只改传了的那些。
+ *
+ * ⚠️ **空串 = 「不改这一项」，不是「清空」**。引擎的 PUT 是整体替换，
+ *    传空串会直接抹掉老师那 777 字提示词；后端已按「空串不写」处理并在 `ignored` 里如实回报。
+ * 🔴 白名单之外的字段（如 kb_selection_mode）后端一律丢弃，提交了也没用。
+ */
+export interface AgentConfigPatch {
+  system_prompt?: string
+  model_id?: string
+  temperature?: number
+  max_completion_tokens?: number
+  fallback_strategy?: string
+  fallback_response?: string
+}
+
+/** 回读校验的一项（老师要看得见「到底哪一项没过」） */
+export interface AgentCheck {
+  key: string
+  label: string
+  expected: string
+  actual: string
+  ok: boolean
+}
+
+export interface AgentSaveResult {
+  success: boolean
+  message: string
+  /** 这次真正改动过的字段（空数组 = 原样写回，一个字没改） */
+  changed: string[]
+  /** 被忽略的空字段（传了空串 → 保持原值） */
+  ignored: string[]
+  before: AgentConfigPayload
+  after: AgentConfigPayload
+  /** 四项回读校验 + 第五项知识库范围红线 */
+  checks: AgentCheck[]
+  models: Array<{ id: string; name: string; status: string }>
+  modelsError: string
+}
+
+/** 保存智能体设置。后端会走「GET 全量 → 合并 → PUT 完整 config → 回读校验」 */
+export async function saveAgentConfig(
+  token: string,
+  patch: AgentConfigPatch
+): Promise<AgentSaveResult> {
+  const res = await http.put<AgentSaveResult>('/admin/agent', patch, {
+    headers: { 'X-Admin-Token': token },
+    silent: true,
+    timeout: 60_000
+  })
+  return res.data
+}

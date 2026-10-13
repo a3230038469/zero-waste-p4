@@ -88,7 +88,17 @@ function toSources(raw: unknown): AskSource[] {
     const name = entry['name']
     const url = entry['url']
     if (typeof name !== 'string' || typeof url !== 'string' || !url.startsWith('/')) continue
-    out.push({ name, url })
+    // T8：刷新历史时也要带上机构/年份（老数据没有这三个字段 → 只显示资料名）
+    const org = entry['org']
+    const year = entry['year']
+    const type = entry['type']
+    out.push({
+      name,
+      url,
+      ...(typeof org === 'string' && org ? { org } : {}),
+      ...(typeof year === 'string' && year ? { year } : {}),
+      ...(typeof type === 'string' && type ? { type } : {})
+    })
   }
   return out
 }

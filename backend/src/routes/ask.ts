@@ -27,6 +27,7 @@ import {
   isTerminalEvent,
   resolveCitationSources
 } from '../weknora/index.js'
+import { readAgentSources } from '../weknora/agent-sse.js'
 import type { AskEvent, AskSource } from '../weknora/index.js'
 import { recordEvent } from '../track/store.js'
 
@@ -263,6 +264,26 @@ async function handleAsk(req: Request, res: Response): Promise<void> {
         }
         continue
       }
+      /**
+       * T7：智能体链路的「来源」。
+       *
+       * 引擎 `agent-chat` 的 references 事件**一条带全部引用**（不是分段推），
+       * 且实测落在正文**之前**。weknora/agent-sse.ts 已把它翻译成 `{name, url, org, year…}`，
+       * 这里转成前端既有的 `sources` 事件 —— **对前端的五种事件格式一个字都没改**
+       * （第六章第 3 条），前端组件无需任何改动。
+       *
+       * 发完就把 sourcesSent 置位：后面的 sendSources() 会直接返回，
+       * 不会出现「智能体给一次、引用解析再给一次」的双份卡片。
+       */
+      if (evt.responseType === 'references') {
+        const items = readAgentSources(evt)
+        if (items.length > 0 && !sourcesSent && !res.writableEnded) {
+          sourcesSent = true
+          collectedSources = items
+          writeSse(res, { type: 'sources', items })
+        }
+        continue
+      }
       // 思考过程默认不透（前端不需要），includeThinking=true 才给
       if (evt.responseType === 'thinking') {
         if (body.includeThinking && evt.content !== '') {
@@ -270,7 +291,7 @@ async function handleAsk(req: Request, res: Response): Promise<void> {
         }
         continue
       }
-      // 其余类型（agent_query 入队确认 / references 引用 / session_title 等）不透给前端
+      // 其余类型（agent_query 入队确认 / session_title 等）不透给前端
     }
     // 上游没发终止帧就断了（异常收尾）：补一个 done，前端才知道流结束
     if (!terminated && !res.writableEnded && !clientGone.signal.aborted) {

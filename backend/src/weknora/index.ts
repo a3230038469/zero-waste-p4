@@ -26,6 +26,13 @@ import {
 import { parseSseStream } from './sse.js'
 import { baseNameOf, unzipFirstEntry } from './zip.js'
 import { buildEngineOverrides, buildStyledQuery, loadQaSettings } from './qa-settings.js'
+import { getAgentId } from './agent-config.js'
+import {
+  createAgentCounters,
+  translateAgentStream,
+  type AgentSourceDoc,
+  type ResolveAgentDoc
+} from './agent-sse.js'
 
 export * from './types.js'
 /** 流终止判断也要给路由层用（判 complete/stop/error，别用 done） */
@@ -111,7 +118,10 @@ function toLocalDoc(raw: unknown, line: number): KbDocInternal {
     sourceUrl: typeof sourceUrl === 'string' ? sourceUrl : '',
     fileName,
     filePath,
-    sizeDeclared: typeof sizeDeclared === 'number' ? sizeDeclared : null
+    sizeDeclared: typeof sizeDeclared === 'number' ? sizeDeclared : null,
+    // T8：所属方向。本地索引目前没有这一项（为空串表示「没有方向数据」），
+    // 将来导入时带上 `srcTable` 字段，这一套筛选器立刻就能用，不用再改代码。
+    srcTable: typeof raw.srcTable === 'string' ? raw.srcTable.trim() : ''
   }
 }
 
@@ -321,7 +331,7 @@ function parseEngineTime(value: unknown): number | undefined {
  *
  * 字段来源（2026-10-08 真机核对通过）：
  *   id / title / file_name / file_size / created_at —— 引擎原生字段
- *   org / year / type / tags —— 引擎的 custom_metadata（元数据补录写入）
+ *   org / year / type / tags / srcTable —— 引擎的 custom_metadata（元数据补录写入）
  *
  * ⚠️ 引擎另有一个 `metadata` 字段，存的是「处理配置」而不是业务元数据，别拿它当来源。
  */
@@ -345,6 +355,8 @@ function toEngineDoc(raw: unknown): KbDocInternal {
     fileName,
     filePath: pickString(raw, ['file_path']),
     sizeDeclared: size,
+    // T8：所属方向（老库 603 份 100% 有这个字段：知识查询（零废弃）/ 知识查询（化学品））
+    srcTable: metaString(raw, 'srcTable'),
     createdAt: parseEngineTime(raw['created_at'])
   }
 }
@@ -672,11 +684,32 @@ export async function createAskSession(title: string): Promise<string> {
  *   - 设了思考强度 → body 带 `reasoning_effort`（引擎原生参数）
  *   - 回答方式 → 在 query 前面拼一段风格指令
  *   读设置永远读不炸（文件坏了退回默认值），不会把问答主功能带崩。
+ *
+ * ⚠️ **T7：优先走引擎里的智能体**（`agent-chat`），失败自动回退 `knowledge-chat`。
+ *   两条链路的事件形状**完全一致**（都产 AskEvent），所以路由层与前端都无感：
+ *     智能体链路：POST /api/v1/agent-chat/{sessionId}
+ *       body = {query: 原始问题, agent_id, agent_enabled: true[, knowledge_base_ids]}
+ *       🔴 **不拼风格前缀**（提示词由智能体的 system_prompt 提供，再拼一遍会打架）
+ *       🔴 **不下发 summary_model_id / reasoning_effort**（智能体有自己的 model_id / temperature，
+ *          下发会和智能体配置冲突）
+ *     兜底链路：POST /api/v1/knowledge-chat/{sessionId}（T3 的逻辑原样保留，一个字没改）
+ *
+ * ⚠️ 什么时候走智能体：`.env` 的 `WEKNORA_AGENT_ID` 有值、且这一轮 agent 请求在**开流前**就成功。
+ *   引擎不存在这个 id（404）、拒绝（401/403）、参数不对（400）、连不上 —— 一律记一行 warn
+ *   后自动回退 knowledge-chat，问答**照常可用**（任务单验收第 6 项）。
+ *
+ * ⚠️ 开流之后才断的（读到一半连接断了）**不回退**：回退会把已经吐出去的字再吐一遍，
+ *   前端气泡会出现重复段落。这种情况仍按既有口径以 error 事件收尾。
  */
 export async function askKnowledgeBase(params: {
   sessionId: string
   query: string
   knowledgeBaseIds?: string[]
+  /**
+   * T7：走哪个智能体。**不传 = 从 .env 的 WEKNORA_AGENT_ID 读**；
+   * 传空串 = 明确走兜底的 knowledge-chat（留个口子给将来做 A/B 对照）。
+   */
+  agentId?: string
   /** 外部取消（客户端断开）——真正透传给 fetch，让引擎侧也停下来 */
   signal?: AbortSignal
 }): Promise<AsyncGenerator<AskEvent, void, void>> {
@@ -690,11 +723,26 @@ export async function askKnowledgeBase(params: {
     params.knowledgeBaseIds && params.knowledgeBaseIds.length > 0
       ? params.knowledgeBaseIds
       : [engineKbId()]
+
+  const qaSettings = loadQaSettings()
+
+  /* ── T7：先试智能体，失败自动回退 knowledge-chat ────────────────────── */
+  const agentId = (params.agentId ?? getAgentId()).trim()
+  if (agentId) {
+    try {
+      return await askAgentKnowledgeBase({ ...params, apiKey, agentId, kbIds })
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err)
+      console.warn(
+        `[weknora] 智能体问答没走成，自动回退到普通知识库问答（问答功能不受影响）：${reason}`
+      )
+    }
+  }
+
   const url = `${engineBaseUrl().replace(/\/+$/, '')}/api/v1/knowledge-chat/${encodeURIComponent(
     params.sessionId
   )}`
 
-  const qaSettings = loadQaSettings()
   const askBody: Record<string, unknown> = {
     query: buildStyledQuery(params.query, qaSettings.style),
     knowledge_base_ids: kbIds,
@@ -761,6 +809,137 @@ export async function askKnowledgeBase(params: {
 }
 
 /* ------------------------------------------------------------------ *
+ * 智能体问答（T7：agent-chat 链路 + 失败自动回退）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 走引擎里的智能体提问：POST /api/v1/agent-chat/{sessionId}
+ *
+ * 🔴 body 的三处要点（少一处就不对）：
+ *   1. `query` 是**原始问题**，不拼 T3 的风格前缀 —— 提示词由智能体的 system_prompt 提供
+ *   2. **不下发** summary_model_id / reasoning_effort —— 智能体自己带 model_id / temperature，
+ *      再下发会和智能体配置打架
+ *   3. `knowledge_base_ids` **只在调用方显式给了才发**（本轮前端没给）。
+ *      不发时智能体按自己的 `knowledge_bases` + `kb_selection_mode: selected` 走。
+ *      ⚠️ 实测：请求里传 knowledge_base_ids 会**覆盖**智能体配置的库；
+ *         「将来的全选档」要用这个字段传多个库 id，**绝不能**把 kb_selection_mode 改成 all。
+ *
+ * 抛错 = 开流前失败（网络/401/403/400/无响应体），由 askKnowledgeBase 捕获后回退 knowledge-chat。
+ * 开流之后的异常不在这里处理（那时已经吐过字了，回退会造成重复段落）。
+ */
+async function askAgentKnowledgeBase(params: {
+  sessionId: string
+  query: string
+  signal?: AbortSignal
+  apiKey: string
+  agentId: string
+  kbIds: string[]
+}): Promise<AsyncGenerator<AskEvent, void, void>> {
+  const url = `${engineBaseUrl().replace(/\/+$/, '')}/api/v1/agent-chat/${encodeURIComponent(
+    params.sessionId
+  )}`
+
+  const askBody: Record<string, unknown> = {
+    query: params.query,
+    agent_id: params.agentId,
+    agent_enabled: true
+  }
+  if (params.kbIds.length > 0) askBody['knowledge_base_ids'] = params.kbIds
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ASK_TIMEOUT_MS)
+  const onExternalAbort = (): void => controller.abort()
+  if (params.signal) {
+    if (params.signal.aborted) controller.abort()
+    else params.signal.addEventListener('abort', onExternalAbort, { once: true })
+  }
+  const cleanup = (): void => {
+    clearTimeout(timer)
+    params.signal?.removeEventListener('abort', onExternalAbort)
+  }
+
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'X-API-Key': params.apiKey,
+        Accept: 'text/event-stream',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(askBody)
+    })
+  } catch (err) {
+    cleanup()
+    const aborted = err instanceof Error && err.name === 'AbortError'
+    throw new EngineError(
+      aborted ? 'ENGINE_TIMEOUT' : 'ENGINE_UNREACHABLE',
+      aborted
+        ? `智能体问答超时（${ASK_TIMEOUT_MS / 1000}s）：${url}`
+        : `连不上智能体问答接口 ${url}`,
+      504
+    )
+  }
+
+  // 🔴 下面的三个分支**必须抛错**，不能 return：抛出去才会被 askKnowledgeBase 捕获并回退。
+  if (res.status === 401 || res.status === 403) {
+    cleanup()
+    throw new EngineError('ENGINE_UNAUTHORIZED', '智能体拒绝提问：API Key 无效或无权限', 502)
+  }
+  if (!res.ok) {
+    cleanup()
+    const detail = (await res.text().catch(() => '')).slice(0, 200)
+    throw new EngineError(
+      'ENGINE_BAD_STATUS',
+      `智能体问答返回 ${res.status}（agent_id=${params.agentId}）：${detail || '(引擎没给正文)'}`,
+      502
+    )
+  }
+  if (!res.body) {
+    cleanup()
+    throw new EngineError('ENGINE_EMPTY_BODY', '智能体问答接口没返回响应体', 502)
+  }
+
+  const body = res.body
+  const raw = (async function* iterate(): AsyncGenerator<AskEvent, void, void> {
+    try {
+      yield* parseSseStream(body, url)
+    } finally {
+      cleanup()
+    }
+  })()
+
+  // 适配层：thinking / tool_call / tool_result / agent_query 计数后丢弃，
+  // references 转成来源卡片，answer 原样透传（前端组件零改动）
+  return translateAgentStream(raw, createAgentCounters(), {
+    resolveDoc: makeAgentDocResolver()
+  })
+}
+
+/**
+ * 给适配层的资料查询：用 `knowledge_id` 在**书架已拉的全量清单**里本地关联 org/year/type。
+ *
+ * ⚠️ 不为一条引用单独发请求：listFiles() 自带 60 秒缓存，第一次调用拉全量、之后命中缓存。
+ *    关联不上就返回 null（适配层会跳过这条引用，绝不给点进去 404 的死链）。
+ */
+function makeAgentDocResolver(): ResolveAgentDoc {
+  let pool: Map<string, AgentSourceDoc> | null = null
+  return async (knowledgeId: string): Promise<AgentSourceDoc | null> => {
+    if (pool === null) {
+      try {
+        const docs = await listFiles()
+        pool = new Map(docs.map((doc) => [doc.id, doc]))
+      } catch {
+        // 取不到清单就让这次关联整体失效（返回 null），绝不抛给问答链路
+        pool = new Map()
+      }
+    }
+    return pool.get(knowledgeId) ?? null
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * 引用来源解析（T4：B07 的「来源卡片」）
  * ------------------------------------------------------------------ */
 
@@ -770,6 +949,16 @@ export interface AskSource {
   name: string
   /** 站内详情页地址 */
   url: string
+  /**
+   * 【T8 追加，可选】发布机构 / 发布年份 / 类型。
+   *
+   * 来源：智能体链路优先读引用自带的 `data.references[].knowledge_custom_metadata`
+   * （YAML 风格字符串），读不到才退回书架清单本地关联（见 weknora/agent-sse.ts）。
+   * 前端 `AskSource` 只多两个可选字段，**不认它的旧调用方行为完全不变**。
+   */
+  org?: string
+  year?: string
+  type?: string
 }
 
 /** 来源卡片最多几条：再多气泡太长，读者也用不完 */

@@ -80,7 +80,13 @@ function isKnownRole(raw: string): raw is 'user' | 'assistant' {
   return raw === 'user' || raw === 'assistant'
 }
 
-/** 库里存的 sources 是 JSON 字符串，读出来还原成数组；坏了就当没有来源卡片 */
+/**
+ * 库里存的 sources 是 JSON 字符串，读出来还原成数组；坏了就当没有来源卡片。
+ *
+ * T8：org / year / type 跟着一起还原（来源卡片上要显示机构与年份）。
+ * **老数据没有这三个字段** —— 那时它们是 undefined，卡片退化成只显示资料名，
+ * 与加这个功能之前一模一样，不会渲染出「undefined」。
+ */
 function parseSources(raw: string | null): AskSource[] {
   if (!raw) return []
   let parsed: unknown
@@ -96,7 +102,16 @@ function parseSources(raw: string | null): AskSource[] {
     const name = entry['name']
     const url = entry['url']
     if (typeof name !== 'string' || typeof url !== 'string') continue
-    out.push({ name, url })
+    const org = entry['org']
+    const year = entry['year']
+    const type = entry['type']
+    out.push({
+      name,
+      url,
+      ...(typeof org === 'string' && org ? { org } : {}),
+      ...(typeof year === 'string' && year ? { year } : {}),
+      ...(typeof type === 'string' && type ? { type } : {})
+    })
   }
   return out
 }

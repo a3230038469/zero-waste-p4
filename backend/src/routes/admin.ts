@@ -3,6 +3,7 @@
  *
  *   GET /api/admin/knowledge   列出知识库里的全部资料（管理视角，含解析状态）
  *   GET|PUT /api/admin/qa-settings   问答设置（模型 / 回答方式 / 思考强度）
+ *   GET|PUT /api/admin/agent   智能体设置（T7：网站问答的「大脑」就是引擎里那个智能体）
  *   POST /api/admin/knowledge/:id/reupload   解析失败 → 删旧重传（T6）
  *
  * 鉴权：请求头 X-Admin-Token，值 = backend/.env 的 ADMIN_STATS_TOKEN（fail closed，
@@ -12,12 +13,21 @@
  *
  * 已实现：列出资料、上传资料、删除资料、查看注册用户（T1 三项已补齐）、
  *         问答设置 GET/PUT /qa-settings（T3，2026-10-10）、
- *         解析失败一键重新上传（T6，2026-10-12）。
+ *         解析失败一键重新上传（T6，2026-10-12）、
+ *         智能体设置 GET/PUT /agent（T7，2026-10-13）。
  */
 import { PrismaClient } from '@prisma/client'
 import express, { Router, type NextFunction, type Request, type Response } from 'express'
 
 import { invalidateEngineListCache, listQaModels, type QaModelOption } from '../weknora/index.js'
+import {
+  FALLBACK_STRATEGIES,
+  getAgentConfig,
+  updateAgentConfig,
+  type AgentConfigPatch,
+  type AgentConfigView
+} from '../weknora/agent-config.js'
+import { EngineError } from '../weknora/types.js'
 import { baseNameOf, unzipFirstEntry } from '../weknora/zip.js'
 import {
   QA_STYLES,
@@ -967,6 +977,215 @@ router.put('/qa-settings', requireAdmin, async (req: Request, res: Response) => 
       success: false,
       error: { code: 'SAVE_FAILED', message: `保存问答设置失败：${message}` }
     })
+  }
+})
+
+/* ------------------------------------------------------------------ *
+ * 智能体设置（T7：问答走智能体 + 智能体设置上网页）
+ * ------------------------------------------------------------------ *
+ *
+ * 口径（与 /qa-settings 有本质区别，务必看清）：
+ *   - /qa-settings 改的是**我们自己的设置文件**，不碰引擎数据库；
+ *   - /agent 改的是**引擎里那个智能体本体** —— 问答的提示词、模型、长度上限、兜底文案都在那儿。
+ *     老师在这里改一行，网站问答立刻换一套脑子。
+ *
+ * 🔴 为什么写入必须走 agent-config.ts 的 updateAgentConfig：
+ *   引擎 `PUT /api/v1/agents/{id}` 是**整体替换**（`existingAgent.Config = agent.Config`），
+ *   漏传一个字段就归零（提示词清空 / 长度上限回落 1024 / 兜底变成模型自由发挥）。
+ *   所以那条链路被写死成「GET 全量 → 只改表单字段 → PUT 完整 config → 回读校验四项」，
+ *   本文件只负责鉴权、校验请求体、翻译错误码，**不碰**那套顺序。
+ *
+ * 🔴 `kb_selection_mode` 恒为 selected：引擎里 now 有 7 个库（含 123 份「AI系统学习」），
+ *   设成 all 会把不相干的资料一起拉进检索。agent-config.ts 在写入前与回读后各卡一道。
+ */
+
+/** 模型下拉的选项（复用 listQaModels，与 /qa-settings 同一份；取不到就给原因，不给空白页） */
+async function agentModels(): Promise<{ models: AgentConfigView['models']; modelsError: string }> {
+  try {
+    const rows: QaModelOption[] = await listQaModels()
+    return { models: rows.map((m) => ({ id: m.id, name: m.name, status: m.status })), modelsError: '' }
+  } catch (err) {
+    return { models: [], modelsError: err instanceof Error ? err.message : '未知错误' }
+  }
+}
+
+/** 把引擎侧的失败翻译成本项目的错误信封（code 一律沿用 EngineError 带来的） */
+function sendEngineFailure(res: Response, err: unknown, prefix: string): void {
+  if (err instanceof EngineError) {
+    res.status(err.status).json({
+      success: false,
+      error: { code: err.code, message: `${prefix}：${err.message}` }
+    })
+    return
+  }
+  const message = err instanceof Error ? err.message : '未知错误'
+  res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: `${prefix}：${message}` } })
+}
+
+/** GET /api/admin/agent —— 读智能体关键配置（6 个可改 + 4 组只读） */
+router.get('/agent', async (req: Request, res: Response) => {
+  if (!assertAdmin(req, res)) return
+
+  const { models, modelsError } = await agentModels()
+  try {
+    res.json(await getAgentConfig(models, modelsError))
+  } catch (err) {
+    sendEngineFailure(res, err, '读智能体配置失败')
+  }
+})
+
+/** 请求体校验：每个字段都可选，只校验传了的那些；类型不对一律 400（不猜、不兜底改写） */
+function parseAgentPatch(raw: unknown): AgentConfigPatch {
+  const obj: Record<string, unknown> = isRecordLike(raw) ? raw : {}
+
+  const strField = (key: 'system_prompt' | 'model_id' | 'fallback_strategy' | 'fallback_response') => {
+    if (!(key in obj)) return
+    const value = obj[key]
+    if (value === null) {
+      // null = 「这一项没传」，直接不带走
+      delete obj[key]
+      return
+    }
+    if (typeof value !== 'string') {
+      throw new EngineError('INVALID_AGENT_FIELD', `${key} 得是字符串`, 400)
+    }
+    // ⚠️ 空串**原样带下去**，不在这里丢掉：agent-config 收到后会把它记进 `ignored`，
+    //    前端据此提示「这几项填的是空值，已保持原样没改」——
+    //    在这里悄悄删掉的话，老师以为自己清空了，其实没改，界面还什么都不说。
+    //    （真正「不写」这件事由 agent-config 负责，见 updateAgentConfig 的 applyString。）
+  }
+  const numField = (key: 'temperature' | 'max_completion_tokens') => {
+    if (!(key in obj)) return
+    const value = obj[key]
+    if (value === null || value === undefined) {
+      // 「这一项没传」
+      delete obj[key]
+      return
+    }
+    // 空串与字符串字段同一口径：「不改这一项」（清空输入框不该变成 400）
+    if (typeof value === 'string' && value.trim() === '') {
+      delete obj[key]
+      return
+    }
+    if (typeof value === 'string' && !Number.isNaN(Number(value))) {
+      obj[key] = Number(value)
+    }
+    if (typeof obj[key] !== 'number' || !Number.isFinite(obj[key] as number)) {
+      throw new EngineError('INVALID_AGENT_FIELD', `${key} 得是数字`, 400)
+    }
+  }
+
+  strField('system_prompt')
+  strField('model_id')
+  strField('fallback_strategy')
+  strField('fallback_response')
+  numField('temperature')
+  numField('max_completion_tokens')
+
+  if ('temperature' in obj) {
+    const t = obj['temperature'] as number
+    // 0–1 是本项目的推荐区间；1–2 放行（引擎容得下），负数与 >2 一律拒
+    if (t < 0 || t > 2) {
+      throw new EngineError('INVALID_AGENT_FIELD', 'temperature 要在 0 到 2 之间（推荐 0 到 1）', 400)
+    }
+  }
+  if ('max_completion_tokens' in obj) {
+    const n = obj['max_completion_tokens'] as number
+    if (n < 1 || !Number.isInteger(n)) {
+      throw new EngineError('INVALID_AGENT_FIELD', 'max_completion_tokens 得是正整数', 400)
+    }
+  }
+  if ('fallback_strategy' in obj) {
+    const v = obj['fallback_strategy']
+    // 空串 = 「不改这一项」，不算非法值（真正的判定在 agent-config，那里会记进 ignored）
+    if (typeof v === 'string' && v.trim() === '') {
+      // 放行
+    } else if (!(FALLBACK_STRATEGIES as readonly string[]).includes(v as string)) {
+      throw new EngineError(
+        'INVALID_AGENT_FIELD',
+        `fallback_strategy 只能是 ${FALLBACK_STRATEGIES.join(' 或 ')}（fixed = 用固定文案，model = 交给模型自由发挥）`,
+        400
+      )
+    }
+  }
+  // 🔴 白名单之外的一律丢掉：kb_selection_mode / knowledge_bases / agent_mode /
+  //    intent_prompts / agent_mode 等**绝不接受前端提交**（它们只能原样透传）
+  const allowed = new Set([
+    'system_prompt',
+    'model_id',
+    'temperature',
+    'max_completion_tokens',
+    'fallback_strategy',
+    'fallback_response'
+  ])
+  const patch: AgentConfigPatch = {}
+  for (const key of allowed) {
+    if (key in obj) {
+      // 上面已把每个键的类型收窄，这里逐个搬运（不用 as any，AGENTS.md 禁 any）
+      switch (key) {
+        case 'system_prompt':
+          patch.system_prompt = obj['system_prompt'] as string
+          break
+        case 'model_id':
+          patch.model_id = obj['model_id'] as string
+          break
+        case 'fallback_strategy':
+          patch.fallback_strategy = obj['fallback_strategy'] as string
+          break
+        case 'fallback_response':
+          patch.fallback_response = obj['fallback_response'] as string
+          break
+        case 'temperature':
+          patch.temperature = obj['temperature'] as number
+          break
+        default:
+          patch.max_completion_tokens = obj['max_completion_tokens'] as number
+      }
+    }
+  }
+  return patch
+}
+
+/**
+ * PUT /api/admin/agent —— 改智能体配置（写引擎本体）
+ *
+ * ⚠️ 鉴权用 requireAdmin 中间件排在读请求体之前（与上传/qa-settings 同一考量）。
+ * ⚠️ 模型必须真实存在：引擎对不存在的 model_id 是**静默回退**到默认模型（照样 200），
+ *    不校验的话老师选了却完全不知道没生效 —— 与 /qa-settings 同一教训。
+ */
+router.put('/agent', requireAdmin, async (req: Request, res: Response) => {
+  let patch: AgentConfigPatch
+  try {
+    patch = parseAgentPatch(req.body)
+  } catch (err) {
+    sendEngineFailure(res, err, '参数不合法')
+    return
+  }
+
+  if (patch.model_id) {
+    const { models, modelsError } = await agentModels()
+    if (modelsError) {
+      res.status(502).json({
+        success: false,
+        error: { code: 'ENGINE_UNREACHABLE', message: `连不上引擎，没法验模型是否可用：${modelsError}` }
+      })
+      return
+    }
+    if (!models.some((m) => m.id === patch.model_id)) {
+      res.status(400).json({
+        success: false,
+        error: { code: 'MODEL_NOT_AVAILABLE', message: '引擎里没有这个模型（可能已被删除），请重新选一个' }
+      })
+      return
+    }
+  }
+
+  const { models, modelsError } = await agentModels()
+  try {
+    const result = await updateAgentConfig(patch, models)
+    res.json({ ...result, models, modelsError })
+  } catch (err) {
+    sendEngineFailure(res, err, '保存智能体设置失败')
   }
 })
 

@@ -42,3 +42,7 @@ backend/data/track/
 
 # 问答设置（T3：老师后台选的回答模型/方式/强度，属本机运行状态，不进仓库）
 backend/data/qa-settings.json
+
+# 本机备份（含密钥 / 构建产物），绝不进仓库（2026-10-13 补）
+backend/.env.bak-*
+.demo-backup-*/

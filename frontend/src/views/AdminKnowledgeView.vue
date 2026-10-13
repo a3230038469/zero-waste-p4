@@ -6,7 +6,8 @@
  * 数据源：GET /api/admin/knowledge（需请求头 X-Admin-Token）
  *
  * 已接：列出全部资料、上传（可一并填标签）、删除、下载、问答设置（T3，2026-10-10）、
- *   解析失败行的「重新上传」（T6，2026-10-12：后端取回原件→删旧→重传→补回标签）。
+ *   解析失败行的「重新上传」（T6，2026-10-12：后端取回原件→删旧→重传→补回标签）、
+ *   智能体设置（T7，2026-10-13：网页问答的「大脑」= 引擎里那个智能体，配置在这里改）。
  *   上传后引擎在后台解析，状态先显示「处理中」。
  *   删除成功后延迟 3 秒再刷新 —— 引擎删除有几秒延迟，列表会短暂仍返回它。
  *
@@ -14,6 +15,11 @@
  *   本页原先的硬编码色值（#1f3a24 / #6b7d6b / #8a9a8a …）与之是两套体系，
  *   会让 T3 新增的「问答设置」卡片看起来像另一个站拼进来的。
  *   已把色值统一收敛到 var(--zw-*)，视觉不变、以后调色只需改一处。
+ *
+ * 2026-10-13（T7）：「问答设置」卡片**升级为「智能体设置」**。
+ *   原因：网站的提示词 / 模型 / 长度上限 / 兜底文案已经搬进引擎的智能体了，
+ *   在这里再选「回答方式（风格）」只会和智能体的 system_prompt 打架 —— 风格项已下线。
+ *   保存后把后端的「四项回读校验」逐项显示出来（哪一项没过就写哪一项）。
  */
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -22,16 +28,14 @@ import {
   ADMIN_TOKEN_KEY,
   UPLOAD_ACCEPT,
   deleteKnowledge,
+  fetchAgentConfig,
   fetchKnowledgeList,
-  fetchQaSettings,
   reuploadKnowledge,
-  saveQaSettings,
+  saveAgentConfig,
   uploadKnowledge,
   type AdminKnowledgeItem,
-  type QaEffortOption,
-  type QaStyle,
-  type QaStyleOption,
-  type ReasoningEffort
+  type AgentCheck,
+  type AgentConfigPayload
 } from '../api/admin'
 
 const PAGE_SIZE = 20
@@ -244,8 +248,21 @@ const TYPE_OPTIONS = [
 
 const uploadDialog = ref(false)
 const uploadFile = ref<File | null>(null)
-const uploadForm = ref({ org: '', year: '', type: '', tags: '' })
+const uploadForm = ref({ org: '', year: '', type: '', tags: [] as string[] })
 const uploading = ref(false)
+/** 「领域」多选的候选值：从库里现有主题现拉，避免手打导致主题词对不齐 */
+const TAG_OPTIONS = ref<string[]>([])
+
+/** 拉取库里已有的主题词，作为「领域」多选下拉的选项（拉不到就留空，仍可自己输入） */
+async function loadTagOptions(): Promise<void> {
+  try {
+    const res = await fetch('/api/docs/facets')
+    const data = (await res.json()) as { tags?: { value: string }[] }
+    TAG_OPTIONS.value = (data.tags ?? []).map((t) => t.value)
+  } catch {
+    TAG_OPTIONS.value = []
+  }
+}
 
 function openUpload(): void {
   if (!token.value) {
@@ -253,7 +270,8 @@ function openUpload(): void {
     return
   }
   uploadFile.value = null
-  uploadForm.value = { org: '', year: '', type: '', tags: '' }
+  uploadForm.value = { org: '', year: '', type: '', tags: [] }
+  void loadTagOptions()
   uploadDialog.value = true
 }
 
@@ -270,7 +288,9 @@ async function submitUpload(): Promise<void> {
   uploading.value = true
   const name = uploadFile.value.name
   try {
-    const result = await uploadKnowledge(token.value, uploadFile.value, uploadForm.value)
+    // 「领域」多选在界面上是数组，提交时拼成逗号分隔字符串（后端与引擎存的就是字符串）
+    const payload = { ...uploadForm.value, tags: uploadForm.value.tags.join(',') }
+    const result = await uploadKnowledge(token.value, uploadFile.value, payload)
     // 标签没写成功时如实说，不糊弄成「已完成」
     if (result.metaSaved) {
       ElMessage.success(`「${name}」已上传，机构/年份/类型标签也写好了`)
@@ -296,118 +316,155 @@ onMounted(() => {
   if (saved) {
     token.value = saved
     void load()
-    void loadQa()
+    void loadAgent()
   }
 })
 
-/* ---------------- 问答设置（模型 / 回答方式 / 思考强度） ---------------- */
+/* ---------------- 智能体设置（T7：问答走智能体 + 设置上网页） ---------------- */
 
 /**
- * 回答方式与思考强度的选项**由后端下发**，前端不写死一份。
- * 这样词表改了（引擎加了一档强度）不用改前端两处。
+ * 卡片形态：6 个可改字段 + 4 组只读字段。
+ *
+ * ⚠️ 与 T3 的「问答设置」有两处本质差别，界面上要说清楚：
+ *   1. 这里改的是**引擎里那个智能体本体**，不是我们的设置文件 —— 改完问答立刻换一套脑子；
+ *   2. 「回答方式（风格）」已下线 —— 提示词改由智能体的 system_prompt 统一提供，
+ *      再拼一段风格前缀会和它打架（后端走智能体时也确实不再拼了）。
  */
-const qaStyles = ref<QaStyleOption[]>([])
-const qaEfforts = ref<QaEffortOption[]>([])
-const qaModels = ref<{ id: string; name: string; status: string }[]>([])
-const qaModelId = ref('')
-const qaStyle = ref<QaStyle>('knowledge')
-const qaEffort = ref<ReasoningEffort>('')
-const qaLoading = ref(false)
-const qaSaving = ref(false)
-/** 引擎没连上时的原因；空串 = 正常 */
-const qaModelsError = ref('')
-/** 已保存、但现在生效中的值（回显用，避免和正在编辑的值混为一谈） */
-const qaCurrent = ref({ modelId: '', modelName: '', style: 'knowledge', reasoningEffort: '' })
-const qaUpdatedAt = ref('')
+const agentLoading = ref(false)
+const agentSaving = ref(false)
+const agentError = ref('')
+const agentModels = ref<{ id: string; name: string; status: string }[]>([])
+const agentModelsError = ref('')
+const agentName = ref('')
+const agentUpdatedAt = ref('')
+/** 知识库范围红线：引擎里若被改成 all，这条链路会直接拒绝写入 */
+const agentKbMode = ref('')
+const agentKbIds = ref<string[]>([])
+const agentIntentPrompts = ref<Array<{ key: string; length: number }>>([])
+const agentMode = ref('')
 
-/** 已存的模型在引擎列表里查不到 → 老师得重新选一个，别装作一切正常 */
-const qaModelMissing = computed(
-  () => Boolean(qaCurrent.value.modelId) && !qaModels.value.some((m) => m.id === qaCurrent.value.modelId)
+/** 正在编辑的 6 个可改字段 */
+const agentForm = ref({
+  system_prompt: '',
+  model_id: '',
+  temperature: 0,
+  max_completion_tokens: 0,
+  fallback_strategy: 'fixed',
+  fallback_response: ''
+})
+/** 已保存、但现在生效中的值（回显用，避免和正在编辑的值混为一谈） */
+const agentSaved = ref({ ...agentForm.value })
+/** 上一次保存后的回读校验结果（逐项显示「哪一项过 / 哪一项不过」） */
+const agentChecks = ref<AgentCheck[]>([])
+
+/** 当前模型在引擎列表里查不到 → 老师得重新选一个，别装作一切正常 */
+const agentModelMissing = computed(
+  () => Boolean(agentSaved.value.model_id) && !agentModels.value.some((m) => m.id === agentSaved.value.model_id)
 )
 
-/** 引擎里正在下载/下载失败的模型，选了大概率答不出来 */
-function qaModelDisabled(status: string): boolean {
+/** 引擎里正在下载 / 下载失败的模型，选了大概率答不出来 */
+function agentModelDisabled(status: string): boolean {
   return status !== 'active'
 }
 
-function modelLabel(name: string, status: string): string {
+function agentModelLabel(name: string, status: string): string {
   return status === 'active' ? name : `${name}（${status === 'downloading' ? '下载中' : '不可用'}）`
 }
 
-function styleLabel(value: string): string {
-  return qaStyles.value.find((s) => s.value === value)?.label ?? value
+/** 兜底口径的人话说明（fixed 与 model 的差别很大，写清楚比写英文 key 有用） */
+function fallbackLabel(value: string): string {
+  if (value === 'fixed') return '固定文案（答不上来就说「库内暂未收录」）'
+  if (value === 'model') return '交给模型自己发挥'
+  return value || '（未设置）'
 }
 
-function effortLabel(value: string): string {
-  return qaEfforts.value.find((e) => e.value === value)?.label ?? value
+/** 把接口返回的白名单视图铺到表单与只读区 */
+function applyAgentView(d: AgentConfigPayload): void {
+  agentName.value = d.name ?? ''
+  agentUpdatedAt.value = d.updatedAt ?? ''
+  agentModels.value = d.models ?? []
+  agentModelsError.value = d.modelsError ?? ''
+  agentKbMode.value = d.readonly?.kb_selection_mode ?? ''
+  agentKbIds.value = d.readonly?.knowledge_bases ?? []
+  agentIntentPrompts.value = d.readonly?.intent_prompts ?? []
+  agentMode.value = d.readonly?.agent_mode ?? ''
+  agentForm.value = {
+    system_prompt: d.editable?.system_prompt ?? '',
+    model_id: d.editable?.model_id ?? '',
+    temperature: d.editable?.temperature ?? 0,
+    max_completion_tokens: d.editable?.max_completion_tokens ?? 0,
+    fallback_strategy: d.editable?.fallback_strategy ?? 'fixed',
+    fallback_response: d.editable?.fallback_response ?? ''
+  }
+  agentSaved.value = { ...agentForm.value }
 }
 
-async function loadQa(): Promise<void> {
+async function loadAgent(): Promise<void> {
   if (!token.value) return
-  qaLoading.value = true
+  agentLoading.value = true
+  agentError.value = ''
   try {
-    const d = await fetchQaSettings(token.value)
-    qaModels.value = d.models
-    qaStyles.value = d.styles ?? []
-    qaEfforts.value = d.efforts ?? []
-    qaModelId.value = d.currentModelId
-    qaStyle.value = d.style
-    qaEffort.value = d.reasoningEffort
-    qaModelsError.value = d.modelsError ?? ''
-    qaUpdatedAt.value = d.updatedAt
-    qaCurrent.value = {
-      modelId: d.currentModelId,
-      modelName: d.currentModelName,
-      style: d.style,
-      reasoningEffort: d.reasoningEffort
-    }
+    applyAgentView(await fetchAgentConfig(token.value))
   } catch (err) {
     const response = (
       err as { response?: { status?: number; data?: { error?: { message?: string } } } }
     ).response
-    qaModelsError.value =
-      response?.data?.error?.message ?? '问答设置拉取失败，看看后端（:4000）在不在。'
+    agentError.value =
+      response?.data?.error?.message ?? '智能体设置拉取失败，看看后端（:4000）在不在。'
   } finally {
-    qaLoading.value = false
+    agentLoading.value = false
   }
 }
 
-/** 保存。存完以后端回显的为准 —— 别自己乐观更新，那样后端拒了界面还显示成功 */
-async function submitQa(): Promise<void> {
-  qaSaving.value = true
+/**
+ * 保存。
+ *
+ * ⚠️ 几个刻意为之的细节：
+ *   - 传空串 = 「不改这一项」（后端已这样处理），所以这里不做「空值兜底成旧值」的加工，
+ *     只把 6 个字段原样交出去，后端比对着改；
+ *   - 存完以后端回显的为准 —— **不乐观更新**，否则校验没过界面还显示成功；
+ *   - 回读校验结果原样显示（`agentChecks`），哪一项不过就写哪一项。
+ */
+async function submitAgent(): Promise<void> {
+  agentSaving.value = true
   try {
-    const d = await saveQaSettings(token.value, {
-      modelId: qaModelId.value,
-      style: qaStyle.value,
-      reasoningEffort: qaEffort.value
+    const d = await saveAgentConfig(token.value, {
+      system_prompt: agentForm.value.system_prompt,
+      model_id: agentForm.value.model_id,
+      temperature: agentForm.value.temperature,
+      max_completion_tokens: agentForm.value.max_completion_tokens,
+      fallback_strategy: agentForm.value.fallback_strategy,
+      fallback_response: agentForm.value.fallback_response
     })
-    qaModelId.value = d.currentModelId
-    qaStyle.value = d.style
-    qaEffort.value = d.reasoningEffort
-    qaModels.value = d.models.length ? d.models : qaModels.value
-    qaModelsError.value = d.modelsError ?? ''
-    qaUpdatedAt.value = d.updatedAt
-    qaCurrent.value = {
-      modelId: d.currentModelId,
-      modelName: d.currentModelName,
-      style: d.style,
-      reasoningEffort: d.reasoningEffort
+    applyAgentView(d.after)
+    agentChecks.value = d.checks ?? []
+    const failed = agentChecks.value.filter((c) => !c.ok)
+    if (failed.length > 0) {
+      ElMessage.error('已写入，但回读校验没过，请看下面的逐项结果')
+    } else {
+      ElMessage.success(d.message || '已保存，问答立刻按新设置走')
     }
-    ElMessage.success('已保存，问答立刻按新设置走')
+    // 被忽略的空字段要如实说一句，别让老师以为「清空」生效了
+    if (d.ignored && d.ignored.length > 0) {
+      ElMessage.warning(`这几项填的是空值，已保持原样没改：${d.ignored.join('、')}`)
+    }
   } catch (err) {
     const response = (
       err as { response?: { status?: number; data?: { error?: { message?: string } } } }
     ).response
+    // 后端把「哪一项没过」写进了 message，如实展示，别压成一句「保存失败」
     ElMessage.error(response?.data?.error?.message ?? '保存失败，看看后端（:4000）在不在')
+    // 保存失败也要让老师看到「现在是生效中的值」——重新拉一次，别让表单停在半改状态
+    await loadAgent()
   } finally {
-    qaSaving.value = false
+    agentSaving.value = false
   }
 }
 
-/** 「进入」按钮：口令对上了才去拉问答设置 */
+/** 「进入」按钮：口令对上了才去拉智能体设置 */
 async function enterAdmin(): Promise<void> {
   await load()
-  if (!errorText.value) await loadQa()
+  if (!errorText.value) await loadAgent()
 }
 </script>
 
@@ -456,78 +513,144 @@ async function enterAdmin(): Promise<void> {
         <span>已带标签 <b class="ok">{{ taggedCount }}</b></span>
       </div>
 
-      <!-- 问答设置：老师在这里换回答模型 / 回答方式 / 思考强度，不用去碰引擎 -->
+      <!-- 智能体设置（T7）：网站问答的「大脑」就是引擎里这个智能体，改这里问答立刻生效 -->
       <el-card shadow="never" class="qa-card">
         <div class="qa-head">
-          <h3 class="qa-title">问答设置</h3>
+          <h3 class="qa-title">智能体设置</h3>
           <span class="qa-now">
-            当前生效：{{ qaCurrent.modelName || '引擎默认模型' }} ·
-            {{ styleLabel(qaCurrent.style) }} ·
-            思考强度{{ qaCurrent.reasoningEffort ? effortLabel(qaCurrent.reasoningEffort) : '跟随模型' }}
+            智能体：{{ agentName || '（未取到）' }} ·
+            回答长度上限 {{ agentSaved.max_completion_tokens }} ·
+            随机度 {{ agentSaved.temperature }} ·
+            答不上来时{{ fallbackLabel(agentSaved.fallback_strategy) }}
           </span>
         </div>
 
-        <p v-if="qaModelsError" class="qa-warn">{{ qaModelsError }}</p>
-        <p v-else-if="qaModelMissing" class="qa-warn">
-          之前选的模型（{{ qaCurrent.modelId }}）在引擎里已经找不到了，请重新选一个并保存。
+        <p class="qa-lead">
+          这里的修改会<b>直接写入引擎的智能体</b>，下次提问立刻生效；
+          漏改的字段不会被清空（后端先读全量、只改你动过的那几项，再整份写回）。
+        </p>
+
+        <p v-if="agentError" class="qa-warn">{{ agentError }}</p>
+        <p v-else-if="agentModelsError" class="qa-warn">{{ agentModelsError }}</p>
+        <p v-else-if="agentModelMissing" class="qa-warn">
+          当前生效的模型（{{ agentSaved.model_id }}）在引擎里已经找不到了，请重新选一个并保存。
+        </p>
+        <p v-else-if="agentKbMode && agentKbMode !== 'selected'" class="qa-warn">
+          ⚠️ 智能体的知识库范围现在是「{{ agentKbMode }}」——这会把不相干的库（如 123 份
+          「AI系统学习」）一起拉进检索。本页不会替你改这个口径，请到引擎里改回「按选择」再保存。
         </p>
 
         <div class="qa-grid">
           <div class="qa-field">
             <label>回答模型</label>
             <el-select
-              v-model="qaModelId"
-              :loading="qaLoading"
-              :disabled="qaLoading || Boolean(qaModelsError)"
-              placeholder="跟随引擎默认"
+              v-model="agentForm.model_id"
+              :loading="agentLoading"
+              :disabled="agentLoading || Boolean(agentModelsError)"
+              placeholder="跟随智能体配置"
               style="width: 100%"
             >
-              <el-option value="" label="跟随引擎默认（不指定）" />
               <el-option
-                v-for="m in qaModels"
+                v-for="m in agentModels"
                 :key="m.id"
                 :value="m.id"
-                :label="modelLabel(m.name, m.status)"
-                :disabled="qaModelDisabled(m.status)"
-              />
-            </el-select>
-          </div>
-
-          <div class="qa-field">
-            <label>回答方式</label>
-            <el-radio-group v-model="qaStyle">
-              <el-radio v-for="s in qaStyles" :key="s.value" :value="s.value">
-                {{ s.label }}
-              </el-radio>
-            </el-radio-group>
-            <p class="qa-hint">{{ qaStyles.find((s) => s.value === qaStyle)?.hint || '' }}</p>
-          </div>
-
-          <div class="qa-field">
-            <label>思考强度</label>
-            <el-select v-model="qaEffort" placeholder="跟随模型" style="width: 100%">
-              <el-option value="" label="跟随模型（不指定）" />
-              <el-option
-                v-for="e in qaEfforts"
-                :key="e.value"
-                :value="e.value"
-                :label="e.label"
+                :label="agentModelLabel(m.name, m.status)"
+                :disabled="agentModelDisabled(m.status)"
               />
             </el-select>
             <p class="qa-hint">
-              这个是引擎真实支持的参数（reasoning_effort）。选「跟随模型」表示不下发，
-              由所选模型自己决定能不能思考。
+              这是智能体自己用的模型（不再是知识库那个「回答模型」）。换模型等于换脑子。
+            </p>
+          </div>
+
+          <div class="qa-field">
+            <label>回答随机度（temperature）</label>
+            <el-input-number
+              v-model="agentForm.temperature"
+              :min="0"
+              :max="1"
+              :step="0.1"
+              :precision="2"
+              style="width: 100%"
+            />
+            <p class="qa-hint">0 最确定、1 最发散。资料问答建议 0 到 0.5。</p>
+          </div>
+
+          <div class="qa-field">
+            <label>回答长度上限（max_completion_tokens）</label>
+            <el-input-number
+              v-model="agentForm.max_completion_tokens"
+              :min="256"
+              :max="65536"
+              :step="512"
+              style="width: 100%"
+            />
+            <p class="qa-hint">
+              🔴 这一项千万别调小：调回 1024 会让宽泛问题的长回答被截断（以前修过的 bug）。
+            </p>
+          </div>
+
+          <div class="qa-field">
+            <label>答不上来时怎么办</label>
+            <el-select v-model="agentForm.fallback_strategy" style="width: 100%">
+              <el-option value="fixed" label="固定文案（说「库内暂未收录」，推荐）" />
+              <el-option value="model" label="交给模型自己发挥（不建议）" />
+            </el-select>
+            <p class="qa-hint">
+              🔴 改成「交给模型自己发挥」，「库内暂未收录」就不再是固定文案了，模型可能编。
             </p>
           </div>
         </div>
 
+        <div class="qa-field qa-wide">
+          <label>系统提示词（system_prompt）· {{ agentForm.system_prompt.length }} 字</label>
+          <el-input
+            v-model="agentForm.system_prompt"
+            type="textarea"
+            :rows="12"
+            placeholder="智能体回答问题的总规则"
+          />
+          <p class="qa-hint">
+            这是智能体的总规则（只用库内内容、逐条作答、结尾说依据）。
+            🔴 清空会让它变成自由发挥 —— 本页按「空值 = 不改」处理，不会让它被抹掉。
+          </p>
+        </div>
+
+        <div class="qa-field qa-wide">
+          <label>答不上来时的固定文案（fallback_response）· {{ agentForm.fallback_response.length }} 字</label>
+          <el-input v-model="agentForm.fallback_response" type="textarea" :rows="6" />
+        </div>
+
+        <!-- 只读展示的 4 组字段：看得见，但不提交（提交了后端也会丢掉） -->
+        <div class="qa-readonly">
+          <span class="qa-ro-label">只读（不在本页改）</span>
+          <span>关联知识库：{{ agentKbIds.length ? agentKbIds.join('、') : '（未关联）' }}</span>
+          <span>范围口径：{{ agentKbMode || '—' }}</span>
+          <span>智能体模式：{{ agentMode || '—' }}</span>
+          <span>意图提示词：{{ agentIntentPrompts.length }} 段（{{ agentIntentPrompts.map((p) => p.key).join('、') }}）</span>
+        </div>
+        <p class="qa-hint">
+          「思考强度」原来在本卡片里，现在由智能体在引擎侧的配置决定，本页不提供开关 ——
+          硬改它会和智能体自己的设置打架。
+        </p>
+
         <div class="qa-foot">
-          <el-button type="primary" :loading="qaSaving" @click="submitQa">
-            {{ qaSaving ? '保存中…' : '保存设置' }}
+          <el-button type="primary" :loading="agentSaving" @click="submitAgent">
+            {{ agentSaving ? '保存中…' : '保存智能体设置' }}
           </el-button>
-          <span v-if="qaUpdatedAt" class="qa-time">
-            上次保存：{{ qaUpdatedAt.slice(0, 16).replace('T', ' ') }}
+          <span v-if="agentUpdatedAt" class="qa-time">
+            引擎侧最后更新：{{ agentUpdatedAt.slice(0, 16).replace('T', ' ') }}
           </span>
+        </div>
+
+        <!-- 回读校验结果：保存后逐项显示，失败项写清「期望 / 实际」 -->
+        <div v-if="agentChecks.length" class="qa-checks">
+          <div class="qa-checks-title">保存后回读校验（后端重新读了一遍引擎）</div>
+          <div v-for="c in agentChecks" :key="c.key" class="qa-check" :class="c.ok ? 'ok' : 'bad'">
+            <span class="mark">{{ c.ok ? '通过' : '未通过' }}</span>
+            <span class="name">{{ c.label }}</span>
+            <span class="val">期望 {{ c.expected }} ／ 实际 {{ c.actual }}</span>
+          </div>
         </div>
       </el-card>
 
@@ -635,7 +758,17 @@ async function enterAdmin(): Promise<void> {
           </el-select>
         </el-form-item>
         <el-form-item label="领域">
-          <el-input v-model="uploadForm.tags" placeholder="主题词，多个用逗号隔开" clearable />
+          <el-select
+            v-model="uploadForm.tags"
+            multiple
+            filterable
+            allow-create
+            default-first-option
+            placeholder="可多选；没有想要的就直接输入新主题"
+            style="width: 100%"
+          >
+            <el-option v-for="t in TAG_OPTIONS" :key="t" :label="t" :value="t" />
+          </el-select>
         </el-form-item>
       </el-form>
       <p class="dlg-hint">
@@ -785,6 +918,65 @@ async function enterAdmin(): Promise<void> {
   margin: 0 0 12px;
   font-size: 13px;
   color: var(--zw-amber);
+}
+.qa-lead {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--zw-text);
+}
+.qa-wide {
+  margin-top: 16px;
+}
+.qa-readonly {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--zw-line);
+  font-size: 12px;
+  color: var(--zw-muted);
+}
+.qa-ro-label {
+  color: var(--zw-faint);
+}
+.qa-checks {
+  margin-top: 16px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #f7faf7;
+}
+.qa-checks-title {
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: var(--zw-green-ink);
+}
+.qa-check {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 12px;
+  color: var(--zw-muted);
+}
+.qa-check .mark {
+  flex: 0 0 auto;
+  min-width: 42px;
+  font-weight: 600;
+}
+.qa-check.ok .mark {
+  color: var(--zw-green);
+}
+.qa-check.bad .mark {
+  color: #c45656;
+}
+.qa-check .name {
+  flex: 0 0 auto;
+  color: var(--zw-text);
+}
+.qa-check .val {
+  font-variant-numeric: tabular-nums;
 }
 .qa-foot {
   display: flex;
