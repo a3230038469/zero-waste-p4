@@ -47,10 +47,7 @@ onMounted(() => {
     <div class="zw-container inner">
       <RouterLink to="/" class="brand">
         <span class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8">
-            <path d="M12 21c5-2.5 8-6.6 8-11V5.8L12 3 4 5.8V10c0 4.4 3 8.5 8 11Z" stroke-linejoin="round" />
-            <path d="M9.2 12.2l2.1 2.1 3.9-4.2" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
+          <img src="/zero-logo.png" alt="" class="brand-logo-img" width="32" height="32" />
         </span>
         <span class="brand-text">
           <strong>零废弃知识库</strong>
@@ -117,9 +114,13 @@ onMounted(() => {
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  color: #fff;
-  background: linear-gradient(140deg, var(--zw-green), var(--zw-green-deep));
-  box-shadow: 0 4px 12px rgba(46, 125, 50, 0.28);
+  overflow: hidden;
+}
+
+.brand-mark img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
 }
 
 .brand-text {
