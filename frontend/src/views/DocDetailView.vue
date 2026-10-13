@@ -10,8 +10,18 @@
  *   4. 新增「复制分享链接」：对外站点的资料页是要发给人看的。
  *   5. 补引用提示（著作权归原发布机构），与「关于项目」页的口径一致。
  *
+ * B09 追加（公众互动模块）：
+ *   6. 新增「反馈这份资料」入口（2026-10-12）：访客发现标题/机构/年份有误、
+ *      文件打不开时，得有地方说话；反馈走 FeedbackDialog → POST /api/track。
+ *   7. 新增「分享二维码」（2026-10-13）：线下活动/PPT/打印物料没有链接可发，需要能扫的码。
+ *      弹窗里同时给「复制链接」和「保存二维码 PNG」，实现见 components/ShareDialog.vue。
+ *   8. 进详情页时把浏览器标签标题换成资料标题（原来一直是「零废弃知识库」）——
+ *      对外站点转发出去时，标签页标题就是读者看到的第一行字。离开页面时还原。
+ *
  * 埋点说明：预览/下载的权威计数由**服务端**在 `/api/docs/:id/preview|download`
  * 里各记一条（见 backend/src/routes/docs.ts），前端不必重复上报。
+ * 反馈复用别人的 `feedback_submit` 事件（已在白名单里）；分享动作**不新增埋点**，
+ * 避免动到别人的事件白名单。
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -20,6 +30,8 @@ import { LARGE_FILE_LIMIT, downloadDoc, getDocDetail, getDocs, getPreviewUrl, ty
 import type { DocItem } from '../api/types'
 import { useAuth } from '../composables/useAuth'
 import DocCard from '../components/DocCard.vue'
+import FeedbackDialog from '../components/FeedbackDialog.vue'
+import ShareDialog from '../components/ShareDialog.vue'
 import { formatBytes, formatYear } from '../utils/format'
 
 const route = useRoute()
@@ -31,10 +43,24 @@ const doc = ref<DocDetail | null>(null)
 const previewLoading = ref(false)
 const previewUrl = ref('')
 const previewVisible = ref(false)
+/** 反馈弹窗（资料级） */
+const feedbackVisible = ref(false)
 
 /** 同主题推荐（排除自己） */
 const related = ref<DocItem[]>([])
 const relatedLoading = ref(false)
+
+/** 分享弹窗（B09）：地址在打开弹窗的瞬间取，避免用列表页 URL 或历史 URL 分享错 */
+const shareVisible = ref(false)
+const shareUrl = ref('')
+
+/** 站点默认标题（index.html 里的），离开详情页时还原 */
+const SITE_TITLE = '零废弃知识库'
+
+function openShare(): void {
+  shareUrl.value = window.location.href
+  shareVisible.value = true
+}
 
 async function fetchDetail(): Promise<void> {
   const id = route.params.id
@@ -47,7 +73,11 @@ async function fetchDetail(): Promise<void> {
   related.value = []
   try {
     doc.value = await getDocDetail(id)
-    if (doc.value) void fetchRelated(doc.value)
+    // 标签标题换成资料名：转发出去时读者第一眼看到的就是它
+    if (doc.value) {
+      document.title = `${doc.value.title} · ${SITE_TITLE}`
+      void fetchRelated(doc.value)
+    }
   } finally {
     loading.value = false
   }
@@ -176,6 +206,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   revokePreview()
+  // 离开详情页把标签标题还给站点默认，否则从详情跳到别的页面标题会一直停在资料名
+  document.title = SITE_TITLE
 })
 
 // 同组件复用（如从详情跳详情）时按新 id 重新拉取
@@ -184,6 +216,8 @@ watch(
   () => {
     if (route.name === 'doc') {
       previewVisible.value = false
+      shareVisible.value = false
+      feedbackVisible.value = false
       revokePreview()
       void fetchDetail()
     }
@@ -259,6 +293,7 @@ watch(
           <el-button type="primary" :loading="previewLoading" @click="onPreview">在线预览</el-button>
           <el-button type="primary" plain @click="onDownload">下载原件</el-button>
           <el-button text @click="onCopyLink">复制分享链接</el-button>
+          <el-button text @click="openShare">分享二维码</el-button>
         </div>
 
         <p class="action-hint">{{ previewHint }}</p>
@@ -288,7 +323,25 @@ watch(
           著作权归原发布机构所有，本站仅作收录与索引；引用请注明原始出处，详见
           <RouterLink to="/about#cite">引用与转载说明</RouterLink>。
         </p>
+
+        <!-- 反馈入口：访客发现条目有误 / 文件打不开时的出口（B09） -->
+        <p class="feedback-entry">
+          标题、机构、年份有误，或文件打不开？
+          <button type="button" class="feedback-link" @click="feedbackVisible = true">
+            反馈这份资料
+          </button>
+        </p>
+
+        <FeedbackDialog
+          v-model="feedbackVisible"
+          scope="doc"
+          :doc-id="doc.id"
+          :doc-title="doc.title"
+        />
       </article>
+
+      <!-- 分享弹窗（B09）：二维码 + 复制链接 + 导出 PNG -->
+      <ShareDialog v-model="shareVisible" :title="doc.title" :url="shareUrl" />
 
       <!-- 相关推荐 -->
       <section v-if="relatedLoading || related.length" class="related">
@@ -528,6 +581,28 @@ watch(
 
 .cite-note a {
   color: var(--zw-green);
+}
+
+/* 反馈入口——低调但找得到：不抢主操作，也不藏进角落 */
+.feedback-entry {
+  margin: 14px 0 0;
+  font-size: 12px;
+  color: var(--zw-faint);
+}
+
+.feedback-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--zw-green);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.feedback-link:hover {
+  color: var(--zw-green-deep);
 }
 
 /* 相关推荐 */
