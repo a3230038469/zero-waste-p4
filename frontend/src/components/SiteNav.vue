@@ -10,6 +10,8 @@
  *      这在一个对外开的站点上是硬伤。
  *   4. 「管理」入口从导航条移到页脚（见 SiteFooter）：公众站不该把内部后台摆在主航道上，
  *      但仍留在页脚让老师找得到。
+ *   5. 2026-10-13（B09）：新增「我要投稿」（/contribute）。只加一个导航项与一行注释，
+ *      不动其余导航项的顺序与高亮逻辑。
  */
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
@@ -27,6 +29,9 @@ const { user, isLoggedIn, fetchMe, logout } = useAuth()
 const NAV = [
   { to: '/', label: '首页', exact: true },
   { to: '/shelf', label: '资料库', exact: false },
+  // B09 公众互动（2026-10-13）：投稿是「公众能参与进来」的唯一入口，放在资料库旁边
+  // （看完资料顺手投稿的动线最顺）；藏在页脚等于没有入口。
+  { to: '/contribute', label: '我要投稿', exact: false },
   { to: '/insights', label: '数据概览', exact: false },
   { to: '/chat', label: 'AI 问答', exact: false },
   { to: '/about', label: '关于项目', exact: false }

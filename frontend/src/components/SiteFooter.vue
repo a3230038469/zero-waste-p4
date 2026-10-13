@@ -45,6 +45,7 @@ onMounted(() => {
       <div class="foot-col">
         <h4>浏览</h4>
         <RouterLink to="/shelf">资料库</RouterLink>
+        <RouterLink to="/contribute">我要投稿</RouterLink>
         <RouterLink to="/insights">数据概览</RouterLink>
         <RouterLink to="/about">关于项目</RouterLink>
       </div>
@@ -61,6 +62,7 @@ onMounted(() => {
         <h4>站点</h4>
         <RouterLink to="/auth">登录 / 注册</RouterLink>
         <RouterLink to="/admin/knowledge" class="foot-admin">资料管理（内部）</RouterLink>
+        <RouterLink to="/admin/contributions" class="foot-admin">投稿审核（内部）</RouterLink>
         <RouterLink to="/admin/stats">访问统计（内部）</RouterLink>
       </div>
     </div>

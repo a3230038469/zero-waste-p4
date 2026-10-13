@@ -7,10 +7,11 @@
  *   - scope="site"：针对**站点本身**（功能建议 / 内容建议 / 使用问题 / 其他）
  *
  * 落库口径：**不新增接口、不新增事件名**，走已有的 POST /api/track，用白名单里现成的
- * `feedback_submit`（真相来源：backend/src/track/types.ts）。payload 形状：
- *   doc  → { kind: 'doc', docId, docTitle, reason, text, contact }
- *   site → { kind: 'site', path, reason, text, contact }
- * 其中 reason 的取值见下方常量表 —— **改取值等于改数据口径**，要同步 docs/接口约定.md。
+ * `feedback_submit`（真相来源：backend/src/track/types.ts）。
+ *
+ * 2026-10-13（B09 公众上传）：四个原因 / 四个分类 / 字数上限 / 提交 payload 已抽到
+ *   `src/constants/feedback.ts`，与「我要投稿」页的反馈 Tab 共用同一份 —— 免得两处漂。
+ *   本文件的职责只剩「把这个弹窗画出来」。
  *
  * 为什么匿名也能提：反馈是「路过的访客也可能发现错」的场景，卡登录会挡住最有用的那部分反馈；
  * 联系方式做成选填，愿意留的我们才能回。
@@ -19,7 +20,13 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { trackEvent } from '../api/track'
+import {
+  DOC_REASONS,
+  FEEDBACK_TEXT_MAX,
+  SITE_FEEDBACK_HINT,
+  SITE_KINDS,
+  submitFeedback
+} from '../constants/feedback'
 import { useAuth } from '../composables/useAuth'
 
 const props = withDefaults(
@@ -52,25 +59,6 @@ const visible = computed({
 
 const isDoc = computed(() => props.scope === 'doc')
 
-/** 资料级反馈的四个原因（对外是单选，对内是 payload.reason 的取值） */
-const DOC_REASONS = [
-  { value: 'broken', label: '文件打不开 / 无法预览下载' },
-  { value: 'wrong', label: '内容有误（标题、机构、年份等）' },
-  { value: 'duplicate', label: '内容重复收录' },
-  { value: 'missing', label: '希望补充相关内容' }
-] as const
-
-/** 站点级反馈的四个分类 */
-const SITE_KINDS = [
-  { value: 'feature', label: '功能建议' },
-  { value: 'content', label: '内容建议' },
-  { value: 'usage', label: '使用问题' },
-  { value: 'other', label: '其他' }
-] as const
-
-/** 留言上限（payload 整体限 4000 字符，这里留足余量） */
-const MAX_TEXT = 300
-
 const form = reactive({ reason: '', text: '', contact: '' })
 const submitting = ref(false)
 
@@ -78,7 +66,7 @@ const title = computed(() => (isDoc.value ? '这份资料有问题？' : '意见
 const intro = computed(() =>
   isDoc.value
     ? `你正在反馈：${props.docTitle || '这份资料'}。我们会核实后修正或撤下，感谢你帮我们发现问题。`
-    : '使用中遇到问题，或希望站点增加什么功能，都可以写在这里。你的反馈会进入后台统计，我们逐条看。'
+    : SITE_FEEDBACK_HINT
 )
 const options = computed(() => (isDoc.value ? DOC_REASONS : SITE_KINDS))
 const textPlaceholder = computed(() =>
@@ -111,24 +99,15 @@ async function onSubmit(): Promise<void> {
 
   submitting.value = true
   try {
-    const payload: Record<string, unknown> = {
-      kind: isDoc.value ? 'doc' : 'site',
+    await submitFeedback({
+      scope: isDoc.value ? 'doc' : 'site',
       reason: form.reason,
-      text: text.slice(0, MAX_TEXT),
-      contact: form.contact.trim()
-    }
-    if (isDoc.value) {
-      payload.docId = props.docId
-      payload.docTitle = props.docTitle
-    } else {
-      payload.path = route.fullPath
-    }
-
-    await trackEvent({
-      event: 'feedback_submit',
-      userId: user.value?.id ?? null,
+      text,
+      contact: form.contact,
+      docId: props.docId,
+      docTitle: props.docTitle,
       path: route.fullPath,
-      payload
+      userId: user.value?.id ?? null
     })
 
     ElMessage.success(isDoc.value ? '已收到，感谢你帮我们发现问题' : '反馈已提交，感谢你的建议')
@@ -170,7 +149,7 @@ async function onSubmit(): Promise<void> {
         v-model="form.text"
         type="textarea"
         :rows="4"
-        :maxlength="MAX_TEXT"
+        :maxlength="FEEDBACK_TEXT_MAX"
         show-word-limit
         :placeholder="textPlaceholder"
       />
