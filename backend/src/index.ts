@@ -10,6 +10,11 @@
  * 追加记录（巡检，2026-10-10）：把地基自带的 middleware/error.ts 挂到路由链末尾
  * （此前从未挂载，未匹配路径回的是 HTML 404）。要回退就删掉 `app.use(notFound)` 与
  * `app.use(errorHandler)` 两行及其上方注释。
+ *
+ * 追加记录（B09 分享功能，2026-10-13）：SPA 回退从 sendFile 改为「按路径注入分享 meta
+ * 再回 HTML」（见 src/share/meta.ts）。原因：微信/QQ 转发链接的抓取程序不执行 JS，
+ * 纯 SPA 的 index.html 标题永远是站名，卡片没有信息量。注入失败时原样 sendFile 兜底，
+ * 行为与改动前完全一致。要回退就把 `renderSpaHtml` 那段换回 `res.sendFile(...)` 一行。
  */
 import express from 'express'
 import cors from 'cors'
@@ -28,6 +33,7 @@ import trackRouter from './routes/track.js' // 韶茹
 import adminRouter from './routes/admin.js' // 本地演示：老师后台（管理资料）
 import overviewRouter from './routes/overview.js' // 对外展示站：整库数据概览
 import { errorHandler, notFound } from './middleware/error.js' // 地基自带（2026-10-10 起真正挂上）
+import { renderSpaHtml, siteOrigin } from './share/meta.js' // B09：分享卡片 meta 注入
 
 // 配置来源：backend/.env（引擎密钥、数据源开关 DOCS_SOURCE 都从这里读）
 dotenv.config()
@@ -59,8 +65,21 @@ if (existsSync(distDir)) {
   app.use(express.static(distDir))
   // SPA 回退：非 /api、/health 的 GET 一律回 index.html（前端是 history 路由）。
   // 必须放在所有 API 路由之后，否则会截胡接口。
-  app.get(/^(?!\/(api|health)).*/, (req, res, next) => {
+  //
+  // B09（2026-10-13）：回 HTML 前按路径注入分享 meta（/doc/:id 注入资料级卡片，
+  // 其他页面注入页面级默认）。任何异常都退回普通 sendFile —— 注入只是增强，
+  // 绝不能因为 meta 找不到而把页面挂掉。
+  app.get(/^(?!\/(api|health)).*/, async (req, res, next) => {
     if (req.method !== 'GET') return next()
+    try {
+      const html = await renderSpaHtml(distDir, req.path, siteOrigin(req))
+      if (html) {
+        res.type('html').send(html)
+        return
+      }
+    } catch {
+      // 落到下面的 sendFile 兜底
+    }
     res.sendFile(path.join(distDir, 'index.html'))
   })
 }
