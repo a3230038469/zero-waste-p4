@@ -21,6 +21,7 @@ import type { DocOverview } from '../api/types'
 import DocCard from '../components/DocCard.vue'
 import HomeAskWidget from '../components/HomeAskWidget.vue'
 import { formatCount, formatYearSpan } from '../utils/format'
+import { cardToneVars } from '../utils/typeTone'
 
 const router = useRouter()
 const keyword = ref('')
@@ -108,8 +109,11 @@ onMounted(() => {
         把零废弃的知识<br />
         <span class="hl">整理成每个人都能用的资料库</span>
       </h1>
+      <!-- 首屏标语（2026-10-13）：拆成三行分别居中，独立字体区别于正文 -->
       <p class="hero-lead">
-        很高兴看到你也在关注零废弃这件事，我们欣赏每一位在这条路上前行的同行者。秉承礼让共建的理念，我们整理收录零废弃与废弃物管理领域的政策法规、研究报告、标准规范与实践工具，所有资料来源公开、条目可溯源。你可以按主题浏览、按关键词检索，也可以直接向AI助手提问，希望对你有帮助。
+        <span class="lead-line">很高兴看到你同样关注零废弃事业，我们欣赏每一位在可持续道路前行的同行者。</span>
+        <span class="lead-line">秉承礼让共建的基金会宗旨，我们整理收录零废弃领域政策法规、研究报告、标准规范与实践工具。</span>
+        <span class="lead-line">所有资料来源公开、条目可溯源，支持主题浏览、关键词检索与 AI 问答，希望对你有帮助。</span>
       </p>
 
       <div class="search-row">
@@ -186,6 +190,7 @@ onMounted(() => {
           :key="t.value"
           type="button"
           class="type-card"
+          :style="cardToneVars(t.value)"
           @click="goShelf({ type: t.value })"
         >
           <span class="type-name">{{ t.value }}</span>
@@ -204,7 +209,7 @@ onMounted(() => {
         <RouterLink to="/shelf" class="sec-link">浏览全部 →</RouterLink>
       </div>
       <div class="doc-grid">
-        <DocCard v-for="doc in latest" :key="doc.id" :doc="doc" />
+        <DocCard v-for="doc in latest" :key="doc.id" :doc="doc" :style="cardToneVars(doc.type)" />
       </div>
     </section>
 
@@ -300,12 +305,23 @@ onMounted(() => {
   padding-bottom: 2px;
 }
 
+/* 首屏标语（2026-10-13）：由一整段改为三行独立成行居中。
+   与页面正文（无衬线、灰色）刻意区分：这里换成衬线字体、绿色系着色、
+   行距拉大到 2.1，作为首屏的「中心标语」更突出。
+   不加任何底色/阴影 —— 页面底是 MouseGlow 渐变氛围层，加实色底会把它盖住。 */
 .hero-lead {
-  font-size: 16px;
-  line-height: 1.9;
-  color: var(--zw-muted);
+  font-family: 'Songti SC', 'Source Han Serif SC', 'Noto Serif SC', 'SimSun', 'STSong', Georgia,
+    'Times New Roman', serif;
+  font-size: 17px;
+  line-height: 2.1;
+  letter-spacing: 0.01em;
+  color: var(--zw-green-deep);
   margin: 0 auto 26px;
-  max-width: 40em;
+  max-width: 100%;
+}
+
+.lead-line {
+  display: block;
 }
 
 .search-row {
@@ -524,10 +540,49 @@ onMounted(() => {
   transform: translateY(-2px);
 }
 
+/* 悬停扩散动画（2026-10-13 新增）：与资料库资料卡片**完全同一套**写法 ——
+   渐变色画在 background 层（文字永远压在它上面，不存在被盖住的可能），
+   从中心 0% 铺开到 150%，时长与缓动曲线也一致，颜色取该分类的专属主题色。
+   没有底色时（--tone-glow 缺失）退化为透明，不会出现灰块。 */
+.type-card {
+  background-color: var(--zw-surface);
+  background-image: radial-gradient(circle at 50% 50%, var(--tone-glow, transparent), transparent 72%);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 0% 0%;
+  transition:
+    background-size 0.45s cubic-bezier(0.22, 0.61, 0.36, 1),
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+.type-card:hover {
+  background-size: 150% 150%;
+}
+
 .type-name {
+  /* 改成 inline-flex：让分类图标与文字在一行内垂直居中
+     （与资料库顶部分类标签 / 卡片标签同一套做法）。字号、字重、颜色均未动。 */
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   font-size: 15px;
   font-weight: 600;
   color: var(--zw-ink);
+}
+
+/* 分类图标（2026-10-13 新增）：与资料库顶部分类导航、卡片标签读的是同一对变量
+   （--tone-icon 定形状 / --tone-icon-color 定颜色），所以拿到的是**同一枚图标**——
+   两处一致是结构保证的，不靠人工对齐两段代码。图标色为该分类专属多彩色。 */
+.type-name::before {
+  content: '';
+  flex: none;
+  width: 16px;
+  height: 16px;
+  background-color: var(--tone-icon-color);
+  -webkit-mask: var(--tone-icon) center / contain no-repeat;
+  mask: var(--tone-icon) center / contain no-repeat;
 }
 
 .type-count {
@@ -541,6 +596,64 @@ onMounted(() => {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
+}
+
+/* ---- 最近收录卡片（2026-10-13 改）：与资料库资料卡片同一套 ----
+   DocCard 组件本身一行未改：这里用「本页 scope 选择器 + 更高优先级」覆盖它的左色带与悬停。
+   分类色由 :style="cardToneVars(doc.type)" 以 CSS 变量挂在卡片根节点上。
+
+   优先级说明：DocCard 内是 `.doc-card[data-v-子组件]`（1 类 + 1 属性），
+   这里是 `.doc-grid .doc-card[data-v-本页]`（2 类 + 1 属性），后者胜，
+   因此不依赖样式注入顺序，也不需要 !important。 */
+.doc-grid .doc-card::before {
+  /* 需求：只保留左侧一条细竖线，颜色 = 该资料所属分类色（与资料库同为 3px） */
+  width: 3px;
+  background: var(--tone, var(--zw-green-soft));
+}
+
+.doc-grid .doc-card {
+  /* 悬停渐变画在「背景层」而不是覆盖层：文字永远在它上面，不存在盖住文字的可能 */
+  background-color: var(--zw-surface);
+  background-image: radial-gradient(circle at 50% 50%, var(--tone-glow, transparent), transparent 72%);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 0% 0%;
+  transition:
+    background-size 0.45s cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 0.22s ease,
+    box-shadow 0.22s ease,
+    border-color 0.22s ease;
+}
+
+.doc-grid .doc-card:hover {
+  /* 由中心向四周铺开（0 → 150%）；透明度在 typeTone 里已压到 0.18，只是淡淡一层底色 */
+  background-size: 150% 150%;
+}
+
+/* 卡片里的分类标签：补上与「按资料类型找」**同一枚**图标 ——
+   同一份 --tone-icon 形状、同一个 --tone-icon-color 颜色（都由 cardToneVars 挂在卡片根上），
+   所以两处的一致是结构保证的，不靠人工对齐。尺寸 13px / gap 4px 与资料库卡片标签做法逐字相同。
+
+   只加图标本身：标签原有的文字、字号、配色、圆角、内距一律未动，
+   卡片左侧竖线、hover 扩散动画、文字排版、颜色、尺寸也全部维持原状。
+
+   为什么要用 :deep()：.type-badge 在 DocCard 组件内部，带的是子组件的 scope 属性，
+   本页 scoped 选择器直接写它匹配不到；选择器整体挂在 .doc-grid 之下，
+   所以只作用于首页「最近收录」，其他页面不受影响。 */
+.doc-grid :deep(.doc-card .type-badge) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.doc-grid :deep(.doc-card .type-badge)::before {
+  content: '';
+  flex: none;
+  width: 13px;
+  height: 13px;
+  background-color: var(--tone-icon-color);
+  -webkit-mask: var(--tone-icon) center / contain no-repeat;
+  mask: var(--tone-icon) center / contain no-repeat;
 }
 
 /* ---------------- 关于 + 问答 ---------------- */
@@ -658,6 +771,12 @@ onMounted(() => {
 @media (max-width: 640px) {
   .hero h1 {
     font-size: 27px;
+  }
+
+  /* 窄屏下三行会各自折行，字号与行距略收，避免标语占掉整屏 */
+  .hero-lead {
+    font-size: 15px;
+    line-height: 2;
   }
 
   .search-row {
