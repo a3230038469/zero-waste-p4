@@ -5,7 +5,9 @@
  * 路由：/admin/knowledge
  * 数据源：GET /api/admin/knowledge（需请求头 X-Admin-Token）
  *
- * 已接：列出全部资料、上传（可一并填标签）、删除、下载、问答设置（T3，2026-10-10）。
+ * 已接：列出全部资料、上传（可一并填标签）、删除、下载、问答设置（T3，2026-10-10）、
+ *   解析失败行的「重新上传」（T6，2026-10-12：后端取回原件→删旧→重传→补回标签）、
+ *   智能体设置（T7，2026-10-13：网页问答的「大脑」= 引擎里那个智能体，配置在这里改）。
  *   上传后引擎在后台解析，状态先显示「处理中」。
  *   删除成功后延迟 3 秒再刷新 —— 引擎删除有几秒延迟，列表会短暂仍返回它。
  *
@@ -13,6 +15,17 @@
  *   本页原先的硬编码色值（#1f3a24 / #6b7d6b / #8a9a8a …）与之是两套体系，
  *   会让 T3 新增的「问答设置」卡片看起来像另一个站拼进来的。
  *   已把色值统一收敛到 var(--zw-*)，视觉不变、以后调色只需改一处。
+ *
+ * 2026-10-13（T7）：「问答设置」卡片**升级为「智能体设置」**。
+ *   原因：网站的提示词 / 模型 / 长度上限 / 兜底文案已经搬进引擎的智能体了，
+ *   在这里再选「回答方式（风格）」只会和智能体的 system_prompt 打架 —— 风格项已下线。
+ *   保存后把后端的「四项回读校验」逐项显示出来（哪一项没过就写哪一项）。
+ *
+ * 2026-10-14（T10）：「智能体设置」卡片**整体搬到「设置」页**（/admin/settings）。
+ *   本页改成一个小提示卡 + 「去设置页 →」按钮，脚本区的智能体相关状态与方法已删干净
+ *   （含 fetchAgentConfig / saveAgentConfig / AgentCheck / AgentConfigPayload 四个 import）。
+ *   🔴 搬走时**只动了智能体这一块**：上传、上传对话框、列表、删除、重新上传、
+ *      口令输入、分页、统计条全部原样保留，没改一行。
  */
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -23,14 +36,9 @@ import {
   deleteKnowledge,
   exportCsv,
   fetchKnowledgeList,
-  fetchQaSettings,
-  saveQaSettings,
+  reuploadKnowledge,
   uploadKnowledge,
-  type AdminKnowledgeItem,
-  type QaEffortOption,
-  type QaStyle,
-  type QaStyleOption,
-  type ReasoningEffort
+  type AdminKnowledgeItem
 } from '../api/admin'
 
 const PAGE_SIZE = 20
@@ -91,10 +99,19 @@ function hasMeta(row: AdminKnowledgeItem): boolean {
   return Boolean(row.meta && (row.meta.org || row.meta.year || row.meta.type))
 }
 
+/**
+ * 引擎解析状态 → 表格里显示的文字。
+ *
+ * ⚠️ 引擎「还在处理」不止一个值：实测有 pending / processing / finalizing 三种
+ * （重新上传、新上传的资料都会经过它们）。别只认 `processing` —— 漏一个老师
+ * 就会在表格里看到一串英文（2026-10-12 实测踩中）。
+ */
 function statusTag(status: string): { type: 'success' | 'warning' | 'danger' | 'info'; text: string } {
   if (status === 'completed') return { type: 'success', text: '已入库' }
   if (status === 'failed') return { type: 'danger', text: '解析失败' }
-  if (status === 'processing') return { type: 'warning', text: '处理中' }
+  if (status === 'pending' || status === 'processing' || status === 'finalizing') {
+    return { type: 'warning', text: '处理中' }
+  }
   return { type: 'info', text: status || '未知' }
 }
 
@@ -199,6 +216,49 @@ async function confirmDelete(row: AdminKnowledgeItem): Promise<void> {
   }
 }
 
+/* ---------------- 重新上传（T6：解析失败 → 删旧重传） ---------------- */
+
+/** 正在重新上传的那一行 id；空串 = 没有。用它做 loading，只转这一行不转全表 */
+const reuploadingId = ref('')
+
+async function confirmReupload(row: AdminKnowledgeItem): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      `「${row.title}」上次解析失败了。要重新上传吗？` +
+        '系统会从引擎里取回原件、删掉这份失败的、再原样传一遍，机构/年份/类型标签都会保留。',
+      '重新上传',
+      { type: 'warning', confirmButtonText: '重新上传', cancelButtonText: '取消' }
+    )
+  } catch {
+    return // 用户点了取消
+  }
+
+  reuploadingId.value = row.id
+  try {
+    const result = await reuploadKnowledge(token.value, row.id)
+    ElMessage.success('已重新上传，引擎正在解析')
+    // 标签没带回来时**额外**说明一句，别让老师以为标签还在
+    if (result.metaNote) ElMessage.warning(result.metaNote)
+    // 链路上刚删过旧记录，而引擎删除有几秒延迟（列表会短暂仍返回它），
+    // 等一下再刷新，免得表格里同时出现新旧两份、以为重传了两遍
+    await new Promise((resolve) => setTimeout(resolve, 2000))
+    await load()
+  } catch (err) {
+    const response = (
+      err as { response?: { status?: number; data?: { error?: { message?: string } } } }
+    ).response
+    const message = response?.data?.error?.message ?? '重新上传失败，看看后端（:4000）在不在'
+    if (response?.status === 404) {
+      ElMessage.warning(message)
+      await load()
+    } else {
+      ElMessage.error(message)
+    }
+  } finally {
+    reuploadingId.value = ''
+  }
+}
+
 /* ---------------- 上传资料（带标签） ---------------- */
 
 /** 类型下拉的预设值：直接取库里现有资料用过的分类，省得老师自己编 */
@@ -215,8 +275,21 @@ const TYPE_OPTIONS = [
 
 const uploadDialog = ref(false)
 const uploadFile = ref<File | null>(null)
-const uploadForm = ref({ org: '', year: '', type: '', tags: '' })
+const uploadForm = ref({ org: '', year: '', type: '', tags: [] as string[] })
 const uploading = ref(false)
+/** 「领域」多选的候选值：从库里现有主题现拉，避免手打导致主题词对不齐 */
+const TAG_OPTIONS = ref<string[]>([])
+
+/** 拉取库里已有的主题词，作为「领域」多选下拉的选项（拉不到就留空，仍可自己输入） */
+async function loadTagOptions(): Promise<void> {
+  try {
+    const res = await fetch('/api/docs/facets')
+    const data = (await res.json()) as { tags?: { value: string }[] }
+    TAG_OPTIONS.value = (data.tags ?? []).map((t) => t.value)
+  } catch {
+    TAG_OPTIONS.value = []
+  }
+}
 
 function openUpload(): void {
   if (!token.value) {
@@ -224,7 +297,8 @@ function openUpload(): void {
     return
   }
   uploadFile.value = null
-  uploadForm.value = { org: '', year: '', type: '', tags: '' }
+  uploadForm.value = { org: '', year: '', type: '', tags: [] }
+  void loadTagOptions()
   uploadDialog.value = true
 }
 
@@ -241,7 +315,9 @@ async function submitUpload(): Promise<void> {
   uploading.value = true
   const name = uploadFile.value.name
   try {
-    const result = await uploadKnowledge(token.value, uploadFile.value, uploadForm.value)
+    // 「领域」多选在界面上是数组，提交时拼成逗号分隔字符串（后端与引擎存的就是字符串）
+    const payload = { ...uploadForm.value, tags: uploadForm.value.tags.join(',') }
+    const result = await uploadKnowledge(token.value, uploadFile.value, payload)
     // 标签没写成功时如实说，不糊弄成「已完成」
     if (result.metaSaved) {
       ElMessage.success(`「${name}」已上传，机构/年份/类型标签也写好了`)
@@ -267,118 +343,24 @@ onMounted(() => {
   if (saved) {
     token.value = saved
     void load()
-    void loadQa()
   }
 })
 
-/* ---------------- 问答设置（模型 / 回答方式 / 思考强度） ---------------- */
-
-/**
- * 回答方式与思考强度的选项**由后端下发**，前端不写死一份。
- * 这样词表改了（引擎加了一档强度）不用改前端两处。
+/* ------------------------------------------------------------------ *
+ * T10（2026-10-14）：「智能体设置」卡片**已整体搬到「设置」页**
+ * ------------------------------------------------------------------ *
+ * 原来的 `agentLoading/agentSaving/agentForm/agentSaved/agentChecks/loadAgent/
+ * submitAgent/applyAgentView/…` 连同模板与样式整块移到
+ * `frontend/src/views/AdminSettingsView.vue`（**逻辑一个字没改**）。
+ * 原因：这一页讲的是「资料」，把「问答的大脑」塞在这儿本来就别扭；
+ * 现在「设置」页专门放系统设置，导航也多了一项。
+ * 本页现在只留一个小卡片提示 + 一个跳转按钮，上传/列表/删除/重新上传等
+ * 功能全部原样保留、没动过。
  */
-const qaStyles = ref<QaStyleOption[]>([])
-const qaEfforts = ref<QaEffortOption[]>([])
-const qaModels = ref<{ id: string; name: string; status: string }[]>([])
-const qaModelId = ref('')
-const qaStyle = ref<QaStyle>('knowledge')
-const qaEffort = ref<ReasoningEffort>('')
-const qaLoading = ref(false)
-const qaSaving = ref(false)
-/** 引擎没连上时的原因；空串 = 正常 */
-const qaModelsError = ref('')
-/** 已保存、但现在生效中的值（回显用，避免和正在编辑的值混为一谈） */
-const qaCurrent = ref({ modelId: '', modelName: '', style: 'knowledge', reasoningEffort: '' })
-const qaUpdatedAt = ref('')
 
-/** 已存的模型在引擎列表里查不到 → 老师得重新选一个，别装作一切正常 */
-const qaModelMissing = computed(
-  () => Boolean(qaCurrent.value.modelId) && !qaModels.value.some((m) => m.id === qaCurrent.value.modelId)
-)
-
-/** 引擎里正在下载/下载失败的模型，选了大概率答不出来 */
-function qaModelDisabled(status: string): boolean {
-  return status !== 'active'
-}
-
-function modelLabel(name: string, status: string): string {
-  return status === 'active' ? name : `${name}（${status === 'downloading' ? '下载中' : '不可用'}）`
-}
-
-function styleLabel(value: string): string {
-  return qaStyles.value.find((s) => s.value === value)?.label ?? value
-}
-
-function effortLabel(value: string): string {
-  return qaEfforts.value.find((e) => e.value === value)?.label ?? value
-}
-
-async function loadQa(): Promise<void> {
-  if (!token.value) return
-  qaLoading.value = true
-  try {
-    const d = await fetchQaSettings(token.value)
-    qaModels.value = d.models
-    qaStyles.value = d.styles ?? []
-    qaEfforts.value = d.efforts ?? []
-    qaModelId.value = d.currentModelId
-    qaStyle.value = d.style
-    qaEffort.value = d.reasoningEffort
-    qaModelsError.value = d.modelsError ?? ''
-    qaUpdatedAt.value = d.updatedAt
-    qaCurrent.value = {
-      modelId: d.currentModelId,
-      modelName: d.currentModelName,
-      style: d.style,
-      reasoningEffort: d.reasoningEffort
-    }
-  } catch (err) {
-    const response = (
-      err as { response?: { status?: number; data?: { error?: { message?: string } } } }
-    ).response
-    qaModelsError.value =
-      response?.data?.error?.message ?? '问答设置拉取失败，看看后端（:4000）在不在。'
-  } finally {
-    qaLoading.value = false
-  }
-}
-
-/** 保存。存完以后端回显的为准 —— 别自己乐观更新，那样后端拒了界面还显示成功 */
-async function submitQa(): Promise<void> {
-  qaSaving.value = true
-  try {
-    const d = await saveQaSettings(token.value, {
-      modelId: qaModelId.value,
-      style: qaStyle.value,
-      reasoningEffort: qaEffort.value
-    })
-    qaModelId.value = d.currentModelId
-    qaStyle.value = d.style
-    qaEffort.value = d.reasoningEffort
-    qaModels.value = d.models.length ? d.models : qaModels.value
-    qaModelsError.value = d.modelsError ?? ''
-    qaUpdatedAt.value = d.updatedAt
-    qaCurrent.value = {
-      modelId: d.currentModelId,
-      modelName: d.currentModelName,
-      style: d.style,
-      reasoningEffort: d.reasoningEffort
-    }
-    ElMessage.success('已保存，问答立刻按新设置走')
-  } catch (err) {
-    const response = (
-      err as { response?: { status?: number; data?: { error?: { message?: string } } } }
-    ).response
-    ElMessage.error(response?.data?.error?.message ?? '保存失败，看看后端（:4000）在不在')
-  } finally {
-    qaSaving.value = false
-  }
-}
-
-/** 「进入」按钮：口令对上了才去拉问答设置 */
+/** 「进入」按钮：拉资料列表 */
 async function enterAdmin(): Promise<void> {
   await load()
-  if (!errorText.value) await loadQa()
 }
 </script>
 
@@ -404,9 +386,11 @@ async function enterAdmin(): Promise<void> {
 
     <nav class="admin-nav">
       <router-link to="/admin/knowledge">资料管理</router-link>
+      <router-link to="/admin/contributions">投稿审核</router-link>
       <router-link to="/admin/users">注册用户</router-link>
       <router-link to="/admin/feedback">访客反馈</router-link>
       <router-link to="/admin/stats">数据看板</router-link>
+      <router-link to="/admin/settings">设置</router-link>
     </nav>
 
     <el-card shadow="never" class="token-card">
@@ -434,78 +418,20 @@ async function enterAdmin(): Promise<void> {
         <span>已带标签 <b class="ok">{{ taggedCount }}</b></span>
       </div>
 
-      <!-- 问答设置：老师在这里换回答模型 / 回答方式 / 思考强度，不用去碰引擎 -->
+      <!-- T10：「智能体设置」已搬到「设置」页（见上面脚本区的说明）。
+           这里只留一个小提示卡 + 跳转按钮；资料的上传/列表/删除/重新上传都在下面，一处没动。 -->
       <el-card shadow="never" class="qa-card">
         <div class="qa-head">
-          <h3 class="qa-title">问答设置</h3>
-          <span class="qa-now">
-            当前生效：{{ qaCurrent.modelName || '引擎默认模型' }} ·
-            {{ styleLabel(qaCurrent.style) }} ·
-            思考强度{{ qaCurrent.reasoningEffort ? effortLabel(qaCurrent.reasoningEffort) : '跟随模型' }}
-          </span>
+          <h3 class="qa-title">智能体设置</h3>
         </div>
-
-        <p v-if="qaModelsError" class="qa-warn">{{ qaModelsError }}</p>
-        <p v-else-if="qaModelMissing" class="qa-warn">
-          之前选的模型（{{ qaCurrent.modelId }}）在引擎里已经找不到了，请重新选一个并保存。
+        <p class="qa-lead">
+          网站问答的「大脑」（提示词、回答模型、长度上限、答不上来时说什么）已经搬到
+          <b>设置页</b>，和解析引擎设置、一键自检放在一起。到那边改完，下次提问立刻生效。
         </p>
-
-        <div class="qa-grid">
-          <div class="qa-field">
-            <label>回答模型</label>
-            <el-select
-              v-model="qaModelId"
-              :loading="qaLoading"
-              :disabled="qaLoading || Boolean(qaModelsError)"
-              placeholder="跟随引擎默认"
-              style="width: 100%"
-            >
-              <el-option value="" label="跟随引擎默认（不指定）" />
-              <el-option
-                v-for="m in qaModels"
-                :key="m.id"
-                :value="m.id"
-                :label="modelLabel(m.name, m.status)"
-                :disabled="qaModelDisabled(m.status)"
-              />
-            </el-select>
-          </div>
-
-          <div class="qa-field">
-            <label>回答方式</label>
-            <el-radio-group v-model="qaStyle">
-              <el-radio v-for="s in qaStyles" :key="s.value" :value="s.value">
-                {{ s.label }}
-              </el-radio>
-            </el-radio-group>
-            <p class="qa-hint">{{ qaStyles.find((s) => s.value === qaStyle)?.hint || '' }}</p>
-          </div>
-
-          <div class="qa-field">
-            <label>思考强度</label>
-            <el-select v-model="qaEffort" placeholder="跟随模型" style="width: 100%">
-              <el-option value="" label="跟随模型（不指定）" />
-              <el-option
-                v-for="e in qaEfforts"
-                :key="e.value"
-                :value="e.value"
-                :label="e.label"
-              />
-            </el-select>
-            <p class="qa-hint">
-              这个是引擎真实支持的参数（reasoning_effort）。选「跟随模型」表示不下发，
-              由所选模型自己决定能不能思考。
-            </p>
-          </div>
-        </div>
-
         <div class="qa-foot">
-          <el-button type="primary" :loading="qaSaving" @click="submitQa">
-            {{ qaSaving ? '保存中…' : '保存设置' }}
-          </el-button>
-          <span v-if="qaUpdatedAt" class="qa-time">
-            上次保存：{{ qaUpdatedAt.slice(0, 16).replace('T', ' ') }}
-          </span>
+          <router-link to="/admin/settings">
+            <el-button type="primary">去设置页 →</el-button>
+          </router-link>
         </div>
       </el-card>
 
@@ -547,9 +473,19 @@ async function enterAdmin(): Promise<void> {
         <el-table-column label="入库时间" width="108" align="center">
           <template #default="scope">{{ shortDate(scope.row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="132" align="center" fixed="right">
+        <el-table-column label="操作" width="196" align="center" fixed="right">
           <template #default="scope">
             <el-button link type="primary" size="small" @click="download(scope.row)">下载</el-button>
+            <el-button
+              v-if="scope.row.parseStatus === 'failed'"
+              link
+              type="warning"
+              size="small"
+              :loading="reuploadingId === scope.row.id"
+              @click="confirmReupload(scope.row)"
+            >
+              重新上传
+            </el-button>
             <el-button
               link
               type="danger"
@@ -603,7 +539,17 @@ async function enterAdmin(): Promise<void> {
           </el-select>
         </el-form-item>
         <el-form-item label="领域">
-          <el-input v-model="uploadForm.tags" placeholder="主题词，多个用逗号隔开" clearable />
+          <el-select
+            v-model="uploadForm.tags"
+            multiple
+            filterable
+            allow-create
+            default-first-option
+            placeholder="可多选；没有想要的就直接输入新主题"
+            style="width: 100%"
+          >
+            <el-option v-for="t in TAG_OPTIONS" :key="t" :label="t" :value="t" />
+          </el-select>
         </el-form-item>
       </el-form>
       <p class="dlg-hint">
@@ -712,6 +658,8 @@ async function enterAdmin(): Promise<void> {
   gap: 12px;
   margin-bottom: 10px;
 }
+/* T10：智能体设置搬到「设置」页后，本页只剩这张跳转小卡片用到的样式。
+   （原先那套 qa-grid / qa-checks 等样式已随之删除，没有留死样式。） */
 .qa-card {
   margin: 0 0 14px;
   border-radius: 10px;
@@ -728,42 +676,17 @@ async function enterAdmin(): Promise<void> {
   font-size: 15px;
   color: var(--zw-green-ink);
 }
-.qa-now {
-  font-size: 12px;
-  color: var(--zw-muted);
-}
-.qa-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 16px;
-}
-.qa-field label {
-  display: block;
-  margin-bottom: 6px;
-  font-size: 13px;
-  color: var(--zw-text);
-}
-.qa-hint {
-  margin: 6px 0 0;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--zw-faint);
-}
-.qa-warn {
+.qa-lead {
   margin: 0 0 12px;
   font-size: 13px;
-  color: var(--zw-amber);
+  line-height: 1.7;
+  color: var(--zw-text);
 }
 .qa-foot {
   display: flex;
   align-items: center;
   gap: 12px;
   margin-top: 16px;
-}
-.qa-time {
-  font-size: 12px;
-  color: var(--zw-faint);
-  font-variant-numeric: tabular-nums;
 }
 .kb-bar .count {
   font-size: 13px;

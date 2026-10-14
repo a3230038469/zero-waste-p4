@@ -132,9 +132,11 @@ onMounted(() => {
 
     <nav class="admin-nav">
       <router-link to="/admin/knowledge">资料管理</router-link>
+      <router-link to="/admin/contributions">投稿审核</router-link>
       <router-link to="/admin/users">注册用户</router-link>
       <router-link to="/admin/feedback">访客反馈</router-link>
       <router-link to="/admin/stats">数据看板</router-link>
+      <router-link to="/admin/settings">设置</router-link>
     </nav>
 
     <el-card shadow="never" class="token-card">

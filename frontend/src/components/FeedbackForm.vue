@@ -6,11 +6,14 @@
  * 埋点事件名躺在白名单里，没有任何提交入口 —— 那条埋点永远是 0。
  *
  * 匿名可提交：这是「关于项目」页对公众的邀请，要求先注册再反馈等于把大部分反馈挡在门外。
- * 后端配了类型白名单、长度上限与频率限制（见 backend/src/routes/feedback.ts）。
+ * 后端配了游客权限开关、类型白名单、长度上限与频率限制（见 backend/src/routes/feedback.ts）。
  *
- * 两处复用：
- *   - 「关于项目」页的联系与共建区（不传资料）
- *   - 资料详情页（传 docId / docTitle，用来做「纠错」）
+ * 目前只挂在「关于项目」页的联系与共建区（不传 docId / docTitle）。
+ * ⚠️ 合并记录（2026-10-14）：资料详情页原本也挂了本组件（传 docId / docTitle 做「纠错」），
+ *   合并时发现该页已有 B09 的「反馈这份资料」（FeedbackDialog，资料级），两者是同一动作的
+ *   重复出口，且本组件当时绕过了 T11 的游客权限开关 —— 故从详情页撤下，只留这一处。
+ *   `docId` / `docTitle` / `defaultKind` 三个 prop 因此暂时无人传，保留是为了少一个改动面、
+ *   也为了将来若把详情页的入口统一到这条链路上时可以直接用。
  */
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'

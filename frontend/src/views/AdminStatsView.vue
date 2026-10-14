@@ -12,7 +12,14 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
-import { ADMIN_TOKEN_KEY, exportCsv } from '../api/admin'
+// 合并时出现两行同源导入（数据导出与「使用明细」各加一行），并成一条 —— 否则 eslint
+// 的 import/no-duplicates 会报，也容易让人以为 import 了两次不同的东西。
+import {
+  ADMIN_TOKEN_KEY,
+  exportCsv,
+  fetchUsageDetail,
+  type UsageDetailPayload
+} from '../api/admin'
 import { fetchStats, type StatsSummary, type TrackEventName } from '../api/track'
 
 /** 口令在 localStorage 的键名（与资料管理 / 注册用户两页共用；不在这里另写一份字面量，
@@ -146,16 +153,69 @@ function toggleAutoRefresh(value: boolean): void {
   if (value) {
     timer = window.setInterval(() => {
       void load()
+      void loadUsage()
     }, AUTO_REFRESH_MS)
     ElMessage.success(`已开启自动刷新（每 ${AUTO_REFRESH_MS / 1000} 秒）`)
   }
 }
+
+/* ------------------------------------------------------------------ *
+ * 使用明细（T11-C，本轮**只在末尾新增**这一块）
+ * ------------------------------------------------------------------ *
+ *
+ * 🔴 本块与韶茹写的顶部指标 / 趋势 / 热词 / 热门文件**完全独立**：
+ *    - 独立接口 GET /api/admin/usage-detail（不动 GET /api/track/stats 的口径）；
+ *    - 独立状态（日期 / 加载 / 报错），不碰 stats / eventRows / daily 等既有变量；
+ *    - 独立表格样式前缀 `.usage-*`，不覆盖任何既有类。
+ */
+/** 本地时区的 YYYY-MM-DD（与后端切天口径一致；toISOString 会差 8 小时，不能用） */
+function todayKey(): string {
+  const now = new Date()
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+}
+
+const usageDate = ref(todayKey())
+const usage = ref<UsageDetailPayload | null>(null)
+const usageLoading = ref(false)
+const usageError = ref('')
+
+/** 账号列显示名：后端已把 null 显示成「游客」，这里只兜住「有 id 但查不到用户」的情况 */
+function usageAccountName(row: UsageDetailPayload['rows'][number]): string {
+  if (row.name) return row.name
+  return row.userId ? `未登记账号（${row.userId.slice(0, 8)}…）` : '游客'
+}
+
+async function loadUsage(): Promise<void> {
+  if (!token.value) return
+  usageLoading.value = true
+  usageError.value = ''
+  try {
+    usage.value = await fetchUsageDetail(token.value, usageDate.value)
+  } catch (err) {
+    const response = (err as { response?: { status?: number; data?: { error?: { message?: string } } } })
+      .response
+    usageError.value = response?.data?.error?.message ?? '使用明细拉取失败，看看后端（:4100/:4000）在不在。'
+    usage.value = null
+  } finally {
+    usageLoading.value = false
+  }
+}
+
+/** 合计行（含游客，因为游客的使用次数同样是站点被用掉的能力） */
+const usageTotals = computed(
+  () => usage.value?.totals ?? { ai_ask: 0, preview: 0, download: 0 }
+)
+const usageTotalSum = computed(
+  () => usageTotals.value.ai_ask + usageTotals.value.preview + usageTotals.value.download
+)
 
 onMounted(() => {
   const saved = localStorage.getItem(TOKEN_KEY)
   if (saved) {
     token.value = saved
     void load()
+    void loadUsage()
   }
 })
 
@@ -176,9 +236,11 @@ onUnmounted(() => {
 
     <nav class="admin-nav">
       <RouterLink to="/admin/knowledge">资料管理</RouterLink>
+      <RouterLink to="/admin/contributions">投稿审核</RouterLink>
       <RouterLink to="/admin/users">注册用户</RouterLink>
       <RouterLink to="/admin/feedback">访客反馈</RouterLink>
       <RouterLink to="/admin/stats">数据看板</RouterLink>
+      <RouterLink to="/admin/settings">设置</RouterLink>
     </nav>
 
     <!-- 口令门 -->
@@ -330,6 +392,69 @@ onUnmounted(() => {
         :title="`下载口径对不上：服务端 ${stats.downloads.server} 次 / 前端上报 ${stats.downloads.events} 次`"
         description="有请求绕过了前端页面直接调下载接口（比如 curl 或第三方工具）。这不一定算问题，但统计时要心里有数。"
       />
+
+      <!-- 🔴 T11-C 新增：使用明细（本轮只在末尾加这一块，既有统计一个字没动） -->
+      <el-card shadow="never" class="panel usage-block">
+        <template #header>
+          <span class="panel-title">使用明细</span>
+          <span class="panel-hint">每个账号的 AI 问答 / 预览 / 下载三项次数（口径 = 服务端埋点）</span>
+        </template>
+
+        <div class="usage-toolbar">
+          <div class="usage-date">
+            <span class="usage-date-label">日期</span>
+            <el-date-picker
+              v-model="usageDate"
+              type="date"
+              value-format="YYYY-MM-DD"
+              format="YYYY-MM-DD"
+              :clearable="false"
+              style="width: 170px"
+              @change="loadUsage"
+            />
+            <el-button :loading="usageLoading" @click="loadUsage">查询</el-button>
+            <el-button text @click="usageDate = todayKey(); loadUsage()">回到今天</el-button>
+          </div>
+          <div class="usage-sum">
+            <span>当日合计</span>
+            <strong class="zw-num">AI 问答 {{ usageTotals.ai_ask }}</strong>
+            <strong class="zw-num">预览 {{ usageTotals.preview }}</strong>
+            <strong class="zw-num">下载 {{ usageTotals.download }}</strong>
+            <strong class="zw-num usage-sum-total">共 {{ usageTotalSum }} 次</strong>
+          </div>
+        </div>
+
+        <p v-if="usageError" class="usage-error">{{ usageError }}</p>
+
+        <el-table
+          v-else
+          v-loading="usageLoading"
+          :data="usage?.rows ?? []"
+          size="small"
+          :empty-text="`${usage?.date ?? usageDate} 没有使用记录`"
+        >
+          <el-table-column label="账号" min-width="200">
+            <template #default="{ row }">
+              <span :class="row.userId === null ? 'usage-guest' : 'usage-user'">
+                {{ usageAccountName(row) }}
+              </span>
+              <span v-if="row.org" class="usage-org">{{ row.org }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="ai_ask" label="AI 问答" width="110" align="right" />
+          <el-table-column prop="preview" label="预览" width="100" align="right" />
+          <el-table-column prop="download" label="下载" width="100" align="right" />
+          <el-table-column prop="total" label="合计" width="100" align="right" />
+        </el-table>
+
+        <p class="usage-note">
+          口径说明：只统计 <code>ai_ask</code> / <code>preview</code> / <code>download</code> 三类事件，
+          <b>AI 问答与预览/下载都由服务端接口自动记录</b>，绕过页面直接调接口也算。
+          「游客」= 未登录的用户（存储层记的是空值，不是账号）。
+          ⚠️ 埋点带账号是 2026-10-14（T11）才上线的，<b>此前的历史记录全部落在「游客」行里</b>，
+          追不回来。
+        </p>
+      </el-card>
     </template>
   </section>
 </template>
@@ -562,5 +687,63 @@ onUnmounted(() => {
   .bars li {
     grid-template-columns: 72px 1fr 36px;
   }
+}
+
+/* ---- 使用明细（T11-C 新增；样式前缀全用 .usage-*，不覆盖任何既有类） ---- */
+.usage-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.usage-date {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.usage-date-label {
+  font-size: 13px;
+  color: var(--zw-muted);
+}
+.usage-sum {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  font-size: 13px;
+  color: var(--zw-muted);
+  flex-wrap: wrap;
+}
+.usage-sum strong {
+  color: var(--zw-green);
+  font-variant-numeric: tabular-nums;
+}
+.usage-sum-total {
+  padding-left: 10px;
+  border-left: 1px dashed var(--zw-line);
+}
+.usage-error {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: #c45656;
+}
+.usage-guest {
+  color: var(--zw-faint);
+}
+.usage-user {
+  color: var(--zw-ink);
+}
+.usage-org {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--zw-faint);
+}
+.usage-note {
+  margin: 12px 0 0;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--zw-faint);
 }
 </style>

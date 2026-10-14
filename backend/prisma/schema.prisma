@@ -30,3 +30,31 @@ model User {
   passwordHash String // 密码哈希（bcrypt）
   createdAt    DateTime @default(now())
 }
+
+/// 对话会话（T5 · 乙方案：会话存数据库，刷新页面能恢复画面）
+///
+/// engineSessionId 是**引擎侧**的 session id：
+/// 问答时复用同一个 session，AI 才记得这个对话前面说过什么；
+/// 这个值只落在后端库里，**绝不返回给前端**（与 ask.ts「会话 id 服务端持有」一致）。
+/// 建会话时引擎若不可用（密钥未到位 / 额度 429），它会是 null，
+/// 提问时再懒建一次补上，不让引擎抖动把「建会话」这个动作整个废掉。
+model Conversation {
+  id              String   @id @default(uuid())
+  title           String   @default("新对话")
+  engineSessionId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  messages        Message[]
+}
+
+/// 一条对话消息（T5）
+/// role: "user" | "assistant"；sources 为 JSON 字符串（T4 来源卡片 [{name,url}]，仅 assistant 有）。
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String
+  content        String
+  sources        String?
+  createdAt      DateTime     @default(now())
+}

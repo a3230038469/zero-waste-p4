@@ -5,6 +5,7 @@
  */
 import http from './http'
 import { describeBlobError, saveBlob } from '../utils/download'
+import type { GuestPermissionsPayload } from './guest'
 
 /** 口令在 localStorage 的键名（与统计看板共用同一个） */
 export const ADMIN_TOKEN_KEY = 'zwp.adminToken'
@@ -108,6 +109,167 @@ export async function deleteKnowledge(token: string, id: string): Promise<void> 
     headers: { 'X-Admin-Token': token },
     silent: true
   })
+}
+
+/** 重新上传的结果。`metaRestored=false` 时看 metaNote 知道标签为什么没带回来 */
+export interface ReuploadResult {
+  success: boolean
+  message: string
+  metaNote: string
+  data: { id: string; fileName: string; metaRestored: boolean }
+}
+
+/**
+ * 解析失败 → 重新上传（后端一站式完成：取回原件 → 删旧记录 → 传回去 → 补回标签）。
+ *
+ * 老师本地不需要留原件，所以调用方不用传文件；旧 id 传进去，新 id 从
+ * `data.id` 拿（**一定换成了新 id**，别再用旧 id 去查详情）。
+ *
+ * ⚠️ 传的是大文件（几十兆 PDF 常见），默认 20s 超时不够，这里放到 5 分钟。
+ */
+export async function reuploadKnowledge(token: string, id: string): Promise<ReuploadResult> {
+  const res = await http.post<ReuploadResult>(
+    `/admin/knowledge/${encodeURIComponent(id)}/reupload`,
+    null,
+    {
+      headers: { 'X-Admin-Token': token },
+      silent: true,
+      timeout: 300_000
+    }
+  )
+  return res.data
+}
+
+/* ------------------------------------------------------------------ *
+ * 设置页（T10：解析引擎设置 + 一键自检）
+ * ------------------------------------------------------------------ */
+
+/** 一个解析引擎的可用状态（字段名已由后端从引擎的 PascalCase 归一成小驼峰） */
+export interface ParserEngineInfo {
+  name: string
+  description: string
+  /** 这个引擎能吃哪些文件后缀 */
+  fileTypes: string[]
+  available: boolean
+  /** 不可用时引擎给的原因（英文原文，前端翻译成人话后展示） */
+  unavailableReason: string
+}
+
+/** 密钥字段的状态。🔴 **只有 configured，没有原值** —— 后端绝不回显真密钥 */
+export interface ParserSecretState {
+  configured: boolean
+}
+
+/** GET /api/admin/parser-config 的响应体 */
+export interface ParserConfigPayload {
+  success: boolean
+  /** 非密钥字段的原值（引擎实测 18 个字段，除密钥外全在这儿） */
+  values: Record<string, string | number | boolean>
+  /** 密钥字段的「已配置 / 未配置」 */
+  secrets: Record<string, ParserSecretState>
+  engines: ParserEngineInfo[]
+  /** 非空说明引擎列表取不到（配置本身照常返回，接口仍 200） */
+  enginesError: string
+}
+
+/** 读解析引擎设置 */
+export async function fetchParserConfig(token: string): Promise<ParserConfigPayload> {
+  const res = await http.get<ParserConfigPayload>('/admin/parser-config', {
+    headers: { 'X-Admin-Token': token },
+    silent: true
+  })
+  return res.data
+}
+
+/** 保存请求体：只放要改的字段。🔴 密钥留空 = 不改（后端会**不提交**该字段，保留原值） */
+export type ParserConfigPatch = Record<string, string | number | boolean>
+
+/** 回读校验的一项（老师要看得见「到底哪一项没过」） */
+export interface ParserFieldCheck {
+  key: string
+  label: string
+  expected: string
+  actual: string
+  ok: boolean
+}
+
+export interface ParserSaveResult {
+  /** 全部回读校验通过才是 true；false 时看 message 与 checks（配置已写入，只是有项没生效） */
+  success: boolean
+  message: string
+  changed: string[]
+  /** 本次**没有提交**的密钥字段（引擎保留原值） */
+  keptSecrets: string[]
+  /** 本次提交了几个字段 / 回读到了几个（任务单验收第 6 项要比对的就是它） */
+  submittedCount: number
+  readBackCount: number
+  /** 提交了但回读时不见了（应为空数组；非空说明引擎把它清掉了） */
+  missingFields: string[]
+  checks: ParserFieldCheck[]
+  /** 回读后的配置视图 */
+  config: ParserConfigPayload
+}
+
+export async function saveParserConfig(
+  token: string,
+  patch: ParserConfigPatch
+): Promise<ParserSaveResult> {
+  const res = await http.put<ParserSaveResult>('/admin/parser-config', patch, {
+    headers: { 'X-Admin-Token': token },
+    silent: true,
+    timeout: 60_000
+  })
+  return res.data
+}
+
+/** 测试连接（只测不存）：把待测配置丢给引擎的 parser-engines/check */
+export interface ParserCheckResult {
+  success: boolean
+  message: string
+  engines: ParserEngineInfo[]
+  /** 本次是否带了新密钥去测（false = 用引擎里已保存的那把测） */
+  usedPendingSecret: boolean
+}
+
+export async function checkParserConfig(
+  token: string,
+  patch: ParserConfigPatch
+): Promise<ParserCheckResult> {
+  const res = await http.post<ParserCheckResult>('/admin/parser-config/check', patch, {
+    headers: { 'X-Admin-Token': token },
+    silent: true,
+    timeout: 60_000
+  })
+  return res.data
+}
+
+/** 一键自检的一项（message 是人话，不是英文报错原文） */
+export interface SelfcheckItem {
+  key: 'engine' | 'database' | 'vector' | 'mineru'
+  label: string
+  ok: boolean
+  message: string
+  /** 这一项花了多久（毫秒） */
+  ms: number
+  /** 排障用的原始原因（前端只在失败时打到控制台） */
+  detail: string
+}
+
+export interface SelfcheckPayload {
+  success: boolean
+  /** 四项全过才是 true */
+  ok: boolean
+  generatedAt: string
+  items: SelfcheckItem[]
+}
+
+export async function runSelfcheck(token: string): Promise<SelfcheckPayload> {
+  const res = await http.post<SelfcheckPayload>('/admin/selfcheck', null, {
+    headers: { 'X-Admin-Token': token },
+    silent: true,
+    timeout: 30_000
+  })
+  return res.data
 }
 
 /** 管理视角的一个注册用户（手机号已脱敏） */
@@ -261,6 +423,57 @@ export async function fetchFeedbackList(token: string): Promise<AdminFeedbackLis
 }
 
 /* ------------------------------------------------------------------ *
+ * 智能体设置（T7：问答走智能体 + 智能体设置上网页）
+ * ------------------------------------------------------------------ */
+
+/** 可读可改的 6 个字段 —— 引擎智能体 config 里的同名 snake_case 字段 */
+export interface AgentEditableConfig {
+  /** 系统提示词（老师那 777 字严谨约束就在这里） */
+  system_prompt: string
+  model_id: string
+  temperature: number
+  max_completion_tokens: number
+  /** fixed = 用固定兜底文案；model = 交给模型自由发挥 */
+  fallback_strategy: string
+  /** 「库内暂未收录…」那段固定文案原文 */
+  fallback_response: string
+}
+
+/** 只读展示的 4 组字段 */
+export interface AgentReadonlyConfig {
+  /** 关联的知识库 id */
+  knowledge_bases: string[]
+  /** 🔴 恒为 selected；设成 all 会把 123 份「AI系统学习」资料也拉进检索池 */
+  kb_selection_mode: string
+  /** 意图提示词：只给键名与字数，不把三大段原文塞进页面 */
+  intent_prompts: Array<{ key: string; length: number }>
+  agent_mode: string
+}
+
+export interface AgentConfigPayload {
+  success: boolean
+  agentId: string
+  name: string
+  editable: AgentEditableConfig
+  readonly: AgentReadonlyConfig
+  /** 引擎侧最后更新时间 —— 老师看得见「我这次改动生效了没」 */
+  updatedAt: string
+  /** 模型下拉的选项（取自引擎 KnowledgeQA 模型列表） */
+  models: Array<{ id: string; name: string; status: string }>
+  /** 非空说明引擎没连上、models 是空的（接口本身仍是 200） */
+  modelsError: string
+}
+
+/** 读智能体设置（管理视角） */
+export async function fetchAgentConfig(token: string): Promise<AgentConfigPayload> {
+  const res = await http.get<AgentConfigPayload>('/admin/agent', {
+    headers: { 'X-Admin-Token': token },
+    silent: true
+  })
+  return res.data
+}
+
+/* ------------------------------------------------------------------ *
  * 数据导出（2026-10-14 新增）
  *
  * GET /api/admin/export/{knowledge|users|stats|feedback} → CSV 附件
@@ -309,4 +522,155 @@ export async function exportCsv(token: string, kind: ExportKind): Promise<void> 
   } catch (err) {
     throw new Error(await describeBlobError(err, '导出失败，请稍后再试'))
   }
+}
+
+/**
+ * 保存请求体：每个字段都可选，只改传了的那些。
+ *
+ * ⚠️ **空串 = 「不改这一项」，不是「清空」**。引擎的 PUT 是整体替换，
+ *    传空串会直接抹掉老师那 777 字提示词；后端已按「空串不写」处理并在 `ignored` 里如实回报。
+ * 🔴 白名单之外的字段（如 kb_selection_mode）后端一律丢弃，提交了也没用。
+ */
+export interface AgentConfigPatch {
+  system_prompt?: string
+  model_id?: string
+  temperature?: number
+  max_completion_tokens?: number
+  fallback_strategy?: string
+  fallback_response?: string
+}
+
+/** 回读校验的一项（老师要看得见「到底哪一项没过」） */
+export interface AgentCheck {
+  key: string
+  label: string
+  expected: string
+  actual: string
+  ok: boolean
+}
+
+export interface AgentSaveResult {
+  success: boolean
+  message: string
+  /** 这次真正改动过的字段（空数组 = 原样写回，一个字没改） */
+  changed: string[]
+  /** 被忽略的空字段（传了空串 → 保持原值） */
+  ignored: string[]
+  before: AgentConfigPayload
+  after: AgentConfigPayload
+  /** 四项回读校验 + 第五项知识库范围红线 */
+  checks: AgentCheck[]
+  models: Array<{ id: string; name: string; status: string }>
+  modelsError: string
+}
+
+/** 保存智能体设置。后端会走「GET 全量 → 合并 → PUT 完整 config → 回读校验」 */
+export async function saveAgentConfig(
+  token: string,
+  patch: AgentConfigPatch
+): Promise<AgentSaveResult> {
+  const res = await http.put<AgentSaveResult>('/admin/agent', patch, {
+    headers: { 'X-Admin-Token': token },
+    silent: true,
+    timeout: 60_000
+  })
+  return res.data
+}
+
+/* ------------------------------------------------------------------ *
+ * 游客权限（T11：设置页第 4 块）
+ * ------------------------------------------------------------------ *
+ *
+ * 响应体类型与公众端那条公开只读口径**共用同一份定义**（api/guest.ts），
+ * 两边各写一份类型，早晚会漂 —— 开关清单与顺序由后端下发，前端不自己抄。
+ */
+
+/** 读游客权限（开关清单 + 当前值）。需要 X-Admin-Token */
+export async function fetchGuestPermissions(token: string): Promise<GuestPermissionsPayload> {
+  const res = await http.get<GuestPermissionsPayload>('/admin/guest-permissions', {
+    headers: { 'X-Admin-Token': token },
+    silent: true
+  })
+  return res.data
+}
+
+/** 保存请求体：字段全可选，只改传了的那些（`browse` 是只读项，传了也忽略） */
+export type GuestPermissionPatch = Partial<{
+  aiAsk: boolean
+  aiAskDailyLimit: number
+  preview: boolean
+  share: boolean
+  feedback: boolean
+  download: boolean
+}>
+
+/** 回读校验的一项（与智能体 / 解析引擎设置同一套写法：哪一项没过就写哪一项） */
+export interface GuestPermissionCheck {
+  key: string
+  label: string
+  expected: string
+  actual: string
+  ok: boolean
+}
+
+export interface GuestPermissionSaveResult {
+  /** 全部回读校验通过才是 true；false 时看 message 与 checks（已写入，只是有项没生效） */
+  success: boolean
+  message: string
+  /** 本次真正改动过的键（空数组 = 值都一样） */
+  changed: string[]
+  /** 被忽略的键（如只读的 browse、拼错的键） */
+  ignored: string[]
+  checks: GuestPermissionCheck[]
+  /** 回读后的配置视图 */
+  config: GuestPermissionsPayload
+}
+
+/** 保存游客权限。后端会「写盘 → 重新读一遍 → 逐项校验」 */
+export async function saveGuestPermissions(
+  token: string,
+  patch: GuestPermissionPatch
+): Promise<GuestPermissionSaveResult> {
+  const res = await http.put<GuestPermissionSaveResult>('/admin/guest-permissions', patch, {
+    headers: { 'X-Admin-Token': token },
+    silent: true,
+    timeout: 30_000
+  })
+  return res.data
+}
+
+/* ------------------------------------------------------------------ *
+ * 使用明细（T11-C：数据面板末尾那块）
+ * ------------------------------------------------------------------ */
+
+/** 表里的一行 = 一个账号（`userId: null` 即游客，后端已把 name 填成「游客」） */
+export interface UsageDetailRow {
+  userId: string | null
+  name: string
+  org: string
+  ai_ask: number
+  preview: number
+  download: number
+  total: number
+}
+
+export interface UsageDetailPayload {
+  success: boolean
+  /** YYYY-MM-DD（本地时区） */
+  date: string
+  rows: UsageDetailRow[]
+  totals: { ai_ask: number; preview: number; download: number }
+}
+
+/**
+ * 读某一天的使用明细（省略 date = 今天）。
+ * 🔴 与 /track/stats 一样是独立接口：本看板的既有统计口径一个字都没动。
+ */
+export async function fetchUsageDetail(token: string, date = ''): Promise<UsageDetailPayload> {
+  const res = await http.get<UsageDetailPayload>('/admin/usage-detail', {
+    headers: { 'X-Admin-Token': token },
+    params: date ? { date } : {},
+    silent: true
+  })
+  return res.data
 }

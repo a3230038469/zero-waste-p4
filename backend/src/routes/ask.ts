@@ -12,25 +12,51 @@
  */
 import { Router, type Request, type Response } from 'express'
 
-import { EngineError, askKnowledgeBase, createAskSession, isTerminalEvent } from '../weknora/index.js'
-import type { AskEvent } from '../weknora/index.js'
+import {
+  ConversationNotFoundError,
+  appendMessage,
+  getConversation,
+  setEngineSessionId,
+  touchConversation,
+  DEFAULT_TITLE
+} from '../chat/store.js'
+import {
+  EngineError,
+  askKnowledgeBase,
+  createAskSession,
+  isTerminalEvent,
+  resolveCitationSources
+} from '../weknora/index.js'
+import { readAgentSources } from '../weknora/agent-sse.js'
+import type { AskEvent, AskSource } from '../weknora/index.js'
 import { recordEvent } from '../track/store.js'
+import { bumpGuestAsk, countGuestAsk } from '../guest/ask-usage.js'
+import { userIdFromRequest } from '../guest/identity.js'
+import { loadGuestPermissions } from '../guest/permissions.js'
 
 const router = Router()
 
 /** 单次提问最大长度（防超长 query 打爆模型额度） */
 export const MAX_QUERY_LEN = 500
 
-/** 透给前端的流事件（与契约的四个 type 一一对应） */
-interface AskStreamEvent {
-  type: 'answer' | 'thinking' | 'done' | 'error'
-  content: string
-}
+/**
+ * 透给前端的流事件（契约见 docs/接口约定.md 第二节「流式问答」）。
+ *
+ * 五个 type：前四个带 content，最后的 sources 只带 items（不带无意义的空 content）。
+ */
+type AskStreamEvent =
+  | { type: 'answer' | 'thinking' | 'done' | 'error'; content: string }
+  | { type: 'sources'; items: AskSource[] }
 
 interface AskRequestBody {
   query: string
   knowledgeBaseIds: string[] | undefined
   includeThinking: boolean
+  /**
+   * T5：带上就「接着聊」（复用该会话的引擎 session → 上下文连续，并落库本轮问答）。
+   * 不带（首页旧气泡就是这么调的）= 一次性问答，**行为与加这个字段之前逐字节一致**。
+   */
+  conversationId: string | undefined
 }
 
 /** 请求体解析：非对象 / query 非字符串 / query 空串一律判 null（→400） */
@@ -40,24 +66,68 @@ function parseAskBody(raw: unknown): AskRequestBody | null {
   const query = obj['query']
   if (typeof query !== 'string' || query.trim() === '') return null
   const ids = obj['knowledgeBaseIds']
+  const conversationId = obj['conversationId']
   return {
     query: query.trim(),
     knowledgeBaseIds: Array.isArray(ids)
       ? ids.filter((v): v is string => typeof v === 'string')
       : undefined,
-    includeThinking: obj['includeThinking'] === true
+    includeThinking: obj['includeThinking'] === true,
+    conversationId:
+      typeof conversationId === 'string' && conversationId.trim() !== ''
+        ? conversationId.trim()
+        : undefined
   }
 }
 
-/** 开关：提问是否需要登录（默认 false = 访客免注册可问） */
-function requireLoginForAsk(): boolean {
-  return (process.env.REQUIRE_LOGIN_FOR_ASK ?? '').trim().toLowerCase() === 'true'
+/**
+ * 🔴 T11：游客能不能问 AI，以及游客当天问了几次 —— **在开流之前**判定。
+ *
+ * 放在开流前的原因：流一旦开始，HTTP 状态码就发出去了改不了，
+ * 只能以 `error` 事件收尾 —— 那时用户已经看到「在思考」再被拒，体验最差。
+ *
+ * 口径（与全站其余「游客判定」同源，见 guest/identity.ts）：
+ *   - 「是不是游客」按 **JWT 校验通过** 判（不是只看有没有 Authorization 头），
+ *     凭证无效按游客处理（fail closed：判不出登录态时绝不放行）。
+ *   - `aiAsk` 关闭 → 403 `GUEST_ASK_CLOSED`。
+ *   - `aiAskDailyLimit > 0` 且当天用满 → 403 `GUEST_ASK_LIMIT_REACHED`；
+ *     **已登录用户完全不受限**（直接跳过这一段，也不消耗额度）。
+ *   - 计数在放行前 +1：被拒的请求不消耗额度。
+ */
+function allowGuestAsk(req: Request, askerId: string | null): { ok: true } | { ok: false; status: number; code: string; message: string } {
+  if (askerId) return { ok: true }
+
+  const permissions = loadGuestPermissions()
+  if (!permissions.aiAsk) {
+    return { ok: false, status: 403, code: 'GUEST_ASK_CLOSED', message: 'AI 问答暂未对游客开放，请登录后使用' }
+  }
+
+  const limit = permissions.aiAskDailyLimit
+  if (limit > 0) {
+    const used = countGuestAsk(req)
+    if (used >= limit) {
+      return {
+        ok: false,
+        status: 403,
+        code: 'GUEST_ASK_LIMIT_REACHED',
+        message: `游客每天可提问 ${limit} 次，今天已用完，请登录后继续提问`
+      }
+    }
+    // 放行前记一次（引擎后来报错也算用掉：限流防的是刷，不是失败补偿）
+    bumpGuestAsk(req)
+  }
+  return { ok: true }
 }
 
 /** 每条事件按 SSE 规范写成 `data: {json}\n\n`（curl -N 能实时看到） */
 function writeSse(res: Response, event: AskStreamEvent): void {
   if (res.writableEnded) return
   res.write(`data: ${JSON.stringify(event)}\n\n`)
+}
+
+/** 错误转一句话（给 warn 日志用，别把整坨对象塞进日志） */
+function describeError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
 }
 
 /** 流开始前的错误：普通 JSON，能改状态码 */
@@ -89,15 +159,17 @@ async function handleAsk(req: Request, res: Response): Promise<void> {
     return
   }
 
-  // 提问是否需登录：开关关着（默认）就不校验，访客可直接问
-  if (requireLoginForAsk() && !req.headers.authorization) {
-    // ⚠️ 这里只做「有没有带凭证」的粗判。开关打开后若要真校验 JWT，
-    //    应由月月的 auth 模块提供中间件挂到这里（属接口对接，不是本模块能自证的）。
-    res.status(401).json({
+  // 🔴 T11：游客权限真拦（开流前）。已登录用户不受开关与次数限制。
+  //    askerId 同时用于本次问答的埋点归属（T11-B：埋点必须带上账号）。
+  const askerId = userIdFromRequest(req)
+  const gate = allowGuestAsk(req, askerId)
+  if (!gate.ok) {
+    // 形状与开流前的其它错误一致：前端 api/ask.ts 的 readErrorMessage 读 content 字段
+    res.status(gate.status).json({
       success: false,
       type: 'error',
-      content: '提问需要登录',
-      error: { code: 'LOGIN_REQUIRED', message: '提问需要登录' }
+      content: gate.message,
+      error: { code: gate.code, message: gate.message }
     })
     return
   }
@@ -106,8 +178,31 @@ async function handleAsk(req: Request, res: Response): Promise<void> {
   const clientGone = new AbortController()
   let events: AsyncGenerator<AskEvent, void, void>
   let sessionId: string
+
+  /**
+   * T5：接着聊的上下文载体。
+   *
+   * 有 conversationId 时：
+   *   - 复用该会话的引擎 session → AI 记得这个对话前面说过什么（**不新建**，这就是「上下文连续」的全部秘密）
+   *   - 本轮 user / assistant + sources 落库，前端刷新后能恢复画面
+   * 没有 conversationId（首页旧气泡）：conv 为 null，下面每一步都跳过，行为与从前一致。
+   */
+  let conv: { id: string; title: string; userMsgSaved: boolean } | null = null
   try {
-    sessionId = await createAskSession(`web:${body.query.slice(0, 30)}`)
+    if (body.conversationId) {
+      const row = await getConversation(body.conversationId)
+      conv = { id: row.id, title: row.title, userMsgSaved: false }
+
+      if (row.engineSessionId) {
+        sessionId = row.engineSessionId
+      } else {
+        // 会话建的时候引擎没就绪（密钥没到位 / 额度 429），这会儿再懒建一次并回填
+        sessionId = await createAskSession(`web:${body.query.slice(0, 30)}`)
+        await setEngineSessionId(row.id, sessionId)
+      }
+    } else {
+      sessionId = await createAskSession(`web:${body.query.slice(0, 30)}`)
+    }
     events = await askKnowledgeBase({
       sessionId,
       query: body.query,
@@ -115,6 +210,15 @@ async function handleAsk(req: Request, res: Response): Promise<void> {
       signal: clientGone.signal
     })
   } catch (err) {
+    if (err instanceof ConversationNotFoundError) {
+      res.status(404).json({
+        success: false,
+        type: 'error',
+        content: '这个对话不存在或已被删除，请新建一个',
+        error: { code: 'CONVERSATION_NOT_FOUND', message: '这个对话不存在或已被删除' }
+      })
+      return
+    }
     sendPreStreamError(res, err)
     return
   }
@@ -133,12 +237,58 @@ async function handleAsk(req: Request, res: Response): Promise<void> {
   let terminated = false
   let answerText = ''
   let failed = false
+  let sourcesSent = false
+  /** T5：本轮拿到的来源卡片，收尾时与正文一起落库 */
+  let collectedSources: AskSource[] = []
+
+  /**
+   * T5：user 消息在开流**之前**就落库。
+   *
+   * 为什么不是等回答完再一起写：用户的问题先入库，哪怕这次问答超时/断线/额度耗尽，
+   * 历史里也还留着他问过什么 —— 刷新页面看到的是「我问过，但这次没答上来」，
+   * 而不是自己的输入凭空消失。
+   *
+   * ⚠️ 落库失败**绝不能**打断这一次问答（它已经是锦上添花）：全部吞掉，最多 warn 一行。
+   */
+  if (conv) {
+    try {
+      await appendMessage({ conversationId: conv.id, role: 'user', content: body.query })
+      conv.userMsgSaved = true
+    } catch (err) {
+      console.warn(`[ask] 用户消息落库失败（本轮问答不受影响）：${describeError(err)}`)
+    }
+  }
+
+  /**
+   * 收尾前补发来源卡片（每条流只发一次）。
+   *
+   * 放在 `done` **之前**：前端按事件顺序渲染，先给卡片再收尾，气泡不会「先结束、后冒卡片」。
+   * 注意这发生在**全部正文流完之后**，所以不影响「逐字到达」的体验；
+   * resolveCitationSources 内部已吞掉所有异常，这里再兜一层，绝不让它打断收尾。
+   */
+  const sendSources = async (): Promise<void> => {
+    if (sourcesSent || clientGone.signal.aborted) return
+    sourcesSent = true
+    try {
+      const items = await resolveCitationSources(answerText)
+      if (items.length > 0) {
+        collectedSources = items // T5：留着落库
+        if (!res.writableEnded) {
+          writeSse(res, { type: 'sources', items })
+        }
+      }
+    } catch {
+      // 理论上到不了这里（解析函数自己吞异常），留着是为了不让任何意外掐掉收尾帧
+    }
+  }
+
   try {
     for await (const evt of events) {
       if (clientGone.signal.aborted) break
       // 终止信号：complete / stop / error（**不是 done**，见 weknora/types.ts 注释）
       if (isTerminalEvent(evt)) {
         if (evt.responseType === 'error') failed = true
+        await sendSources()
         writeSse(res, {
           type: evt.responseType === 'error' ? 'error' : 'done',
           content: evt.content
@@ -153,6 +303,26 @@ async function handleAsk(req: Request, res: Response): Promise<void> {
         }
         continue
       }
+      /**
+       * T7：智能体链路的「来源」。
+       *
+       * 引擎 `agent-chat` 的 references 事件**一条带全部引用**（不是分段推），
+       * 且实测落在正文**之前**。weknora/agent-sse.ts 已把它翻译成 `{name, url, org, year…}`，
+       * 这里转成前端既有的 `sources` 事件 —— **对前端的五种事件格式一个字都没改**
+       * （第六章第 3 条），前端组件无需任何改动。
+       *
+       * 发完就把 sourcesSent 置位：后面的 sendSources() 会直接返回，
+       * 不会出现「智能体给一次、引用解析再给一次」的双份卡片。
+       */
+      if (evt.responseType === 'references') {
+        const items = readAgentSources(evt)
+        if (items.length > 0 && !sourcesSent && !res.writableEnded) {
+          sourcesSent = true
+          collectedSources = items
+          writeSse(res, { type: 'sources', items })
+        }
+        continue
+      }
       // 思考过程默认不透（前端不需要），includeThinking=true 才给
       if (evt.responseType === 'thinking') {
         if (body.includeThinking && evt.content !== '') {
@@ -160,10 +330,11 @@ async function handleAsk(req: Request, res: Response): Promise<void> {
         }
         continue
       }
-      // 其余类型（agent_query 入队确认 / references 引用 / session_title 等）不透给前端
+      // 其余类型（agent_query 入队确认 / session_title 等）不透给前端
     }
     // 上游没发终止帧就断了（异常收尾）：补一个 done，前端才知道流结束
     if (!terminated && !res.writableEnded && !clientGone.signal.aborted) {
+      await sendSources()
       writeSse(res, { type: 'done', content: '' })
     }
   } catch (err) {
@@ -175,15 +346,51 @@ async function handleAsk(req: Request, res: Response): Promise<void> {
   } finally {
     // 无答案口径只在这一处落库：正常收尾且正文为空 = 引擎没答上来（noAnswer=true）；
     // 有正文 = 有答案（false）；出错/中途断开 = 判不了（null，进 unjudged）
+    //
+    // 🔴 T11-B：userId 必须带上 —— 提问是服务端埋点，不带的话「使用明细」里
+    //    每个账号的提问次数永远是 0（全部落进「游客」组）。游客仍是 null（不编造 id）。
     const finishedNormally = !failed && !clientGone.signal.aborted
     recordEvent({
       event: 'ai_ask',
+      userId: askerId,
       path: '/api/ask',
       payload: {
         query: body.query,
         noAnswer: finishedNormally ? answerText.trim() === '' : null
       }
     })
+
+    // T5：助手回复落库 + 会话置顶。
+    //
+    // ⚠️ 在 `finally` 里：**一定要在 res.end() 之前**。res.end() 一执行，
+    //    本次请求的生命周期就结束了，后面再 await 落库属于「响应已发还在写」，
+    //    客户端断开时这段 await 会被打断，历史里就少这一条。
+    //
+    // 只在「有正文且是 assistant 视角」时写：错误帧（429 / 引擎不可用）不是回答，
+    // 写进历史会让刷新后的页面出现一条永远答不出来的死气泡。
+    if (conv && answerText.trim() !== '') {
+      try {
+        await appendMessage({
+          conversationId: conv.id,
+          role: 'assistant',
+          content: answerText,
+          sources: collectedSources
+        })
+        // 标题还是默认的 + 这是第一条用户消息 -> 用首问改标题，
+        // 否则列表里全是「新对话」，用户根本分不清哪个是自己刚聊的那个
+        const firstQuestion =
+          !conv.userMsgSaved || conv.title === DEFAULT_TITLE
+            ? body.query.replace(/\s+/g, ' ').trim().slice(0, 20)
+            : ''
+        await touchConversation({
+          conversationId: conv.id,
+          ...(firstQuestion ? { newTitle: firstQuestion } : {})
+        })
+      } catch (err) {
+        console.warn(`[ask] 助手回复落库失败（问答已完成，不影响本次返回）：${describeError(err)}`)
+      }
+    }
+
     res.end()
   }
 }

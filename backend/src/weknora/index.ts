@@ -26,6 +26,13 @@ import {
 import { parseSseStream } from './sse.js'
 import { baseNameOf, unzipFirstEntry } from './zip.js'
 import { buildEngineOverrides, buildStyledQuery, loadQaSettings } from './qa-settings.js'
+import { getAgentId } from './agent-config.js'
+import {
+  createAgentCounters,
+  translateAgentStream,
+  type AgentSourceDoc,
+  type ResolveAgentDoc
+} from './agent-sse.js'
 
 export * from './types.js'
 /** 流终止判断也要给路由层用（判 complete/stop/error，别用 done） */
@@ -111,7 +118,10 @@ function toLocalDoc(raw: unknown, line: number): KbDocInternal {
     sourceUrl: typeof sourceUrl === 'string' ? sourceUrl : '',
     fileName,
     filePath,
-    sizeDeclared: typeof sizeDeclared === 'number' ? sizeDeclared : null
+    sizeDeclared: typeof sizeDeclared === 'number' ? sizeDeclared : null,
+    // T8：所属方向。本地索引目前没有这一项（为空串表示「没有方向数据」），
+    // 将来导入时带上 `srcTable` 字段，这一套筛选器立刻就能用，不用再改代码。
+    srcTable: typeof raw.srcTable === 'string' ? raw.srcTable.trim() : ''
   }
 }
 
@@ -321,7 +331,7 @@ function parseEngineTime(value: unknown): number | undefined {
  *
  * 字段来源（2026-10-08 真机核对通过）：
  *   id / title / file_name / file_size / created_at —— 引擎原生字段
- *   org / year / type / tags —— 引擎的 custom_metadata（元数据补录写入）
+ *   org / year / type / tags / srcTable —— 引擎的 custom_metadata（元数据补录写入）
  *
  * ⚠️ 引擎另有一个 `metadata` 字段，存的是「处理配置」而不是业务元数据，别拿它当来源。
  */
@@ -345,6 +355,8 @@ function toEngineDoc(raw: unknown): KbDocInternal {
     fileName,
     filePath: pickString(raw, ['file_path']),
     sizeDeclared: size,
+    // T8：所属方向（老库 603 份 100% 有这个字段：知识查询（零废弃）/ 知识查询（化学品））
+    srcTable: metaString(raw, 'srcTable'),
     createdAt: parseEngineTime(raw['created_at'])
   }
 }
@@ -672,11 +684,32 @@ export async function createAskSession(title: string): Promise<string> {
  *   - 设了思考强度 → body 带 `reasoning_effort`（引擎原生参数）
  *   - 回答方式 → 在 query 前面拼一段风格指令
  *   读设置永远读不炸（文件坏了退回默认值），不会把问答主功能带崩。
+ *
+ * ⚠️ **T7：优先走引擎里的智能体**（`agent-chat`），失败自动回退 `knowledge-chat`。
+ *   两条链路的事件形状**完全一致**（都产 AskEvent），所以路由层与前端都无感：
+ *     智能体链路：POST /api/v1/agent-chat/{sessionId}
+ *       body = {query: 原始问题, agent_id, agent_enabled: true[, knowledge_base_ids]}
+ *       🔴 **不拼风格前缀**（提示词由智能体的 system_prompt 提供，再拼一遍会打架）
+ *       🔴 **不下发 summary_model_id / reasoning_effort**（智能体有自己的 model_id / temperature，
+ *          下发会和智能体配置冲突）
+ *     兜底链路：POST /api/v1/knowledge-chat/{sessionId}（T3 的逻辑原样保留，一个字没改）
+ *
+ * ⚠️ 什么时候走智能体：`.env` 的 `WEKNORA_AGENT_ID` 有值、且这一轮 agent 请求在**开流前**就成功。
+ *   引擎不存在这个 id（404）、拒绝（401/403）、参数不对（400）、连不上 —— 一律记一行 warn
+ *   后自动回退 knowledge-chat，问答**照常可用**（任务单验收第 6 项）。
+ *
+ * ⚠️ 开流之后才断的（读到一半连接断了）**不回退**：回退会把已经吐出去的字再吐一遍，
+ *   前端气泡会出现重复段落。这种情况仍按既有口径以 error 事件收尾。
  */
 export async function askKnowledgeBase(params: {
   sessionId: string
   query: string
   knowledgeBaseIds?: string[]
+  /**
+   * T7：走哪个智能体。**不传 = 从 .env 的 WEKNORA_AGENT_ID 读**；
+   * 传空串 = 明确走兜底的 knowledge-chat（留个口子给将来做 A/B 对照）。
+   */
+  agentId?: string
   /** 外部取消（客户端断开）——真正透传给 fetch，让引擎侧也停下来 */
   signal?: AbortSignal
 }): Promise<AsyncGenerator<AskEvent, void, void>> {
@@ -690,6 +723,20 @@ export async function askKnowledgeBase(params: {
     params.knowledgeBaseIds && params.knowledgeBaseIds.length > 0
       ? params.knowledgeBaseIds
       : [engineKbId()]
+
+  /* ── T7：先试智能体，失败自动回退 knowledge-chat ────────────────────── */
+  const agentId = (params.agentId ?? getAgentId()).trim()
+  if (agentId) {
+    try {
+      return await askAgentKnowledgeBase({ ...params, apiKey, agentId, kbIds })
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err)
+      console.warn(
+        `[weknora] 智能体问答没走成，自动回退到普通知识库问答（问答功能不受影响）：${reason}`
+      )
+    }
+  }
+
   const url = `${engineBaseUrl().replace(/\/+$/, '')}/api/v1/knowledge-chat/${encodeURIComponent(
     params.sessionId
   )}`
@@ -758,6 +805,338 @@ export async function askKnowledgeBase(params: {
       cleanup()
     }
   })()
+}
+
+/* ------------------------------------------------------------------ *
+ * 智能体问答（T7：agent-chat 链路 + 失败自动回退）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 走引擎里的智能体提问：POST /api/v1/agent-chat/{sessionId}
+ *
+ * 🔴 body 的三处要点（少一处就不对）：
+ *   1. `query` 是**原始问题**，不拼 T3 的风格前缀 —— 提示词由智能体的 system_prompt 提供
+ *   2. **不下发** summary_model_id / reasoning_effort —— 智能体自己带 model_id / temperature，
+ *      再下发会和智能体配置打架
+ *   3. `knowledge_base_ids` **只在调用方显式给了才发**（本轮前端没给）。
+ *      不发时智能体按自己的 `knowledge_bases` + `kb_selection_mode: selected` 走。
+ *      ⚠️ 实测：请求里传 knowledge_base_ids 会**覆盖**智能体配置的库；
+ *         「将来的全选档」要用这个字段传多个库 id，**绝不能**把 kb_selection_mode 改成 all。
+ *
+ * 抛错 = 开流前失败（网络/401/403/400/无响应体），由 askKnowledgeBase 捕获后回退 knowledge-chat。
+ * 开流之后的异常不在这里处理（那时已经吐过字了，回退会造成重复段落）。
+ */
+async function askAgentKnowledgeBase(params: {
+  sessionId: string
+  query: string
+  signal?: AbortSignal
+  apiKey: string
+  agentId: string
+  kbIds: string[]
+}): Promise<AsyncGenerator<AskEvent, void, void>> {
+  const url = `${engineBaseUrl().replace(/\/+$/, '')}/api/v1/agent-chat/${encodeURIComponent(
+    params.sessionId
+  )}`
+
+  const askBody: Record<string, unknown> = {
+    query: params.query,
+    agent_id: params.agentId,
+    agent_enabled: true
+  }
+  if (params.kbIds.length > 0) askBody['knowledge_base_ids'] = params.kbIds
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ASK_TIMEOUT_MS)
+  const onExternalAbort = (): void => controller.abort()
+  if (params.signal) {
+    if (params.signal.aborted) controller.abort()
+    else params.signal.addEventListener('abort', onExternalAbort, { once: true })
+  }
+  const cleanup = (): void => {
+    clearTimeout(timer)
+    params.signal?.removeEventListener('abort', onExternalAbort)
+  }
+
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'X-API-Key': params.apiKey,
+        Accept: 'text/event-stream',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(askBody)
+    })
+  } catch (err) {
+    cleanup()
+    const aborted = err instanceof Error && err.name === 'AbortError'
+    throw new EngineError(
+      aborted ? 'ENGINE_TIMEOUT' : 'ENGINE_UNREACHABLE',
+      aborted
+        ? `智能体问答超时（${ASK_TIMEOUT_MS / 1000}s）：${url}`
+        : `连不上智能体问答接口 ${url}`,
+      504
+    )
+  }
+
+  // 🔴 下面的三个分支**必须抛错**，不能 return：抛出去才会被 askKnowledgeBase 捕获并回退。
+  if (res.status === 401 || res.status === 403) {
+    cleanup()
+    throw new EngineError('ENGINE_UNAUTHORIZED', '智能体拒绝提问：API Key 无效或无权限', 502)
+  }
+  if (!res.ok) {
+    cleanup()
+    const detail = (await res.text().catch(() => '')).slice(0, 200)
+    throw new EngineError(
+      'ENGINE_BAD_STATUS',
+      `智能体问答返回 ${res.status}（agent_id=${params.agentId}）：${detail || '(引擎没给正文)'}`,
+      502
+    )
+  }
+  if (!res.body) {
+    cleanup()
+    throw new EngineError('ENGINE_EMPTY_BODY', '智能体问答接口没返回响应体', 502)
+  }
+
+  const body = res.body
+  const raw = (async function* iterate(): AsyncGenerator<AskEvent, void, void> {
+    try {
+      yield* parseSseStream(body, url)
+    } finally {
+      cleanup()
+    }
+  })()
+
+  // 适配层：thinking / tool_call / tool_result / agent_query 计数后丢弃，
+  // references 转成来源卡片，answer 原样透传（前端组件零改动）
+  return translateAgentStream(raw, createAgentCounters(), {
+    resolveDoc: makeAgentDocResolver()
+  })
+}
+
+/**
+ * 给适配层的资料查询：用 `knowledge_id` 在**书架已拉的全量清单**里本地关联 org/year/type。
+ *
+ * ⚠️ 不为一条引用单独发请求：listFiles() 自带 60 秒缓存，第一次调用拉全量、之后命中缓存。
+ *    关联不上就返回 null（适配层会跳过这条引用，绝不给点进去 404 的死链）。
+ */
+function makeAgentDocResolver(): ResolveAgentDoc {
+  let pool: Map<string, AgentSourceDoc> | null = null
+  return async (knowledgeId: string): Promise<AgentSourceDoc | null> => {
+    if (pool === null) {
+      try {
+        const docs = await listFiles()
+        pool = new Map(docs.map((doc) => [doc.id, doc]))
+      } catch {
+        // 取不到清单就让这次关联整体失效（返回 null），绝不抛给问答链路
+        pool = new Map()
+      }
+    }
+    return pool.get(knowledgeId) ?? null
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 引用来源解析（T4：B07 的「来源卡片」）
+ * ------------------------------------------------------------------ */
+
+/** 前端来源卡片的一条，契约见 docs/接口约定.md 第二节「流式问答」 */
+export interface AskSource {
+  /** 展示用的资料名（资料的 title，取不到则退回文件名） */
+  name: string
+  /** 站内详情页地址 */
+  url: string
+  /**
+   * 【T8 追加，可选】发布机构 / 发布年份 / 类型。
+   *
+   * 来源：智能体链路优先读引用自带的 `data.references[].knowledge_custom_metadata`
+   * （YAML 风格字符串），读不到才退回书架清单本地关联（见 weknora/agent-sse.ts）。
+   * 前端 `AskSource` 只多两个可选字段，**不认它的旧调用方行为完全不变**。
+   */
+  org?: string
+  year?: string
+  type?: string
+}
+
+/** 来源卡片最多几条：再多气泡太长，读者也用不完 */
+const MAX_SOURCES = 5
+
+/**
+ * 三种引用标记都要认，缺一不可 —— **模型在同一套提示词下并不稳定**，实测三种都出现过：
+ *
+ * 1. `<kb doc="382-厨余垃圾全生命低碳管理综述.pdf" chunk_id="…" kb_id="…" />`
+ *    —— WeKnora 原生的引用组件标记（T4 任务单就是照这个格式写的）。
+ * 2. `【资料名：382-厨余垃圾全生命低碳管理综述-厨余垃圾全生命低碳管理综述.pdf】`
+ *    —— 知识问答风格提示词（qa-settings.ts 的 STYLE_PROMPTS.knowledge）要求
+ *       「每点末尾用【资料名】注明出处」，模型多数时候照做。
+ * 3. `【厨余垃圾全生命低碳管理综述】`
+ *    —— **模型偷懒版**：只给标题，连「资料名：」前缀、文件名序号与扩展名全省了。
+ *
+ * 2026-10-12 连续两次真机实测（同一个问题、同一套提示词）：第一次全是第 2 种，
+ * 第二次全是第 3 种，两次 `<kb>` 都是 0 个。所以只认第 1 种 → 卡片恒为空；
+ * 只认前两种 → 时灵时不灵。三种都收，才稳。
+ *
+ * ⚠️ 第 3 种是「裸方括号」，和正文里 `【注意】` 这类正常内容长得一样。
+ *    靠**匹配不上就丢弃**来区分（见 resolveCitationSources），不靠猜。
+ */
+const CITATION_KB_TAG = /<kb\s+doc="([^"]+)"[^>]*?\/?>/g
+const CITATION_BRACKET_NAMED = /【\s*资料名[：:]\s*([^】]+?)\s*】/g
+const CITATION_BRACKET_BARE = /【([^】]{2,})】/g
+/**
+ * **没闭合的** `【资料名：xxx` —— 回答在模型输出上限处被截断时，引用常常正好断在括号里
+ * （2026-10-12 实测：`…—“十四五”城镇生活` 后面就没了）。上面两条都要求 `】`，会整条漏掉。
+ * 放到最后跑：闭合的那种已经被前面的规则收进去并去重了。
+ */
+const CITATION_BRACKET_OPEN = /【\s*资料名[：:]\s*([^】\n]{4,})/g
+
+/** 引用名里可能带的「资料名：」前缀（裸方括号那条要自己剥掉，否则去重对不上） */
+const CITATION_NAME_PREFIX = /^\s*资料名\s*[：:]\s*/
+
+/** 要去掉的扩展名（比对前统一剥掉） */
+const DOC_EXTENSION = /\.(pdf|docx?|xlsx?|pptx?|txt|md|csv|rtf|ofd)$/i
+
+/**
+ * 比对用的归一化键：去扩展名 → 去掉**所有**空白 → 转小写。
+ *
+ * ⚠️ 必须去所有空白（不是 trim 就完事）：模型抄文件名时常把空格吃掉或换成全角空格，
+ *    留着空白会让本该命中的条目落空。去掉后 `382-厨余垃圾全生命低碳管理综述.pdf`
+ *    与 `382-厨余垃圾全生命低碳管理综述` 才算同一个东西。
+ */
+function normalizeDocKey(raw: string): string {
+  return raw
+    .replace(CITATION_NAME_PREFIX, '')
+    .trim()
+    .replace(DOC_EXTENSION, '')
+    .replace(/\s+/gu, '')
+    .toLowerCase()
+}
+
+/**
+ * 资料「核心名」：去掉开头的建档序号（`382-`）与文件名里重复的标题尾巴（`-标题-标题`）。
+ *
+ * 为什么需要：本库文件名是「序号-机构-标题」拼法，而入库时机构与标题常是同一句话，
+ * 于是文件名长成 `280-《神奇的黑水虻》-《神奇的黑水虻》`。模型引用时只写标题
+ * （`【神奇的黑水虻】`），既不等于完整文件名也不等于 title，得有个中间键才比得上。
+ */
+function coreKeys(doc: KbDocInternal): string[] {
+  const cores: string[] = []
+  for (const raw of [doc.fileName, doc.title]) {
+    let key = normalizeDocKey(raw)
+    const dash = key.indexOf('-')
+    if (dash > 0 && /^\d+$/.test(key.slice(0, dash))) key = key.slice(dash + 1)
+    // `A-A` 折叠成 `A`（倒着找一遍，容忍标题本身含破折号的情况）
+    for (let i = key.length - 1; i > 0; i -= 1) {
+      if (key[i] !== '-') continue
+      const head = key.slice(0, i)
+      if (head && head === key.slice(i + 1) && !cores.includes(head)) cores.push(head)
+    }
+    if (key && !cores.includes(key)) cores.push(key)
+  }
+  return cores
+}
+
+/** 一份资料可用于比对的键：核心名 / 文件名 / 标题（去重、丢掉空的） */
+function docKeys(doc: KbDocInternal): string[] {
+  const keys: string[] = []
+  const all = [...coreKeys(doc), normalizeDocKey(doc.fileName), normalizeDocKey(doc.title)]
+  for (const key of all) {
+    if (key && !keys.includes(key)) keys.push(key)
+  }
+  return keys
+}
+
+/** 提取回答里引用的资料名（按「越明确的越先」排序，裸方括号那种靠后的兜底） */
+function extractCitationNames(answerText: string): string[] {
+  const found: string[] = []
+  const seen = new Set<string>()
+  const collect = (name: string): void => {
+    const key = normalizeDocKey(name)
+    if (!key || seen.has(key)) return
+    seen.add(key)
+    found.push(name)
+  }
+  for (const match of answerText.matchAll(CITATION_KB_TAG)) collect(match[1] ?? '')
+  for (const match of answerText.matchAll(CITATION_BRACKET_NAMED)) collect(match[1] ?? '')
+  for (const match of answerText.matchAll(CITATION_BRACKET_BARE)) collect(match[1] ?? '')
+  for (const match of answerText.matchAll(CITATION_BRACKET_OPEN)) collect(match[1] ?? '')
+  return found
+}
+
+/**
+ * 包含式回退的门槛：太短的引用（如 `【注意】`、`【要点】`）不足以确认是哪份资料，
+ * 宁可不给卡片也不给可能点错的链接。实测三条真引用里最短的是 `神奇的黑水虻`（6 字）。
+ */
+const MIN_CONTAIN_LEN = 6
+
+/**
+ * 在资料池里找一条引用对应的资料：先精确匹配，再包含式回退。
+ *
+ * 回退要同时覆盖两种残缺：
+ *   - 模型只写了标题：`【厨余垃圾全生命低碳管理综述】` 对上
+ *     `382-厨余垃圾全生命低碳管理综述-厨余垃圾全生命低碳管理综述`
+ *   - 回答在**模型输出上限处被截断**，文件名只剩前半截
+ *     （2026-10-12 实测见过 `88-“十四五”…-“十四五”城镇生活`）
+ * 多个候选时取**键最短**的那条（最贴近引用的那一本），并列则取库里靠前的。
+ */
+function matchDoc(citationKey: string, entries: DocEntry[]): KbDocInternal | null {
+  for (const entry of entries) {
+    if (entry.keys.includes(citationKey)) return entry.doc
+  }
+  if (citationKey.length < MIN_CONTAIN_LEN) return null
+  let best: KbDocInternal | null = null
+  let bestKeyLen = Number.POSITIVE_INFINITY
+  for (const entry of entries) {
+    for (const key of entry.keys) {
+      // ⚠️ 这里只能判「包含」，不能判「前缀」：模型引用 `神奇的黑水虻`，
+      //    而库里的核心名是 `《神奇的黑水虻》`（带书名号）—— 包含成立，前缀不成立。
+      if (!key.includes(citationKey) && !citationKey.includes(key)) continue
+      if (key.length < bestKeyLen) {
+        best = entry.doc
+        bestKeyLen = key.length
+      }
+    }
+  }
+  return best
+}
+
+interface DocEntry {
+  doc: KbDocInternal
+  keys: string[]
+}
+
+/**
+ * 把回答正文里的引用标记解析成「来源卡片」。
+ *
+ * ⚠️ **本函数绝不抛异常**：这里失败只能表现为「这次没有来源卡片」，
+ *    绝不能把已经流完的回答带崩 —— 来源是锦上添花，答案是主功能。
+ *    取不到资料清单就返回空数组（宁可不给卡片，也不给点进去 404 的死链）。
+ */
+export async function resolveCitationSources(answerText: string): Promise<AskSource[]> {
+  if (!answerText.trim()) return []
+  const names = extractCitationNames(answerText)
+  if (names.length === 0) return []
+
+  let pool: KbDocInternal[]
+  try {
+    pool = await listFiles()
+  } catch {
+    return []
+  }
+
+  const entries: DocEntry[] = pool.map((doc) => ({ doc, keys: docKeys(doc) }))
+  const out: AskSource[] = []
+  const usedIds = new Set<string>()
+  for (const raw of names) {
+    if (out.length >= MAX_SOURCES) break
+    const doc = matchDoc(normalizeDocKey(raw), entries)
+    // 匹配不到就跳过这条（不放死链接）
+    if (!doc || usedIds.has(doc.id)) continue
+    usedIds.add(doc.id)
+    out.push({ name: doc.title || doc.fileName || raw, url: `/doc/${doc.id}` })
+  }
+  return out
 }
 
 /* ------------------------------------------------------------------ *

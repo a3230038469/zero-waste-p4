@@ -9,6 +9,11 @@
  *   - 对外展示站改造（2026-10-10）：新增 `/insights` 数据概览、`/about` 关于项目。
  *     这两个页面的内容**全部来自真实数据与已核事实**，没有一段是编的（见页面内注释）。
  *   - 访客反馈（2026-10-14）：新增 `/admin/feedback` 反馈管理页。
+ *   - T5（2026-10-12）：新增 `/chat` AI 问答独立页（会话存数据库，可接着聊）。
+ *   - B09（2026-10-13）：新增 `/contribute` 我要投稿 + 意见反馈，与
+ *     `/admin/contributions` 投稿审核队列。要回退就删掉带「B09 公众互动」注释的几行。
+ *   - T10（2026-10-14）：新增 `/admin/settings` 设置页（智能体设置从资料管理页搬来，
+ *     另有解析引擎设置与一键自检）。要回退就删掉带「T10」注释的那一行。
  */
 import { createRouter, createWebHistory } from 'vue-router'
 
@@ -21,6 +26,10 @@ const router = createRouter({
     { path: '/shelf', name: 'shelf', component: () => import('../views/ShelfView.vue') },
     { path: '/insights', name: 'insights', component: () => import('../views/InsightsView.vue') },
     { path: '/about', name: 'about', component: () => import('../views/AboutView.vue') },
+    // T5：AI 问答独立页（左会话列表 / 右对话流，会话存数据库，可接着聊）
+    { path: '/chat', name: 'chat', component: () => import('../views/ChatView.vue') },
+    // B09 公众互动（2026-10-13）：我要投稿 + 意见反馈，一个页面两个标签页
+    { path: '/contribute', name: 'contribute', component: () => import('../views/ContributeView.vue') },
     { path: '/doc/:id', name: 'doc', component: () => import('../views/DocDetailView.vue') },
     { path: '/auth', name: 'auth', component: () => import('../views/AuthView.vue') },
     // 韶茹：数据看板（POST /api/track + GET /api/track/stats 的配套页）
@@ -31,6 +40,14 @@ const router = createRouter({
     { path: '/admin/users', name: 'adminUsers', component: () => import('../views/AdminUsersView.vue') },
     // 访客反馈（2026-10-14）：收得进来、看得见、能导出 —— 只有接口没有页面等于只收不读
     { path: '/admin/feedback', name: 'adminFeedback', component: () => import('../views/AdminFeedbackView.vue') },
+    // B09 公众互动：老师后台 · 投稿审核队列（GET /api/admin/contributions）
+    {
+      path: '/admin/contributions',
+      name: 'adminContributions',
+      component: () => import('../views/AdminContributionsView.vue')
+    },
+    // T10：老师后台 · 设置（智能体设置 / 解析引擎设置 / 一键自检）
+    { path: '/admin/settings', name: 'adminSettings', component: () => import('../views/AdminSettingsView.vue') },
     { path: '/:pathMatch(.*)*', name: 'notFound', component: () => import('../views/NotFoundView.vue') }
   ],
   scrollBehavior(to) {

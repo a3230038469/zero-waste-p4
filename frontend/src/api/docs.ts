@@ -33,9 +33,16 @@ export interface DocDetail extends DocItem {
 /** 书架页查询参数（对齐接口约定，多选维度用数组承载） */
 export interface DocListQuery {
   type?: string
-  orgs?: string[]
+  /**
+   * 【T10】机构名**包含**这个关键词（单值文本式检索）。
+   * 🔴 与 `orgs`（精确多选）是两套语义：这里传的就是用户在输入框里敲的那串字，
+   *    回车才发请求。空 = 不过滤。原先的机构下拉与远程搜索已整体下线。
+   */
+  orgLike?: string
   years?: string[]
   tags?: string[]
+  /** 【T8 追加】所属方向，多选。值是数据原值（如 `知识查询（零废弃）`），不是显示名 */
+  srcTables?: string[]
   q?: string
   page?: number
   pageSize?: number
@@ -103,9 +110,10 @@ function filterDocs(docs: DocItem[], query: DocListQuery): DocItem[] {
   if (query.type) {
     result = result.filter((d) => d.type === query.type)
   }
-  const orgs = query.orgs ?? []
-  if (orgs.length > 0) {
-    result = result.filter((d) => orgs.includes(d.org))
+  // T10：机构文本式检索（假数据分支也对齐后端口径：包含匹配）
+  const orgLike = query.orgLike?.trim().toLowerCase()
+  if (orgLike) {
+    result = result.filter((d) => d.org.toLowerCase().includes(orgLike))
   }
   const years = query.years ?? []
   if (years.length > 0) {
@@ -115,6 +123,7 @@ function filterDocs(docs: DocItem[], query: DocListQuery): DocItem[] {
   if (tags.length > 0) {
     result = result.filter((d) => tags.some((t) => d.tags.includes(t)))
   }
+  // 假数据里没有「所属方向」这一项（USE_MOCK 已关，这条只为结构对齐）
   const q = query.q?.trim()
   if (q) {
     result = result.filter((d) => d.title.includes(q) || d.org.includes(q))
@@ -169,7 +178,9 @@ async function getFacetsMock(query: DocListQuery): Promise<FacetsResponse> {
     orgs: countByValue(without('orgs'), (d) => d.org),
     years: countByValue(without('years'), (d) => String(d.year)).sort((a, b) => b.value.localeCompare(a.value)),
     tags: countByTag(without('tags')),
-    types: countByValue(MOCK_DOCS, (d) => d.type)
+    types: countByValue(MOCK_DOCS, (d) => d.type),
+    // 假数据没有所属方向（T8 的这条维度只在真实接口上有数据）
+    srcTables: []
   }
 }
 
@@ -189,9 +200,12 @@ const REPEAT_ARRAY = { paramsSerializer: { indexes: null } } as const
 function toHttpParams(query: DocListQuery): Record<string, unknown> {
   return {
     type: query.type || undefined,
-    org: query.orgs?.length ? query.orgs : undefined,
+    // T10：机构只传 orgLike（单值文本式）。精确多选的 `org` 后端仍支持，
+    // 但页面上的机构筛选已改文本式，这里不再发它（留着就是没人用的死参数）。
+    orgLike: query.orgLike?.trim() || undefined,
     year: query.years?.length ? query.years : undefined,
     tag: query.tags?.length ? query.tags : undefined,
+    srcTable: query.srcTables?.length ? query.srcTables : undefined,
     q: query.q?.trim() || undefined,
     page: query.page,
     pageSize: query.pageSize,
@@ -208,6 +222,15 @@ async function getFacetsHttp(query: DocListQuery): Promise<FacetsResponse> {
   const res = await http.get<FacetsResponse>('/docs/facets', { params: toHttpParams(query), ...REPEAT_ARRAY })
   return res.data
 }
+
+/* ------------------------------------------------------------------ *
+ * 【T10 已删除】机构下拉的远程搜索
+ * ------------------------------------------------------------------ *
+ * 原先有 `searchOrgs()`（走 `/docs/facets?orgSearch=`）给机构下拉做远程搜索。
+ * 机构的筛选已改成**文本式输入框**（输完按回车，按机构名包含匹配筛），
+ * 这个函数全局确认已无调用方，随之下线 —— 留着就是死代码。
+ * 后端的 `?orgSearch=` 参数**保留未删**（老接口，别的调用方可能还在用）。
+ */
 
 async function getDocDetailHttp(id: string): Promise<DocDetail | null> {
   const res = await http.get<DocDetail>(`/docs/${id}`, { silent: true })

@@ -10,8 +10,15 @@
  *
  * 注意：`preview` / `download` / `search` 已经由后端在对应接口自动记了，
  * 前端**不要重复上报**这三类，否则看板会翻倍。
+ *
+ * 🔴 T11（2026-10-14）：本文件是**前端埋点的唯一出口**，所以「带上账号」只在这一处注入
+ *    —— 调用方（router 的 page_view、feedback.ts 的 feedback_submit）不用各自传。
+ *    取值：localStorage 里的登录 token（`zwp.token`）解析 JWT 的 `sub`，也就是用户 id；
+ *    没有 token / 解析不出来 → null（**绝不编造 id**，游客就是游客）。
+ *    未登录事件本身不上 JWT：注入的是**用户 id**，不是凭证。
  */
-import http from './http'
+import http, { TOKEN_KEY } from './http'
+import { userIdFromToken } from '../utils/tokenUserId'
 
 /** 与后端白名单一一对应（docs/接口约定.md） */
 export const TRACK_EVENTS = [
@@ -82,12 +89,29 @@ function sessionId(): string {
   }
 }
 
+/**
+ * 当前登录用户的 id。
+ *
+ * 键名来自 `api/http.ts` 的 `TOKEN_KEY`（不写字面量：改键名时两处不会对不上）；
+ * 解 `sub` 的活儿在 `utils/tokenUserId.ts`（纯函数，可单测）。
+ * 拿不到就 null —— 未登录 / token 坏了 / 不是本项目签的，都按「游客」记，
+ * 绝不猜一个 id 填上去（编出来的 id 会把统计口径彻底带歪）。
+ */
+function currentUserId(): string | null {
+  try {
+    return userIdFromToken(localStorage.getItem(TOKEN_KEY))
+  } catch {
+    return null
+  }
+}
+
 /** 上报一条事件。**永远 resolve**，调用方直接 `void trackEvent(...)` 即可。 */
 export async function trackEvent(input: TrackEventInput): Promise<void> {
   await send({
     event: input.event,
     sessionId: sessionId(),
-    userId: input.userId ?? null,
+    // 调用方显式给了就用它的，没给（或给了 null）就在这里统一注入当前账号
+    userId: input.userId ?? currentUserId(),
     path: input.path ?? '',
     payload: input.payload ?? {}
   })
@@ -97,10 +121,11 @@ export async function trackEvent(input: TrackEventInput): Promise<void> {
 export async function trackBatch(inputs: readonly TrackEventInput[]): Promise<void> {
   if (inputs.length === 0) return
   const sid = sessionId()
+  const uid = currentUserId()
   const body = inputs.map((input) => ({
     event: input.event,
     sessionId: sid,
-    userId: input.userId ?? null,
+    userId: input.userId ?? uid,
     path: input.path ?? '',
     payload: input.payload ?? {}
   }))

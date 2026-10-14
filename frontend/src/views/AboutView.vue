@@ -14,11 +14,24 @@ import { computed, onMounted, ref } from 'vue'
 import { getOverview } from '../api/overview'
 import type { DocOverview } from '../api/types'
 import FeedbackForm from '../components/FeedbackForm.vue'
+import { useGuestPermissions } from '../composables/useGuestPermissions'
 import { formatBytes, formatCount, formatYearSpan } from '../utils/format'
 
 const overview = ref<DocOverview | null>(null)
 
+/**
+ * 反馈入口要跟着 T11 的「游客权限」开关走。
+ *
+ * ⚠️ 这是合并时补上的一道：本页的表单是数据导出那批新增的，而 T11 的游客权限开关
+ *    （设置页可关「游客反馈」）比它更早落地 —— 不接这一道，后台关了开关这里照样能提交，
+ *    那个开关就成了摆设。置灰只是体验，后端 POST /api/feedback 也会读同一份配置真拦。
+ */
+const { ensure: ensureGuestPermissions, guestAllowed } = useGuestPermissions()
+
+const feedbackAllowed = computed(() => guestAllowed('feedback'))
+
 onMounted(() => {
+  void ensureGuestPermissions()
   void getOverview().then((data) => {
     overview.value = data
   })
@@ -212,8 +225,13 @@ const SECTIONS = [
 
       <!-- 反馈表单（2026-10-14 新增）：匿名可提交，联系方式选填。
            在此之前的「受理方式」一直是占位块里的待办项，等于给了承诺却没说怎么兑现。
-           表单提交后落 backend/data/feedback.jsonl，管理员可在后台导出。 -->
-      <FeedbackForm />
+           表单提交后落 backend/data/feedback.jsonl，管理员可在后台导出。
+           关闭时只给一句人话，不摊一个点不动的表单 —— 见 feedbackAllowed 的注释。 -->
+      <FeedbackForm v-if="feedbackAllowed" />
+      <p v-else class="hint">
+        访客反馈的在线提交当前已关闭（可由后台「设置 → 游客权限」开启）。
+        仍可通过页脚的反馈入口（需登录）联系我们。
+      </p>
 
       <!-- ⚠️ 占位：以下属于基金会对外口径，未确认前不填内容 -->
       <div class="todo zw-card zw-card--pad">
