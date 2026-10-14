@@ -30,6 +30,9 @@ import {
 import { readAgentSources } from '../weknora/agent-sse.js'
 import type { AskEvent, AskSource } from '../weknora/index.js'
 import { recordEvent } from '../track/store.js'
+import { bumpGuestAsk, countGuestAsk } from '../guest/ask-usage.js'
+import { userIdFromRequest } from '../guest/identity.js'
+import { loadGuestPermissions } from '../guest/permissions.js'
 
 const router = Router()
 
@@ -77,9 +80,43 @@ function parseAskBody(raw: unknown): AskRequestBody | null {
   }
 }
 
-/** 开关：提问是否需要登录（默认 false = 访客免注册可问） */
-function requireLoginForAsk(): boolean {
-  return (process.env.REQUIRE_LOGIN_FOR_ASK ?? '').trim().toLowerCase() === 'true'
+/**
+ * 🔴 T11：游客能不能问 AI，以及游客当天问了几次 —— **在开流之前**判定。
+ *
+ * 放在开流前的原因：流一旦开始，HTTP 状态码就发出去了改不了，
+ * 只能以 `error` 事件收尾 —— 那时用户已经看到「在思考」再被拒，体验最差。
+ *
+ * 口径（与全站其余「游客判定」同源，见 guest/identity.ts）：
+ *   - 「是不是游客」按 **JWT 校验通过** 判（不是只看有没有 Authorization 头），
+ *     凭证无效按游客处理（fail closed：判不出登录态时绝不放行）。
+ *   - `aiAsk` 关闭 → 403 `GUEST_ASK_CLOSED`。
+ *   - `aiAskDailyLimit > 0` 且当天用满 → 403 `GUEST_ASK_LIMIT_REACHED`；
+ *     **已登录用户完全不受限**（直接跳过这一段，也不消耗额度）。
+ *   - 计数在放行前 +1：被拒的请求不消耗额度。
+ */
+function allowGuestAsk(req: Request, askerId: string | null): { ok: true } | { ok: false; status: number; code: string; message: string } {
+  if (askerId) return { ok: true }
+
+  const permissions = loadGuestPermissions()
+  if (!permissions.aiAsk) {
+    return { ok: false, status: 403, code: 'GUEST_ASK_CLOSED', message: 'AI 问答暂未对游客开放，请登录后使用' }
+  }
+
+  const limit = permissions.aiAskDailyLimit
+  if (limit > 0) {
+    const used = countGuestAsk(req)
+    if (used >= limit) {
+      return {
+        ok: false,
+        status: 403,
+        code: 'GUEST_ASK_LIMIT_REACHED',
+        message: `游客每天可提问 ${limit} 次，今天已用完，请登录后继续提问`
+      }
+    }
+    // 放行前记一次（引擎后来报错也算用掉：限流防的是刷，不是失败补偿）
+    bumpGuestAsk(req)
+  }
+  return { ok: true }
 }
 
 /** 每条事件按 SSE 规范写成 `data: {json}\n\n`（curl -N 能实时看到） */
@@ -122,15 +159,17 @@ async function handleAsk(req: Request, res: Response): Promise<void> {
     return
   }
 
-  // 提问是否需登录：开关关着（默认）就不校验，访客可直接问
-  if (requireLoginForAsk() && !req.headers.authorization) {
-    // ⚠️ 这里只做「有没有带凭证」的粗判。开关打开后若要真校验 JWT，
-    //    应由月月的 auth 模块提供中间件挂到这里（属接口对接，不是本模块能自证的）。
-    res.status(401).json({
+  // 🔴 T11：游客权限真拦（开流前）。已登录用户不受开关与次数限制。
+  //    askerId 同时用于本次问答的埋点归属（T11-B：埋点必须带上账号）。
+  const askerId = userIdFromRequest(req)
+  const gate = allowGuestAsk(req, askerId)
+  if (!gate.ok) {
+    // 形状与开流前的其它错误一致：前端 api/ask.ts 的 readErrorMessage 读 content 字段
+    res.status(gate.status).json({
       success: false,
       type: 'error',
-      content: '提问需要登录',
-      error: { code: 'LOGIN_REQUIRED', message: '提问需要登录' }
+      content: gate.message,
+      error: { code: gate.code, message: gate.message }
     })
     return
   }
@@ -307,9 +346,13 @@ async function handleAsk(req: Request, res: Response): Promise<void> {
   } finally {
     // 无答案口径只在这一处落库：正常收尾且正文为空 = 引擎没答上来（noAnswer=true）；
     // 有正文 = 有答案（false）；出错/中途断开 = 判不了（null，进 unjudged）
+    //
+    // 🔴 T11-B：userId 必须带上 —— 提问是服务端埋点，不带的话「使用明细」里
+    //    每个账号的提问次数永远是 0（全部落进「游客」组）。游客仍是 null（不编造 id）。
     const finishedNormally = !failed && !clientGone.signal.aborted
     recordEvent({
       event: 'ai_ask',
+      userId: askerId,
       path: '/api/ask',
       payload: {
         query: body.query,

@@ -41,6 +41,8 @@ import {
   srcTableLabel
 } from '../data/orgs.js'
 import { recordEvent } from '../track/store.js'
+import { userIdFromRequest } from '../guest/identity.js'
+import { loadGuestPermissions } from '../guest/permissions.js'
 
 const router = Router()
 
@@ -292,6 +294,29 @@ function guard(handler: Handler): (req: Request, res: Response) => void {
   }
 }
 
+/**
+ * 🔴 T11：游客权限**在后端真拦**。
+ *
+ * 为什么不能只在前端置灰：懂行的人直接 curl 接口照样能拿走文件。
+ * 所以预览/下载在**打开文件流之前**先问一次「这个人是不是游客、这一项开不开」。
+ *
+ * 返回 true = 放行；false = 已经写过 403，直接 return。
+ * 登录判定走 guest/identity.ts（JWT 校验通过才算登录，凭证无效按游客处理）。
+ */
+function allowGuest(req: Request, res: Response, feature: 'preview' | 'download'): boolean {
+  const userId = userIdFromRequest(req)
+  if (userId) return true
+  if (loadGuestPermissions()[feature]) return true
+
+  const label = feature === 'preview' ? '在线预览' : '下载原件'
+  const code = feature === 'preview' ? 'GUEST_PREVIEW_CLOSED' : 'GUEST_DOWNLOAD_CLOSED'
+  res.status(403).json({
+    success: false,
+    error: { code, message: `${label}需要登录后使用，请先登录` }
+  })
+  return false
+}
+
 /* ------------------------------------------------------------------ *
  * 路由
  * ------------------------------------------------------------------ */
@@ -338,10 +363,14 @@ router.get(
 
     // 埋点：带 q 的列表请求就是一次搜索。放服务端记比让前端记得更准
     // （前端漏报、被绕过都算得出来），且零结果率可直接用于「该补什么资料」。
+    //
+    // 🔴 T11-B：userId 一并带上（游客为 null）——看板 UV 的口径本就是
+    //    「按 userId ?? sessionId 去重」，不带就等于把登录用户记成了匿名会话。
     if (query.q) {
       recordEvent({
         event: 'search',
         source: 'server',
+        userId: userIdFromRequest(req),
         path: '/api/docs',
         payload: { term: query.q, zeroResult: total === 0, hits: total }
       })
@@ -374,14 +403,20 @@ router.get(
  * 顺带埋一条 preview（source: 'server'）——预览是「打开就发生」的动作，
  * 放服务端记比让前端记得更准（前端漏报、被绕过都算得出来）。埋点写在
  * recordEvent 内部已吞掉所有异常，绝不影响文件流。
+ *
+ * 🔴 T11：先过游客权限（默认游客可预览，关掉后未登录直接 403）；
+ *    T11-B：埋点带上 userId（游客为 null），数据面板的「使用明细」才分得出账号。
  */
 router.get(
   '/:id/preview',
   guard(async (req, res) => {
+    if (!allowGuest(req, res, 'preview')) return
+    const userId = userIdFromRequest(req)
     const file = await getFileStream(req.params.id, 'inline')
     recordEvent({
       event: 'preview',
       source: 'server',
+      userId,
       path: '/api/docs/:id/preview',
       payload: { docId: req.params.id, fileName: file.fileName, size: file.size }
     })
@@ -393,16 +428,24 @@ router.get(
   })
 )
 
-/** 下载原件：文件名按契约「年份-机构-标题」；顺带埋一条 download（权威计数口径） */
+/**
+ * 下载原件：文件名按契约「年份-机构-标题」；顺带埋一条 download（权威计数口径）。
+ *
+ * 🔴 T11：游客权限默认为**关**（下载是「拿走」，要留痕引导注册），未登录直接 403；
+ *    T11-B：埋点带上 userId。
+ */
 router.get(
   '/:id/download',
   guard(async (req, res) => {
+    if (!allowGuest(req, res, 'download')) return
+    const userId = userIdFromRequest(req)
     const doc = await getDoc(req.params.id)
     const file = await getFileStream(req.params.id, 'attachment')
     const downloadName = buildDownloadName(doc)
     recordEvent({
       event: 'download',
       source: 'server',
+      userId,
       path: '/api/docs/:id/download',
       payload: { docId: doc.id, fileName: downloadName, size: file.size }
     })

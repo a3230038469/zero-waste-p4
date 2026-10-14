@@ -4,6 +4,7 @@
  * 鉴权：口令走 X-Admin-Token 请求头；口令只存在浏览器本地，不写进代码、不进 git。
  */
 import http from './http'
+import type { GuestPermissionsPayload } from './guest'
 
 /** 口令在 localStorage 的键名（与统计看板共用同一个） */
 export const ADMIN_TOKEN_KEY = 'zwp.adminToken'
@@ -482,6 +483,104 @@ export async function saveAgentConfig(
     headers: { 'X-Admin-Token': token },
     silent: true,
     timeout: 60_000
+  })
+  return res.data
+}
+
+/* ------------------------------------------------------------------ *
+ * 游客权限（T11：设置页第 4 块）
+ * ------------------------------------------------------------------ *
+ *
+ * 响应体类型与公众端那条公开只读口径**共用同一份定义**（api/guest.ts），
+ * 两边各写一份类型，早晚会漂 —— 开关清单与顺序由后端下发，前端不自己抄。
+ */
+
+/** 读游客权限（开关清单 + 当前值）。需要 X-Admin-Token */
+export async function fetchGuestPermissions(token: string): Promise<GuestPermissionsPayload> {
+  const res = await http.get<GuestPermissionsPayload>('/admin/guest-permissions', {
+    headers: { 'X-Admin-Token': token },
+    silent: true
+  })
+  return res.data
+}
+
+/** 保存请求体：字段全可选，只改传了的那些（`browse` 是只读项，传了也忽略） */
+export type GuestPermissionPatch = Partial<{
+  aiAsk: boolean
+  aiAskDailyLimit: number
+  preview: boolean
+  share: boolean
+  feedback: boolean
+  download: boolean
+}>
+
+/** 回读校验的一项（与智能体 / 解析引擎设置同一套写法：哪一项没过就写哪一项） */
+export interface GuestPermissionCheck {
+  key: string
+  label: string
+  expected: string
+  actual: string
+  ok: boolean
+}
+
+export interface GuestPermissionSaveResult {
+  /** 全部回读校验通过才是 true；false 时看 message 与 checks（已写入，只是有项没生效） */
+  success: boolean
+  message: string
+  /** 本次真正改动过的键（空数组 = 值都一样） */
+  changed: string[]
+  /** 被忽略的键（如只读的 browse、拼错的键） */
+  ignored: string[]
+  checks: GuestPermissionCheck[]
+  /** 回读后的配置视图 */
+  config: GuestPermissionsPayload
+}
+
+/** 保存游客权限。后端会「写盘 → 重新读一遍 → 逐项校验」 */
+export async function saveGuestPermissions(
+  token: string,
+  patch: GuestPermissionPatch
+): Promise<GuestPermissionSaveResult> {
+  const res = await http.put<GuestPermissionSaveResult>('/admin/guest-permissions', patch, {
+    headers: { 'X-Admin-Token': token },
+    silent: true,
+    timeout: 30_000
+  })
+  return res.data
+}
+
+/* ------------------------------------------------------------------ *
+ * 使用明细（T11-C：数据面板末尾那块）
+ * ------------------------------------------------------------------ */
+
+/** 表里的一行 = 一个账号（`userId: null` 即游客，后端已把 name 填成「游客」） */
+export interface UsageDetailRow {
+  userId: string | null
+  name: string
+  org: string
+  ai_ask: number
+  preview: number
+  download: number
+  total: number
+}
+
+export interface UsageDetailPayload {
+  success: boolean
+  /** YYYY-MM-DD（本地时区） */
+  date: string
+  rows: UsageDetailRow[]
+  totals: { ai_ask: number; preview: number; download: number }
+}
+
+/**
+ * 读某一天的使用明细（省略 date = 今天）。
+ * 🔴 与 /track/stats 一样是独立接口：本看板的既有统计口径一个字都没动。
+ */
+export async function fetchUsageDetail(token: string, date = ''): Promise<UsageDetailPayload> {
+  const res = await http.get<UsageDetailPayload>('/admin/usage-detail', {
+    headers: { 'X-Admin-Token': token },
+    params: date ? { date } : {},
+    silent: true
   })
   return res.data
 }

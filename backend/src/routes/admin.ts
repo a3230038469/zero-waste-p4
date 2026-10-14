@@ -14,7 +14,8 @@
  * 已实现：列出资料、上传资料、删除资料、查看注册用户（T1 三项已补齐）、
  *         问答设置 GET/PUT /qa-settings（T3，2026-10-10）、
  *         解析失败一键重新上传（T6，2026-10-12）、
- *         智能体设置 GET/PUT /agent（T7，2026-10-13）。
+ *         智能体设置 GET/PUT /agent（T7，2026-10-13）、
+ *         游客权限 GET/PUT /guest-permissions + 使用明细 GET /usage-detail（T11，2026-10-14）。
  */
 import { PrismaClient } from '@prisma/client'
 import express, { Router, type NextFunction, type Request, type Response } from 'express'
@@ -37,6 +38,19 @@ import {
 } from '../weknora/parser-config.js'
 import { EngineError } from '../weknora/types.js'
 import { baseNameOf, unzipFirstEntry } from '../weknora/zip.js'
+import { localDateKey } from '../guest/ask-usage.js'
+import {
+  guestPermissionsPayload,
+  parseGuestPermissionPatch,
+  saveGuestPermissions,
+  type GuestPermissionPatch
+} from '../guest/permissions.js'
+import {
+  buildUsageDetail,
+  isValidDateKey,
+  type UserDirectory
+} from '../guest/usage-detail.js'
+import { readEvents } from '../track/store.js'
 import {
   QA_STYLES,
   REASONING_EFFORTS,
@@ -1458,6 +1472,125 @@ router.post('/selfcheck', requireAdmin, async (_req: Request, res: Response) => 
     generatedAt: new Date().toISOString(),
     items
   })
+})
+
+/* ------------------------------------------------------------------ *
+ * 游客权限（T11：设置页第 4 块）
+ * ------------------------------------------------------------------ *
+ *
+ *   GET /api/admin/guest-permissions   开关清单（含默认值 + 说明）+ 当前值
+ *   PUT /api/admin/guest-permissions   只改传了的项；写完**回读校验**再返回
+ *
+ * 开关清单与顺序是**后端的真相**（guest/permissions.ts 的 GUEST_SWITCHES），
+ * 前端照 `switches[]` 的顺序渲染，不自己抄一份 —— 两处各抄一份早晚漂。
+ *
+ * 🔴 真正的拦截在路由层（routes/ask.ts / docs.ts / track.ts），本接口只管配置值。
+ *    `browse` 是只读项：提交了也忽略（最低门槛入口，不能关）。
+ */
+router.get('/guest-permissions', async (req: Request, res: Response) => {
+  if (!assertAdmin(req, res)) return
+  try {
+    res.json(guestPermissionsPayload())
+  } catch (err) {
+    sendEngineFailure(res, err, '读游客权限失败')
+  }
+})
+
+router.put('/guest-permissions', requireAdmin, async (req: Request, res: Response) => {
+  let patch: GuestPermissionPatch
+  let ignored: string[]
+  try {
+    const parsed = parseGuestPermissionPatch(req.body)
+    patch = parsed.patch
+    ignored = parsed.ignored
+  } catch (err) {
+    // 参数不合法：400 + 一句人话（不猜、不兜底改写 —— 存了个错的却以为存上了更糟）
+    const message = err instanceof Error ? err.message : '参数不合法'
+    res.status(400).json({
+      success: false,
+      error: { code: 'INVALID_GUEST_PERMISSION', message: `游客权限参数不合法：${message}` }
+    })
+    return
+  }
+
+  try {
+    const result = saveGuestPermissions(patch)
+    const failed = result.checks.filter((c) => !c.ok)
+    res.json({
+      success: failed.length === 0,
+      message:
+        failed.length === 0
+          ? `已保存并生效（改了 ${result.changed.length} 项：${
+              result.changed.length > 0 ? result.changed.join('、') : '无变化'
+            }），回读校验全过`
+          : '已写入，但回读校验没过，请看下面的逐项结果',
+      changed: result.changed,
+      ignored,
+      checks: result.checks,
+      config: guestPermissionsPayload(result.settings)
+    })
+  } catch (err) {
+    sendEngineFailure(res, err, '保存游客权限失败')
+  }
+})
+
+/* ------------------------------------------------------------------ *
+ * 使用明细（T11-C：数据面板末尾那一块）
+ * ------------------------------------------------------------------ *
+ *
+ *   GET /api/admin/usage-detail?date=YYYY-MM-DD   省略 date = 今天
+ *
+ * 数据源只有本地埋点文件（track/store.ts 的 readEvents），**不打引擎**。
+ * 只统计 ai_ask / preview / download 三类，按账号分组；`userId=null` 归到「游客」组、
+ * 固定排在最后。name/org 去 SQLite 的 User 表补上，**查不到就留空，不报错**。
+ *
+ * 🔴 文件不存在/为空/坏行 → 返回空表，**绝不能 500**（看板是用来看的）。
+ * 🔴 本接口不改 /api/track/stats 的任何口径：韶茹那块统计逻辑一个字都没动。
+ */
+router.get('/usage-detail', async (req: Request, res: Response) => {
+  if (!assertAdmin(req, res)) return
+
+  const rawDate = typeof req.query.date === 'string' ? req.query.date.trim() : ''
+  const date = rawDate || localDateKey()
+  if (!isValidDateKey(date)) {
+    res.status(400).json({
+      success: false,
+      error: { code: 'INVALID_DATE', message: `日期格式应为 YYYY-MM-DD，收到：${rawDate}` }
+    })
+    return
+  }
+
+  try {
+    const events = readEvents()
+    const detail = buildUsageDetail(events, date)
+
+    // 账号档案：只有真的出现在表里的 id 才去查（查不到留空，绝不因为库读不出来就 500）
+    const ids = detail.rows.map((row) => row.userId).filter((id): id is string => id !== null)
+    if (ids.length > 0) {
+      try {
+        const users = await prisma.user.findMany({
+          where: { id: { in: ids } },
+          select: { id: true, name: true, org: true }
+        })
+        const directory: UserDirectory = new Map(
+          users.map((u) => [u.id, { name: u.name, org: u.org }])
+        )
+        res.json(buildUsageDetail(events, date, directory))
+        return
+      } catch (err) {
+        // 用户表读不出来（如尚未 db:push）→ 照常返回表，只是姓名/机构留空
+        const message = err instanceof Error ? err.message : '未知错误'
+        console.warn(`[admin] 读用户档案失败（姓名/机构留空，不影响明细）：${message}`)
+      }
+    }
+
+    res.json(detail)
+  } catch (err) {
+    // 埋点文件坏到连读都读不了：给一句人话 + 空表，别让看板整页报错
+    const message = err instanceof Error ? err.message : '未知错误'
+    console.error(`[admin] 读使用明细失败（已忽略，返回空表）：${message}`)
+    res.json({ success: true, date, rows: [], totals: { ai_ask: 0, preview: 0, download: 0 } })
+  }
 })
 
 export default router

@@ -22,6 +22,11 @@
  * 里各记一条（见 backend/src/routes/docs.ts），前端不必重复上报。
  * 反馈复用别人的 `feedback_submit` 事件（已在白名单里）；分享动作**不新增埋点**，
  * 避免动到别人的事件白名单。
+ *
+ * 🔴 T11（2026-10-14）：本页的预览 / 下载 / 分享 / 反馈四个入口改为**按游客权限联动**。
+ *    原来这里是「一律先登录才能用」，现在改成「登录用户一律放行；游客看后台那排开关」。
+ *    ⚠️ 置灰只是体验：后端（routes/docs.ts、routes/track.ts）也按同一份配置真拦，
+ *    绕过本页直接调接口照样被拒。
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -29,6 +34,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { LARGE_FILE_LIMIT, downloadDoc, getDocDetail, getDocs, getPreviewUrl, type DocDetail } from '../api/docs'
 import type { DocItem } from '../api/types'
 import { useAuth } from '../composables/useAuth'
+import { useGuestPermissions } from '../composables/useGuestPermissions'
+import type { GuestFeature } from '../api/guest'
 import DocCard from '../components/DocCard.vue'
 import FeedbackDialog from '../components/FeedbackDialog.vue'
 import ShareDialog from '../components/ShareDialog.vue'
@@ -37,6 +44,12 @@ import { formatBytes, formatYear } from '../utils/format'
 const route = useRoute()
 const router = useRouter()
 const { user, isLoggedIn, fetchMe } = useAuth()
+const { ensure: ensureGuestPermissions, guestAllowed } = useGuestPermissions()
+
+/** 某一项当前是否被锁（游客且该功能已关闭）—— 置灰用它 */
+function locked(feature: GuestFeature): boolean {
+  return !guestAllowed(feature)
+}
 
 const loading = ref(false)
 const doc = ref<DocDetail | null>(null)
@@ -58,8 +71,18 @@ const shareUrl = ref('')
 const SITE_TITLE = '零废弃知识库'
 
 function openShare(): void {
-  shareUrl.value = window.location.href
-  shareVisible.value = true
+  void requireAccess('share').then((ok) => {
+    if (!ok) return
+    shareUrl.value = window.location.href
+    shareVisible.value = true
+  })
+}
+
+/** 打开资料级反馈弹窗（游客反馈被关时引导去登录） */
+function openFeedback(): void {
+  void requireAccess('feedback').then((ok) => {
+    if (ok) feedbackVisible.value = true
+  })
 }
 
 async function fetchDetail(): Promise<void> {
@@ -116,19 +139,26 @@ function contentParagraphs(content: string | null | undefined): string[] {
 
 /** 登录校验：未登录跳登录页并带回跳地址。
  *  门槛只看 isLoggedIn（本地有 token 即算登录），不看 user：
- *  云端 /me 可能取不回用户信息，若卡 user 会让已登录用户点不动下载/预览。 */
-async function requireLogin(): Promise<boolean> {
+ *  云端 /me 可能取不回用户信息，若卡 user 会让已登录用户点不动下载/预览。
+ *
+ *  🔴 T11：多带一个功能键 —— 游客能不能用这一项，看后台的「游客权限」开关。
+ *    开关开着 → 直接放行（以前这里是「一律先登录」，与开关就矛盾了）；
+ *    开关关了 → 说一句人话并引导去登录页。
+ *    已登录用户不看任何开关。 */
+async function requireAccess(feature: GuestFeature): Promise<boolean> {
   if (isLoggedIn.value) {
     if (!user.value) await fetchMe()
     return true
   }
+  if (guestAllowed(feature)) return true
+  ElMessage.warning('该功能需要登录后使用，已为你跳到登录页')
   void router.push({ path: '/auth', query: { redirect: route.fullPath } })
   return false
 }
 
 /** 在线预览：先取回文件，失败给出中文原因（iframe 自己拿不到状态码） */
 async function onPreview(): Promise<void> {
-  if (!doc.value || !(await requireLogin())) return
+  if (!doc.value || !(await requireAccess('preview'))) return
   if (doc.value.size > LARGE_FILE_LIMIT) {
     ElMessage.warning(`文件较大（${formatBytes(doc.value.size)}），建议下载后查看`)
     return
@@ -147,7 +177,7 @@ async function onPreview(): Promise<void> {
 
 /** 下载原件：超 20MB 先确认。成功才提示成功，失败把原因说清楚 */
 async function onDownload(): Promise<void> {
-  if (!doc.value || !(await requireLogin())) return
+  if (!doc.value || !(await requireAccess('download'))) return
   if (doc.value.size > LARGE_FILE_LIMIT) {
     try {
       await ElMessageBox.confirm(
@@ -169,6 +199,7 @@ async function onDownload(): Promise<void> {
 
 /** 复制本页链接（对外站点的主要分享动作） */
 async function onCopyLink(): Promise<void> {
+  if (!(await requireAccess('share'))) return
   const url = window.location.href
   try {
     if (navigator.clipboard?.writeText) {
@@ -202,6 +233,8 @@ const previewHint = computed(() =>
 
 onMounted(() => {
   void fetchDetail()
+  // T11：读一次游客权限，用来决定预览/下载/分享/反馈要不要置灰
+  void ensureGuestPermissions()
 })
 
 onUnmounted(() => {
@@ -290,11 +323,34 @@ watch(
         </p>
 
         <div class="doc-actions">
-          <el-button type="primary" :loading="previewLoading" @click="onPreview">在线预览</el-button>
-          <el-button type="primary" plain @click="onDownload">下载原件</el-button>
-          <el-button text @click="onCopyLink">复制分享链接</el-button>
-          <el-button text @click="openShare">分享二维码</el-button>
+          <el-button
+            type="primary"
+            :loading="previewLoading"
+            :class="{ 'need-login': locked('preview') }"
+            @click="onPreview"
+          >
+            在线预览
+          </el-button>
+          <el-button
+            type="primary"
+            plain
+            :class="{ 'need-login': locked('download') }"
+            @click="onDownload"
+          >
+            下载原件
+          </el-button>
+          <el-button text :class="{ 'need-login': locked('share') }" @click="onCopyLink">
+            复制分享链接
+          </el-button>
+          <el-button text :class="{ 'need-login': locked('share') }" @click="openShare">
+            分享二维码
+          </el-button>
         </div>
+
+        <!-- T11：被关掉的功能，在这里说清「为什么点不动」 -->
+        <p v-if="locked('preview') || locked('download') || locked('share')" class="action-hint need-login-hint">
+          置灰的按钮需要登录后使用（站点当前对游客关闭了这些功能），点一下会跳到登录页。
+        </p>
 
         <p class="action-hint">{{ previewHint }}</p>
 
@@ -327,9 +383,15 @@ watch(
         <!-- 反馈入口：访客发现条目有误 / 文件打不开时的出口（B09） -->
         <p class="feedback-entry">
           标题、机构、年份有误，或文件打不开？
-          <button type="button" class="feedback-link" @click="feedbackVisible = true">
+          <button
+            type="button"
+            class="feedback-link"
+            :class="{ 'need-login': locked('feedback') }"
+            @click="openFeedback"
+          >
             反馈这份资料
           </button>
+          <span v-if="locked('feedback')" class="feedback-hint">（当前需登录后提交）</span>
         </p>
 
         <FeedbackDialog
@@ -508,6 +570,18 @@ watch(
   margin: 10px 0 0;
   font-size: 12px;
   color: var(--zw-faint);
+}
+
+/* T11：游客权限关闭后的「置灰 + 提示」样式（只影响这几个入口，不动别的按钮） */
+.need-login {
+  opacity: 0.55;
+}
+.need-login-hint {
+  color: var(--zw-amber);
+}
+.feedback-hint {
+  color: var(--zw-amber);
+  margin-left: 4px;
 }
 
 .doc-content {

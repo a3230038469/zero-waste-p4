@@ -11,20 +11,44 @@
  *
  * 2026-10-12（B09）：补「意见反馈」入口——页脚是访客找不到路时的最后一站，
  * 站点级反馈放这里最合适；弹窗与资料详情页共用同一组件。
+ *
+ * 🔴 T11（2026-10-14）：反馈入口按「游客权限」的 feedback 开关联动 ——
+ *    关闭时按钮置灰，点一下提示并跳登录页（后端也会拒收游客的反馈）。
  */
 import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { getOverview } from '../api/overview'
+import { useGuestPermissions } from '../composables/useGuestPermissions'
 import { formatCount } from '../utils/format'
 import FeedbackDialog from './FeedbackDialog.vue'
+
+const router = useRouter()
+const { ensure: ensureGuestPermissions, guestAllowed } = useGuestPermissions()
 
 const total = ref<number | null>(null)
 /** 站点级反馈弹窗 */
 const feedbackVisible = ref(false)
 
+/** 反馈是否对当前访客关闭（已登录用户一律放行） */
+function feedbackLocked(): boolean {
+  return !guestAllowed('feedback')
+}
+
+function openFeedback(): void {
+  if (!feedbackLocked()) {
+    feedbackVisible.value = true
+    return
+  }
+  ElMessage.warning('意见反馈需要登录后提交，已为你跳到登录页')
+  void router.push({ path: '/auth' })
+}
+
 onMounted(() => {
   void getOverview().then((data) => {
     if (data) total.value = data.total
   })
+  void ensureGuestPermissions()
 })
 </script>
 
@@ -54,7 +78,14 @@ onMounted(() => {
         <h4>使用</h4>
         <RouterLink to="/about#data">数据来源与口径</RouterLink>
         <RouterLink to="/about#cite">引用与转载</RouterLink>
-        <button type="button" class="foot-link-btn" @click="feedbackVisible = true">意见反馈</button>
+        <button
+          type="button"
+          class="foot-link-btn"
+          :class="{ 'need-login': feedbackLocked() }"
+          @click="openFeedback"
+        >
+          意见反馈
+        </button>
         <RouterLink to="/about#contact">联系与共建</RouterLink>
       </div>
 
@@ -157,6 +188,11 @@ onMounted(() => {
 .foot-link-btn:hover {
   color: var(--zw-green-deep);
   text-decoration: underline;
+}
+
+/* T11：游客权限把反馈关掉时的置灰（仍可点，会提示并跳登录页） */
+.foot-link-btn.need-login {
+  opacity: 0.55;
 }
 
 .foot-admin {

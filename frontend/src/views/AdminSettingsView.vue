@@ -25,17 +25,21 @@ import {
   ADMIN_TOKEN_KEY,
   checkParserConfig,
   fetchAgentConfig,
+  fetchGuestPermissions,
   fetchParserConfig,
   runSelfcheck,
   saveAgentConfig,
+  saveGuestPermissions,
   saveParserConfig,
   type AgentCheck,
   type AgentConfigPayload,
+  type GuestPermissionCheck,
   type ParserConfigPayload,
   type ParserEngineInfo,
   type ParserFieldCheck,
   type SelfcheckItem
 } from '../api/admin'
+import { GUEST_FALLBACK_VALUES, type GuestPermissionValues, type GuestSwitchItem } from '../api/guest'
 
 /* ------------------------------------------------------------------ *
  * 口令（与资料管理页同一套：X-Admin-Token，存在 localStorage）
@@ -367,6 +371,100 @@ async function runCheck(): Promise<void> {
 }
 
 /* ------------------------------------------------------------------ *
+ * 4️⃣ 游客权限（T11：设置页第 4 块）
+ * ------------------------------------------------------------------ *
+ *
+ * 这一块与前三块的性质不同，必须说清：
+ *   - 前三块改的是**引擎**（智能体 / 解析引擎），失败会体现在「哪一项没生效」；
+ *   - 游客权限改的是**我们自己的一个小 JSON**（backend/data/guest-permissions.json）。
+ *
+ * 清单与顺序**由后端下发**（switches[]），前端只照着渲染 —— 两处各抄一份文案与顺序，
+ * 早晚漂（这块在 T10 的解析引擎设置上已经吃过一次亏）。
+ *
+ * 🔴 前端只是「把按钮置灰」这层体验，**真正的拦截在后端**
+ *    （routes/ask.ts / docs.ts / track.ts）。绕过前端直接调接口照样按同一份配置拒绝。
+ */
+const guestLoading = ref(false)
+const guestSaving = ref(false)
+const guestError = ref('')
+/** 开关清单（后端下发；取不到时给一份兜底，保证这一块不至于空白） */
+const guestSwitches = ref<GuestSwitchItem[]>([
+  { key: 'browse', label: '浏览书架与搜索', hint: '取不到后端的开关清单。', type: 'readonly', default: true, editable: false }
+])
+/** 正在编辑的值 */
+const guestForm = ref<GuestPermissionValues>({ ...GUEST_FALLBACK_VALUES })
+/** 已保存、正在生效的值 */
+const guestSaved = ref<GuestPermissionValues>({ ...GUEST_FALLBACK_VALUES })
+const guestSavedAt = ref('')
+/** 上一次保存后的回读校验结果 */
+const guestChecks = ref<GuestPermissionCheck[]>([])
+
+function applyGuestView(d: {
+  switches: GuestSwitchItem[]
+  values: GuestPermissionValues
+  updatedAt: string
+}): void {
+  if (d.switches && d.switches.length > 0) guestSwitches.value = d.switches
+  guestForm.value = { ...GUEST_FALLBACK_VALUES, ...d.values }
+  guestSaved.value = { ...guestForm.value }
+  guestSavedAt.value = d.updatedAt ?? ''
+}
+
+async function loadGuest(): Promise<void> {
+  if (!token.value) return
+  guestLoading.value = true
+  guestError.value = ''
+  try {
+    applyGuestView(await fetchGuestPermissions(token.value))
+  } catch (err) {
+    guestError.value = errorMessage(err, '游客权限拉取失败，看看后端（:4000）在不在。')
+  } finally {
+    guestLoading.value = false
+  }
+}
+
+/** 保存：只提交「可改的键」，`browse` 是只读项，传了后端也会忽略 */
+async function submitGuest(): Promise<void> {
+  if (!token.value) {
+    ElMessage.warning('先输入管理口令并点「进入」')
+    return
+  }
+  guestSaving.value = true
+  try {
+    const result = await saveGuestPermissions(token.value, {
+      aiAsk: guestForm.value.aiAsk,
+      aiAskDailyLimit: guestForm.value.aiAskDailyLimit,
+      preview: guestForm.value.preview,
+      share: guestForm.value.share,
+      feedback: guestForm.value.feedback,
+      download: guestForm.value.download
+    })
+    applyGuestView(result.config)
+    guestChecks.value = result.checks ?? []
+    const failed = guestChecks.value.filter((c) => !c.ok)
+    if (failed.length > 0) {
+      ElMessage.error('已写入，但回读校验没过，请看下面的逐项结果')
+    } else {
+      ElMessage.success(result.message || '已保存，游客权限立刻生效')
+    }
+    if (result.ignored && result.ignored.length > 0) {
+      ElMessage.warning(`这几项没有开关、已被忽略：${result.ignored.join('、')}`)
+    }
+  } catch (err) {
+    ElMessage.error(errorMessage(err, '保存失败，看看后端（:4000）在不在'))
+    // 存失败也要让老师看到「现在生效的是什么」——重新拉一次，别让表单停在半改状态
+    await loadGuest()
+  } finally {
+    guestSaving.value = false
+  }
+}
+
+/** 某个键这一行当前是不是「关」了（界面上标红用） */
+function guestOff(key: string): boolean {
+  return guestForm.value[key as keyof GuestPermissionValues] === false
+}
+
+/* ------------------------------------------------------------------ *
  * 口令门
  * ------------------------------------------------------------------ */
 
@@ -389,7 +487,7 @@ async function enterAdmin(): Promise<void> {
   } finally {
     entering.value = false
   }
-  await Promise.all([loadAgent(), loadParser(), runCheck()])
+  await Promise.all([loadAgent(), loadParser(), runCheck(), loadGuest()])
 }
 
 onMounted(() => {
@@ -399,6 +497,7 @@ onMounted(() => {
     void loadAgent()
     void loadParser()
     void runCheck()
+    void loadGuest()
   }
 })
 </script>
@@ -688,6 +787,107 @@ onMounted(() => {
       </div>
       <p v-else class="hint">还没自检过。点上面「开始自检」看这四项的状态。</p>
     </el-card>
+
+    <!-- 4️⃣ 游客权限（T11） -->
+    <el-card shadow="never" class="block">
+      <div class="block-head">
+        <h3 class="block-title">游客权限</h3>
+        <span class="block-now">
+          不登录的访客能用哪些功能
+          <template v-if="guestSavedAt">· 最后保存 {{ guestSavedAt.slice(0, 16).replace('T', ' ') }}</template>
+        </span>
+      </div>
+
+      <p class="lead">
+        这些开关<b>在后端真拦</b>：关掉之后，即便有人绕过页面直接调接口，
+        后端也会拒绝（AI 问答 / 在线预览 / 下载原件 / 意见反馈四处都已接上）。
+        页面上的置灰只是提前告诉用户一句「要登录」。
+      </p>
+
+      <p v-if="guestError" class="warn">{{ guestError }}</p>
+
+      <div class="guest-list">
+        <div
+          v-for="item in guestSwitches"
+          :key="item.key"
+          class="guest-row"
+          :class="{ readonly: item.type === 'readonly' }"
+        >
+          <div class="guest-main">
+            <span class="guest-label">{{ item.label }}</span>
+            <p class="hint">{{ item.hint }}</p>
+          </div>
+
+          <div class="guest-ctl">
+            <!-- 只读项：不给开关，直接标「始终开放」 -->
+            <span v-if="item.type === 'readonly'" class="guest-ro">始终开放</span>
+
+            <!-- 每日上限：数字输入（0 = 不限） -->
+            <template v-else-if="item.type === 'number'">
+              <el-input-number
+                v-model="guestForm.aiAskDailyLimit"
+                :min="0"
+                :max="9999"
+                :step="1"
+                controls-position="right"
+                style="width: 150px"
+              />
+              <span class="guest-unit">次 / 天</span>
+            </template>
+
+            <!-- 开关 -->
+            <template v-else>
+              <el-switch
+                v-if="item.key === 'aiAsk'"
+                v-model="guestForm.aiAsk"
+                :loading="guestLoading"
+              />
+              <el-switch
+                v-else-if="item.key === 'preview'"
+                v-model="guestForm.preview"
+                :loading="guestLoading"
+              />
+              <el-switch
+                v-else-if="item.key === 'share'"
+                v-model="guestForm.share"
+                :loading="guestLoading"
+              />
+              <el-switch
+                v-else-if="item.key === 'feedback'"
+                v-model="guestForm.feedback"
+                :loading="guestLoading"
+              />
+              <el-switch v-else v-model="guestForm.download" :loading="guestLoading" />
+              <span class="guest-state" :class="guestOff(item.key) ? 'off' : 'on'">
+                {{ guestOff(item.key) ? '需登录' : '游客可用' }}
+              </span>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <p class="hint">
+        「我要投稿」固定要求登录，<b>不在这个清单里</b> —— 投稿要能联系到人。
+        另：后端环境变量 <code>REQUIRE_LOGIN_FOR_ASK</code> 已降级为
+        <b>「AI 问答」的初始默认值</b>，本页保存过一次之后就以这里为准。
+      </p>
+
+      <div class="foot">
+        <el-button type="primary" :loading="guestSaving" @click="submitGuest">
+          {{ guestSaving ? '保存中…' : '保存游客权限' }}
+        </el-button>
+        <span v-if="guestSaving" class="time">写盘后会重新读一遍逐项校验</span>
+      </div>
+
+      <div v-if="guestChecks.length" class="checks">
+        <div class="checks-title">保存后回读校验（后端重新读了一遍配置文件）</div>
+        <div v-for="c in guestChecks" :key="c.key" class="check" :class="c.ok ? 'ok' : 'bad'">
+          <span class="mark">{{ c.ok ? '通过' : '未通过' }}</span>
+          <span class="name">{{ c.label }}</span>
+          <span class="val">期望 {{ c.expected }} ／ 实际 {{ c.actual }}</span>
+        </div>
+      </div>
+    </el-card>
   </section>
 </template>
 
@@ -972,5 +1172,66 @@ onMounted(() => {
   font-size: 12px;
   line-height: 1.6;
   color: var(--zw-muted);
+}
+
+/* 游客权限（T11） */
+.guest-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 14px 0 4px;
+}
+.guest-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--zw-line);
+  border-radius: 8px;
+  background: var(--zw-surface);
+  flex-wrap: wrap;
+}
+.guest-row.readonly {
+  background: var(--zw-mint-2);
+  border-style: dashed;
+}
+.guest-main {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+.guest-label {
+  font-size: 14px;
+  color: var(--zw-text);
+  font-weight: 500;
+}
+.guest-ctl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+.guest-ro {
+  font-size: 12px;
+  color: var(--zw-green);
+  border: 1px solid var(--zw-green-soft);
+  background: #fff;
+  border-radius: 999px;
+  padding: 3px 12px;
+}
+.guest-unit {
+  font-size: 12px;
+  color: var(--zw-faint);
+}
+.guest-state {
+  font-size: 12px;
+  min-width: 52px;
+  text-align: right;
+}
+.guest-state.on {
+  color: var(--zw-green);
+}
+.guest-state.off {
+  color: var(--zw-amber);
 }
 </style>

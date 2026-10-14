@@ -12,6 +12,12 @@
  *    只有信封不可用（不是对象/数组、空数组、超 100 条）或整批全非法才 400。
  *  - accepted 严格等于实际落库行数。
  *  - 看板守卫 fail closed：没配 ADMIN_STATS_TOKEN 一律 403，不因为缺配置就放行。
+ *
+ * 🔴 T11（2026-10-14）追加：游客权限 `feedback` 关闭时，**未登录**请求里的
+ *    `feedback_submit` 一律拒收（其他事件一律照常落库，完全不受影响）。
+ *    🔴 事件白名单（track/types.ts 的 TRACK_EVENTS）**一个字节都没动** ——
+ *    「反馈被关」不是「非法事件名」，所以本文件用一个本地原因码回报，
+ *    不去污染 track/types.ts 里的联合类型。
  */
 import { Router, type Request, type Response } from 'express'
 
@@ -21,12 +27,17 @@ import {
   TRACK_MAX_EVENTS_PER_REQUEST,
   type StatsSummaryResponse,
   type StoredEvent,
-  type TrackAcceptedResponse,
   type TrackErrorResponse,
   type TrackIssue
 } from '../track/types.js'
+import { isLoggedIn } from '../guest/identity.js'
+import { loadGuestPermissions } from '../guest/permissions.js'
 
 const router = Router()
+
+/** 「反馈已对游客关闭」的原因码（只在本文件用，理由见顶部注释） */
+const FEEDBACK_CLOSED_CODE = 'FEEDBACK_CLOSED'
+const FEEDBACK_CLOSED_MESSAGE = '意见反馈需要登录后才能提交，请先登录'
 
 /* ------------------------------------------------------------------ *
  * POST /api/track
@@ -91,6 +102,20 @@ function respondError(
   res.status(status).json(body)
 }
 
+/** 一条被拒的原因（code 比 TrackIssue 宽一格：多一个「反馈已关闭」的本地码） */
+interface RejectIssue {
+  index: number
+  code: string
+  message: string
+}
+
+/** 原始条目是不是 feedback_submit（只认 event 字段，其余交给 normalizeEvent 校验） */
+function isFeedbackEvent(raw: unknown): boolean {
+  return typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+    ? (raw as Record<string, unknown>)['event'] === 'feedback_submit'
+    : false
+}
+
 router.post('/', (req: Request, res: Response) => {
   const envelope = parseEnvelope(req.body)
   if (!envelope.ok) {
@@ -98,21 +123,51 @@ router.post('/', (req: Request, res: Response) => {
     return
   }
 
-  const accepted: StoredEvent[] = []
-  const rejected: TrackIssue[] = []
+  // 🔴 T11：游客权限 `feedback` 关闭时，游客（未登录）的反馈一律拒收。
+  //    判「游客」按 JWT 校验（见 guest/identity.ts）；已登录用户照常能提。
+  //    混批时**只摘掉反馈那几条**，页面访问等其它事件照常落库。
+  const feedbackClosed = isLoggedIn(req) ? false : !loadGuestPermissions().feedback
+  const allowed: Array<{ index: number; raw: unknown }> = []
+  const rejected: RejectIssue[] = []
   envelope.items.forEach((raw, index) => {
-    const [event, issue] = normalizeEvent(raw, index)
+    if (feedbackClosed && isFeedbackEvent(raw)) {
+      rejected.push({ index, code: FEEDBACK_CLOSED_CODE, message: FEEDBACK_CLOSED_MESSAGE })
+      return
+    }
+    allowed.push({ index, raw })
+  })
+
+  if (allowed.length === 0 && rejected.length > 0) {
+    // 整批都是被关掉的反馈：直接 403 并说清楚（前端 http.ts 会弹这句中文）
+    res.status(403).json({
+      success: false,
+      error: { code: FEEDBACK_CLOSED_CODE, message: FEEDBACK_CLOSED_MESSAGE, issues: rejected }
+    })
+    return
+  }
+
+  const accepted: StoredEvent[] = []
+  allowed.forEach((item) => {
+    // index 传原始下标：被摘掉几条之后，下标仍与前端发来的一致，便于对账
+    const [event, issue] = normalizeEvent(item.raw, item.index)
     if (event !== null) accepted.push(event)
-    else if (issue !== null) rejected.push(issue)
+    else if (issue !== null) rejected.push(issue as RejectIssue)
   })
 
   if (accepted.length === 0) {
+    // 说清楚「为什么一条没落库」：既可能是全部非法，也可能混着被关掉的反馈。
+    // 混着的时候不说清楚，老师会以为是自己写错了事件名。
+    const blockedCount = rejected.filter((r) => r.code === FEEDBACK_CLOSED_CODE).length
+    const invalidCount = rejected.length - blockedCount
+    const parts: string[] = []
+    if (invalidCount > 0) parts.push(`${invalidCount} 条非法`)
+    if (blockedCount > 0) parts.push(`${blockedCount} 条因反馈功能已关闭被拒收`)
     respondError(
       res,
       400,
       'VALIDATION_FAILED',
-      `本批 ${rejected.length} 条事件全部非法，未落库`,
-      rejected
+      `本批 ${rejected.length} 条事件未落库（${parts.join('、')}）`,
+      rejected as TrackIssue[]
     )
     return
   }
@@ -123,8 +178,8 @@ router.post('/', (req: Request, res: Response) => {
     return
   }
 
-  const body: TrackAcceptedResponse = { success: true, accepted: inserted, rejected }
-  res.status(201).json(body)
+  // accepted 严格等于实际落库行数（契约不变）；rejected 里带上了「反馈被关」的那几条
+  res.status(201).json({ success: true, accepted: inserted, rejected })
 })
 
 /* ------------------------------------------------------------------ *

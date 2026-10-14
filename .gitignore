@@ -48,3 +48,8 @@ backend/.env.bak-*
 .demo-backup-*/
 # 待审投稿文件与元数据（B09 公众上传：含投稿人手机号，绝不进仓库）
 backend/data/contributions/
+
+# T11：游客权限与游客提问计数属于**运行时状态**（与 qa-settings.json 同性质），不进仓库
+# guest-ask-usage.json 内含 sha256(IP+UA) 的游客标识，更不该进
+backend/data/guest-permissions.json
+backend/data/guest-ask-usage.json
