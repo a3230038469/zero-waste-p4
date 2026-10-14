@@ -4,6 +4,7 @@
  * 鉴权：口令走 X-Admin-Token 请求头；口令只存在浏览器本地，不写进代码、不进 git。
  */
 import http from './http'
+import { describeBlobError, saveBlob } from '../utils/download'
 
 /** 口令在 localStorage 的键名（与统计看板共用同一个） */
 export const ADMIN_TOKEN_KEY = 'zwp.adminToken'
@@ -219,4 +220,93 @@ export async function saveQaSettings(
     silent: true
   })
   return res.data
+}
+
+/* ------------------------------------------------------------------ *
+ * 访客反馈（2026-10-14 新增）
+ *
+ * GET /api/admin/feedback → 反馈列表（需 X-Admin-Token）
+ * ⚠️ 反馈里带提交者自愿填写的联系方式，属个人信息 —— 只给管理者看，
+ *    不出现在任何对外页面上。
+ * ------------------------------------------------------------------ */
+
+/** 一条访客反馈（与后端 StoredFeedback 对应；kindLabel 由后端补好） */
+export interface AdminFeedbackItem {
+  id: string
+  ts: string
+  kind: string
+  /** 后端补的中文类型名，前端不再维护第二张映射表 */
+  kindLabel: string
+  message: string
+  /** 提交者自愿留的联系方式，可能为空 */
+  contact: string
+  docId: string
+  docTitle: string
+  path: string
+}
+
+export interface AdminFeedbackList {
+  success: boolean
+  total: number
+  items: AdminFeedbackItem[]
+}
+
+/** 拉访客反馈列表（已按提交时间倒序） */
+export async function fetchFeedbackList(token: string): Promise<AdminFeedbackList> {
+  const res = await http.get<AdminFeedbackList>('/admin/feedback', {
+    headers: { 'X-Admin-Token': token },
+    silent: true
+  })
+  return res.data
+}
+
+/* ------------------------------------------------------------------ *
+ * 数据导出（2026-10-14 新增）
+ *
+ * GET /api/admin/export/{knowledge|users|stats|feedback} → CSV 附件
+ * 四个接口都需 X-Admin-Token，与其余管理接口同一套口令。
+ * ------------------------------------------------------------------ */
+
+/** 可导出的四种报表 */
+export type ExportKind = 'knowledge' | 'users' | 'stats' | 'feedback'
+
+/** 导出种类 → 中文名（进文件名） */
+const EXPORT_LABELS: Record<ExportKind, string> = {
+  knowledge: '资料台账',
+  users: '注册用户',
+  stats: '统计报表',
+  feedback: '访客反馈'
+}
+
+/**
+ * 导出文件名由**前端**拼。
+ *
+ * 不去读响应头里的 Content-Disposition —— 本地开发时前端在 5173、后端在 4000，
+ * 属跨域请求；浏览器的 CORS 默认**不暴露** Content-Disposition，读了也是空。
+ * 与其配后端 exposedHeaders 只为了个文件名，不如两端各拼一次（格式一致即可）。
+ */
+function exportFileName(kind: ExportKind): string {
+  const d = new Date()
+  const p = (n: number): string => String(n).padStart(2, '0')
+  const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`
+  return `零废弃知识库-${EXPORT_LABELS[kind]}-${stamp}.csv`
+}
+
+/**
+ * 下载一份 CSV 报表。
+ *
+ * 失败时抛 `Error`，message 是可直接展示给用户的中文；
+ * `silent: true` 是为了不让统一拦截器再补一条英文的 axios 原文。
+ */
+export async function exportCsv(token: string, kind: ExportKind): Promise<void> {
+  try {
+    const res = await http.get<Blob>(`/admin/export/${kind}`, {
+      headers: { 'X-Admin-Token': token },
+      responseType: 'blob',
+      silent: true
+    })
+    saveBlob(res.data, exportFileName(kind))
+  } catch (err) {
+    throw new Error(await describeBlobError(err, '导出失败，请稍后再试'))
+  }
 }

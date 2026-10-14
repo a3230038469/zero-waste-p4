@@ -21,6 +21,7 @@ import {
   ADMIN_TOKEN_KEY,
   UPLOAD_ACCEPT,
   deleteKnowledge,
+  exportCsv,
   fetchKnowledgeList,
   fetchQaSettings,
   saveQaSettings,
@@ -40,6 +41,30 @@ const loading = ref(false)
 const errorText = ref('')
 const keyword = ref('')
 const page = ref(1)
+const exporting = ref(false)
+
+/**
+ * 导出资料台账（CSV）。
+ *
+ * ⚠️ 导的是**对外站的完整台账**（后端读 DOCS_SOURCE 那套数据，本地模式下 617 份），
+ * 不是本页当前的关键词筛选结果 —— 所以按钮写「全量」二字，免得老师以为导出的是筛出来的那些。
+ * 两个口径也可能不等：本页列的是引擎里的资料，台账取的是对外站的数据源。
+ */
+async function doExport(): Promise<void> {
+  if (!token.value) {
+    errorText.value = '请先输入管理口令'
+    return
+  }
+  exporting.value = true
+  try {
+    await exportCsv(token.value, 'knowledge')
+    ElMessage.success('台账已开始下载')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '导出失败')
+  } finally {
+    exporting.value = false
+  }
+}
 
 /** 关键词过滤（标题或所在文件夹） */
 const filtered = computed(() => {
@@ -367,6 +392,12 @@ async function enterAdmin(): Promise<void> {
         </p>
       </div>
       <div class="kb-actions">
+        <el-tooltip
+          content="导出对外站的完整资料台账（CSV，Excel 可直接打开；不是当前筛选结果）"
+          placement="bottom"
+        >
+          <el-button :loading="exporting" @click="doExport">导出全量台账 CSV</el-button>
+        </el-tooltip>
         <el-button type="primary" @click="openUpload">上传资料</el-button>
       </div>
     </header>
@@ -374,6 +405,7 @@ async function enterAdmin(): Promise<void> {
     <nav class="admin-nav">
       <router-link to="/admin/knowledge">资料管理</router-link>
       <router-link to="/admin/users">注册用户</router-link>
+      <router-link to="/admin/feedback">访客反馈</router-link>
       <router-link to="/admin/stats">数据看板</router-link>
     </nav>
 
@@ -669,7 +701,7 @@ async function enterAdmin(): Promise<void> {
   color: var(--zw-green);
 }
 .kb-stat .bad {
-  color: #c45656;
+  color: var(--zw-danger);
 }
 .kb-stat .dot {
   color: var(--zw-line-strong);
@@ -738,7 +770,7 @@ async function enterAdmin(): Promise<void> {
   color: var(--zw-muted);
 }
 .kb-table {
-  background: #fff;
+  background: var(--zw-surface);
 }
 .kb-pager {
   margin-top: 14px;

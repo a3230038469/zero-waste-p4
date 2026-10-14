@@ -13,6 +13,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { getOverview } from '../api/overview'
 import type { DocOverview } from '../api/types'
+import FeedbackForm from '../components/FeedbackForm.vue'
 import { formatBytes, formatCount, formatYearSpan } from '../utils/format'
 
 const overview = ref<DocOverview | null>(null)
@@ -209,23 +210,27 @@ const SECTIONS = [
         </p>
       </div>
 
+      <!-- 反馈表单（2026-10-14 新增）：匿名可提交，联系方式选填。
+           在此之前的「受理方式」一直是占位块里的待办项，等于给了承诺却没说怎么兑现。
+           表单提交后落 backend/data/feedback.jsonl，管理员可在后台导出。 -->
+      <FeedbackForm />
+
       <!-- ⚠️ 占位：以下属于基金会对外口径，未确认前不填内容 -->
       <div class="todo zw-card zw-card--pad">
         <h3>待基金会确认后补充（占位）</h3>
         <ul>
           <li>机构简介与使命表述（官方口径）</li>
           <li>公开联系邮箱 / 电话 / 办公地址</li>
-          <li>资料推荐与纠错的具体受理方式（表单或邮箱）</li>
           <li>合作与数据使用申请流程</li>
         </ul>
         <p class="todo-note">
           这些内容属于基金会的对外表述，需由基金会确认后方可上线，因此本页暂不填写，
-          以免对外发布未经确认的信息。
+          以免对外发布未经确认的信息。（资料推荐与纠错已通过上方表单受理。）
         </p>
       </div>
     </section>
 
-    <p class="updated">本页口径说明最后更新于 2026-10-10。</p>
+    <p class="updated">本页口径说明最后更新于 2026-10-10；反馈受理方式于 2026-10-14 补充。</p>
   </div>
 </template>
 

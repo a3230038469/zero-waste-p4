@@ -54,6 +54,7 @@ onMounted(() => {
         <h4>站点</h4>
         <RouterLink to="/auth">登录 / 注册</RouterLink>
         <RouterLink to="/admin/knowledge" class="foot-admin">资料管理（内部）</RouterLink>
+        <RouterLink to="/admin/feedback">访客反馈（内部）</RouterLink>
         <RouterLink to="/admin/stats">访问统计（内部）</RouterLink>
       </div>
     </div>

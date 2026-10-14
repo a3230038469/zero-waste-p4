@@ -26,6 +26,7 @@ import askRouter from './routes/ask.js' // 韶茹
 import trackRouter from './routes/track.js' // 韶茹
 import adminRouter from './routes/admin.js' // 本地演示：老师后台（管理资料）
 import overviewRouter from './routes/overview.js' // 对外展示站：整库数据概览
+import feedbackRouter from './routes/feedback.js' // 对外展示站：访客反馈（2026-10-14）
 import { errorHandler, notFound } from './middleware/error.js' // 地基自带（2026-10-10 起真正挂上）
 
 // 配置来源：backend/.env（引擎密钥、数据源开关 DOCS_SOURCE 都从这里读）
@@ -48,6 +49,7 @@ app.use('/api/ask', askRouter) // 韶茹（B07 问答窗口用）
 app.use('/api/track', trackRouter) // 韶茹（埋点 + 看板）
 app.use('/api/admin', adminRouter) // 本地演示：老师后台（管理资料）
 app.use('/api/overview', overviewRouter) // 对外展示站：整库数据概览（GET /api/overview）
+app.use('/api/feedback', feedbackRouter) // 对外展示站：访客反馈（POST /api/feedback）
 
 // —— 前端构建产物（存在才挂）。
 // 本地开发时前端走 5173 的 dev server，这里不生效；

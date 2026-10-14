@@ -12,6 +12,7 @@
 import { nextTick, ref, watch } from 'vue'
 
 import { askStream } from '../api/ask'
+import { renderMarkdown, stripSourceTags } from '../utils/markdown'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -37,15 +38,18 @@ let controller: AbortController | null = null
 const EXAMPLES = ['厨余垃圾怎么处理？', '什么是零废弃？', '社区堆肥需要注意什么？']
 
 /**
- * 知识库引用标签（<kb doc="…" chunk_id="…" kb_id="…" />）对读者太吵，
- * 渲染时去掉；顺带压掉替换后留下的多余空行。
+ * 把一条回答渲染成 HTML。
+ *
+ * 两个动作：
+ *   1. `stripSourceTags` 清掉知识库引用标签（`<kb doc="…" chunk_id="…" />`），对读者太吵；
+ *   2. `renderMarkdown` 把 Markdown 渲染出来 —— 之前是纯文本插值，AI 输出的
+ *      `**加粗**`、`- 列表`、`### 标题` 会原样露成符号，读起来很糟。
+ *
+ * ⚠️ 返回值要交给 `v-html`，所以安全性全靠 renderMarkdown 内部「先整体 HTML 转义、
+ *   再做白名单替换」的顺序保证（详见该文件注释）。**不要**改成直接 v-html 原始回答。
  */
-const SOURCE_TAG = /<kb\s+doc="[^"]*"[^>]*\/?>/g
 function renderAnswer(text: string): string {
-  return text
-    .replace(SOURCE_TAG, '')
-    .replace(/[ \t]+$/gm, '')
-    .replace(/\n{3,}/g, '\n\n')
+  return renderMarkdown(stripSourceTags(text))
 }
 
 function scrollToBottom(): void {
@@ -142,7 +146,12 @@ watch(busy, (b) => emit('status-change', b ? 'loading' : 'ready'), { immediate: 
           <div v-for="(m, i) in messages" :key="i" class="msg" :class="m.role">
             <div class="bubble" :class="{ failed: m.failed }">
               <span v-if="m.role === 'assistant' && busy && !m.text" class="typing">正在查资料…</span>
-              <template v-else>{{ renderAnswer(m.text) }}</template>
+              <!-- 助手回答走 Markdown 渲染；用户自己的话保持纯文本（免得随手打一个 * 就被当成语法）。
+                   renderMarkdown 内部是「先整体 HTML 转义、再做白名单替换」，
+                   生成的只可能是 utils/markdown.ts 里写死的那几种标签，不是原始模型输出。 -->
+              <!-- eslint-disable-next-line vue/no-v-html -->
+              <span v-else-if="m.role === 'assistant'" v-html="renderAnswer(m.text)"></span>
+              <template v-else>{{ m.text }}</template>
             </div>
           </div>
         </div>
@@ -248,14 +257,55 @@ watch(busy, (b) => emit('status-change', b ? 'loading' : 'ready'), { immediate: 
   border-radius: 10px;
   font-size: 13px;
   line-height: 1.7;
-  white-space: pre-wrap;
   word-break: break-word;
   background: #f3f8f3;
   color: #24352a;
 }
 .msg.user .bubble {
+  /* 只给用户自己的话保留换行：助手回答现在渲染成块级元素，pre-wrap 会带出多余空白 */
+  white-space: pre-wrap;
   background: var(--zw-green, #2e7d32);
   color: #fff;
+}
+
+/* —— 助手气泡里的 Markdown ——
+   v-html 注入的内容不会带 scoped 属性，普通选择器匹配不到，必须用 :deep() 穿透 */
+.bubble :deep(p) {
+  margin: 0 0 6px;
+}
+.bubble :deep(p:last-child),
+.bubble :deep(ul:last-child),
+.bubble :deep(ol:last-child) {
+  margin-bottom: 0;
+}
+.bubble :deep(h4) {
+  margin: 8px 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.bubble :deep(ul),
+.bubble :deep(ol) {
+  margin: 4px 0 6px;
+  padding-left: 18px;
+}
+.bubble :deep(li) {
+  margin: 2px 0;
+}
+.bubble :deep(code) {
+  background: rgba(22, 36, 26, 0.07);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 12px;
+}
+.bubble :deep(blockquote) {
+  margin: 4px 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--zw-line-strong, #cfe0cf);
+  color: var(--zw-muted, #66786a);
+}
+.bubble :deep(a) {
+  color: inherit;
+  text-decoration: underline;
 }
 .bubble.failed {
   background: #fff7e6;

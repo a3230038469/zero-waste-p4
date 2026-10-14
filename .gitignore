@@ -31,6 +31,7 @@ Thumbs.db
 
 # 临时
 .tmp/
+.tmp-cdp/
 tmp/
 
 # 本地资料包：PDF 原件体积大（35 份约 60MB），不进仓库
@@ -39,6 +40,10 @@ backend/data/kb/
 
 # 埋点事件落库（每台机器各自的访客行为，属运行时数据；韶茹，2026-10-07）
 backend/data/track/
+
+# 访客反馈工单（可能含提交者留的邮箱/电话 = 个人信息，属运行时数据；
+# 这是公开仓库，绝不可进版本库；2026-10-14）
+backend/data/feedback.jsonl
 
 # 问答设置（T3：老师后台选的回答模型/方式/强度，属本机运行状态，不进仓库）
 backend/data/qa-settings.json

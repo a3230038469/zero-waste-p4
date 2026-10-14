@@ -8,8 +8,9 @@
  * 说明：手机号由后端脱敏（138****8888），前端拿到就已经是打码后的。
  */
 import { computed, onMounted, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 
-import { ADMIN_TOKEN_KEY, fetchUserList, type AdminUserItem } from '../api/admin'
+import { ADMIN_TOKEN_KEY, exportCsv, fetchUserList, type AdminUserItem } from '../api/admin'
 
 const PAGE_SIZE = 20
 
@@ -19,6 +20,27 @@ const loading = ref(false)
 const errorText = ref('')
 const keyword = ref('')
 const page = ref(1)
+const exporting = ref(false)
+
+/**
+ * 导出注册用户名单（CSV）。
+ * 手机号由后端脱敏，导出的文件里也没有完整号码 —— 与页面口径一致。
+ */
+async function doExport(): Promise<void> {
+  if (!token.value) {
+    errorText.value = '请先输入管理口令'
+    return
+  }
+  exporting.value = true
+  try {
+    await exportCsv(token.value, 'users')
+    ElMessage.success('名单已开始下载')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '导出失败')
+  } finally {
+    exporting.value = false
+  }
+}
 
 /** 关键词过滤（姓名或机构） */
 const filtered = computed(() => {
@@ -83,11 +105,15 @@ onMounted(() => {
         <h2 class="title">注册用户</h2>
         <p class="sub">截至目前的注册情况。手机号做了打码处理，不显示完整号码。</p>
       </div>
+      <el-button v-if="items.length" :loading="exporting" @click="doExport">
+        导出名单 CSV
+      </el-button>
     </header>
 
     <nav class="admin-nav">
       <router-link to="/admin/knowledge">资料管理</router-link>
       <router-link to="/admin/users">注册用户</router-link>
+      <router-link to="/admin/feedback">访客反馈</router-link>
       <router-link to="/admin/stats">数据看板</router-link>
     </nav>
 
@@ -240,7 +266,7 @@ onMounted(() => {
   color: var(--zw-muted);
 }
 .table {
-  background: #fff;
+  background: var(--zw-surface);
 }
 .topic {
   margin-right: 4px;

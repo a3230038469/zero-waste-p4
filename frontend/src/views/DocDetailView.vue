@@ -20,6 +20,7 @@ import { LARGE_FILE_LIMIT, downloadDoc, getDocDetail, getDocs, getPreviewUrl, ty
 import type { DocItem } from '../api/types'
 import { useAuth } from '../composables/useAuth'
 import DocCard from '../components/DocCard.vue'
+import FeedbackForm from '../components/FeedbackForm.vue'
 import { formatBytes, formatYear } from '../utils/format'
 
 const route = useRoute()
@@ -35,6 +36,9 @@ const previewVisible = ref(false)
 /** 同主题推荐（排除自己） */
 const related = ref<DocItem[]>([])
 const relatedLoading = ref(false)
+
+/** 纠错表单默认收起 */
+const fbOpen = ref(false)
 
 async function fetchDetail(): Promise<void> {
   const id = route.params.id
@@ -185,6 +189,7 @@ watch(
     if (route.name === 'doc') {
       previewVisible.value = false
       revokePreview()
+      fbOpen.value = false
       void fetchDetail()
     }
   }
@@ -289,6 +294,29 @@ watch(
           <RouterLink to="/about#cite">引用与转载说明</RouterLink>。
         </p>
       </article>
+
+      <!-- 纠错入口（2026-10-14 新增）：默认收起。
+           理由：详情页的主体是资料本身，把一张四行表单默认摊在下面是喧宾夺主；
+           但「这条信息不对」的念头恰恰是在看完资料时最强的，所以出口必须就在这一页，
+           且只需一次点击就能展开。默认选中「纠错」而不是「推荐」——在这个上下文里，
+           用户点进来的意图基本就是报错。 -->
+      <section class="fb-block">
+        <button
+          v-if="!fbOpen"
+          type="button"
+          class="fb-open"
+          @click="fbOpen = true"
+        >
+          这条信息有问题？告诉我们 →
+        </button>
+        <FeedbackForm
+          v-else
+          :key="doc.id"
+          :doc-id="doc.id"
+          :doc-title="doc.title"
+          default-kind="correction"
+        />
+      </section>
 
       <!-- 相关推荐 -->
       <section v-if="relatedLoading || related.length" class="related">
@@ -434,14 +462,14 @@ watch(
   padding: 10px 14px;
   font-size: 13px;
   line-height: 1.8;
-  color: #8a5a12;
+  color: var(--zw-amber-ink);
   background: var(--zw-amber-soft);
   border-left: 3px solid var(--zw-amber);
   border-radius: 0 var(--zw-radius-sm) var(--zw-radius-sm) 0;
 }
 
 .dup-notice a {
-  color: #8a5a12;
+  color: var(--zw-amber-ink);
   font-weight: 600;
 }
 
@@ -528,6 +556,29 @@ watch(
 
 .cite-note a {
   color: var(--zw-green);
+}
+
+/* 纠错入口 */
+.fb-block {
+  margin-top: 22px;
+}
+
+.fb-open {
+  width: 100%;
+  border: 1px dashed var(--zw-line-strong);
+  background: #fbfdfb;
+  border-radius: var(--zw-radius-sm);
+  padding: 13px 16px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--zw-green);
+  text-align: left;
+  cursor: pointer;
+}
+
+.fb-open:hover {
+  border-color: var(--zw-green);
+  background: var(--zw-mint-2);
 }
 
 /* 相关推荐 */

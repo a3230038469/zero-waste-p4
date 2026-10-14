@@ -10,12 +10,28 @@
  *       本文件不改 docs.ts / auth.ts / track.ts 的任何既有行为。
  *
  * 已实现：列出资料、上传资料、删除资料、查看注册用户（T1 三项已补齐）、
- *         问答设置 GET/PUT /qa-settings（T3，2026-10-10）。
+ *         问答设置 GET/PUT /qa-settings（T3，2026-10-10）、
+ *         数据导出 GET /export/{knowledge,users,stats}（2026-10-14）、
+ *         访客反馈 GET /feedback 与 GET /export/feedback（2026-10-14）。
  */
 import { PrismaClient } from '@prisma/client'
 import express, { Router, type NextFunction, type Request, type Response } from 'express'
 
-import { invalidateEngineListCache, listQaModels, type QaModelOption } from '../weknora/index.js'
+import {
+  EngineError,
+  contentDisposition,
+  invalidateEngineListCache,
+  listFiles,
+  listQaModels,
+  type KbDocInternal,
+  type QaModelOption
+} from '../weknora/index.js'
+import { duplicateOf } from '../data/duplicates.js'
+import { FEEDBACK_KIND_LABELS, readFeedback } from '../feedback/store.js'
+import { buildStatsSummary } from '../track/stats.js'
+import { readEvents } from '../track/store.js'
+import { TRACK_EVENTS, type DailyPoint, type TrackEvent } from '../track/types.js'
+import { toCsv } from '../csv.js'
 import {
   QA_STYLES,
   REASONING_EFFORTS,
@@ -597,6 +613,281 @@ router.put('/qa-settings', requireAdmin, async (req: Request, res: Response) => 
       success: false,
       error: { code: 'SAVE_FAILED', message: `保存问答设置失败：${message}` }
     })
+  }
+})
+
+/* ================================================================== *
+ * 数据导出（2026-10-14 新增）
+ *
+ *   GET /api/admin/export/knowledge  资料台账（CSV）
+ *   GET /api/admin/export/users      注册用户（CSV，手机号保持脱敏）
+ *   GET /api/admin/export/stats      看板统计（CSV，长表）
+ *
+ * 为什么放在本文件而不是新开一个路由文件：
+ *   导出是「管理能力」的延伸，鉴权（assertAdmin）、Prisma 实例、用户字段处理
+ *   （maskPhone / parseTopics）都已在本文件里。另开文件就得把这些**再抄一份** ——
+ *   尤其 maskPhone 是安全函数，出现两份实现迟早会漂移（本项目已吃过这个亏）。
+ *   所以这里只**追加**一节，既有路由一行未动；要回退就删掉本节。
+ *
+ * 口径：
+ *   - **只给管理者**，不给访客开导出。「关于项目」页已写明「如需批量获取或用于教学，
+ *     请见联系与共建」—— 对外开批量导出既与本项目对外口径冲突，也容易被爬。
+ *   - 台账刻意与对外站**同源**（listFiles()，即 DOCS_SOURCE 指定的那套数据），
+ *     而不是去连引擎：台账要和访客看到的对得上，且 local 模式下引擎根本没配。
+ *   - CSV 的 BOM 与转义统一走 ../csv.js，三处导出共用一份实现（见该文件注释）。
+ * ================================================================== */
+
+/** 资料台账表头。「编号」= 索引 id（k-N） */
+const KNOWLEDGE_CSV_HEADERS = [
+  '编号',
+  '标题',
+  '发布机构',
+  '年份',
+  '知识类型',
+  '主题标签',
+  '文件大小(字节)',
+  '原始文件名',
+  '原始出处',
+  '重复副本指向'
+]
+
+/** 注册用户表头 */
+const USER_CSV_HEADERS = ['编号', '姓名', '机构', '职业', '关注议题', '手机号(脱敏)', '注册时间']
+
+/** 统计报表表头（长表：一行一个指标，方便在 Excel 里直接做透视） */
+const STATS_CSV_HEADERS = ['分组', '名称', '日期', '数值']
+
+/** 事件名 -> 中文（与看板页面 AdminStatsView.vue 的 EVENT_LABELS 同一套叫法） */
+const EVENT_CSV_LABELS: Record<TrackEvent, string> = {
+  page_view: '页面访问',
+  search: '搜索',
+  preview: '在线预览',
+  download: '下载',
+  ai_ask: 'AI 提问',
+  register: '注册',
+  feedback_submit: '反馈提交'
+}
+
+/** 按日趋势里要逐日导出的指标（date 本身不作为指标） */
+const DAILY_CSV_METRICS: ReadonlyArray<{ key: Exclude<keyof DailyPoint, 'date'>; label: string }> = [
+  { key: 'events', label: '事件数' },
+  { key: 'pv', label: '页面访问PV' },
+  { key: 'search', label: '搜索' },
+  { key: 'preview', label: '在线预览' },
+  { key: 'download', label: '下载' },
+  { key: 'ai_ask', label: 'AI提问' }
+]
+
+/** id 形如 k-35；排序时按数字后缀走，避免 k-9 排在 k-10 后面 */
+function idOrderOf(doc: KbDocInternal): number {
+  const parsed = Number(doc.id.replace(/^\D+/, ''))
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+/** 导出文件名里的时间戳（本地时间，形如 20261014-2103） */
+function stamp(now = new Date()): string {
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`
+}
+
+/** 导出用的时间列：本地时间 YYYY-MM-DD HH:mm:ss（与看板的本地时间口径一致） */
+function localDateTime(date: Date): string {
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  )
+}
+
+/** 统一发一个 CSV 附件出去 */
+function sendCsv(
+  res: Response,
+  fileName: string,
+  headers: readonly string[],
+  rows: readonly (readonly unknown[])[]
+): void {
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+  // 复用下载接口同一个文件名工具：中文名走 RFC 5987，不会被截成下划线
+  res.setHeader('Content-Disposition', contentDisposition(fileName, 'attachment'))
+  // 导的是「当前这一刻」的数据，不让浏览器/中间层缓存
+  res.setHeader('Cache-Control', 'no-store')
+  res.status(200).send(toCsv(headers, rows))
+}
+
+/** 管理接口内部错误：沿用本文件其余接口的错误信封 */
+function sendAdminError(res: Response, err: unknown, what: string): void {
+  if (err instanceof EngineError) {
+    res.status(err.status).json({ success: false, error: { code: err.code, message: err.message } })
+    return
+  }
+  const message = err instanceof Error ? err.message : '未知错误'
+  console.error(`[admin] ${what}失败：${message}`)
+  res.status(500).json({
+    success: false,
+    error: { code: 'ADMIN_OP_FAILED', message: `${what}失败：${message}` }
+  })
+}
+
+/**
+ * GET /api/admin/export/knowledge —— 导出资料台账
+ *
+ * 全量导出（不带筛选）：台账的核心诉求是「把整库给我一份」。
+ * 排序与资料库默认一致（年份新的在前，同年按编号升序），便于和页面逐行对照。
+ */
+router.get('/export/knowledge', async (req: Request, res: Response) => {
+  if (!assertAdmin(req, res)) return
+  try {
+    const docs = await listFiles()
+    const sorted = [...docs].sort((a, b) => b.year - a.year || idOrderOf(a) - idOrderOf(b))
+    const rows = sorted.map((doc) => [
+      doc.id,
+      doc.title,
+      doc.org,
+      // year = 0 是「台账未填年份」的内部表示，不是公元 0 年 —— 留空，别导出一个莫名其妙的 0
+      doc.year > 0 ? doc.year : '',
+      doc.type,
+      doc.tags.join('、'),
+      doc.size,
+      doc.fileName,
+      doc.sourceUrl,
+      duplicateOf(doc.id) ?? ''
+    ])
+    sendCsv(res, `零废弃知识库-资料台账-${stamp()}.csv`, KNOWLEDGE_CSV_HEADERS, rows)
+  } catch (err) {
+    sendAdminError(res, err, '导出')
+  }
+})
+
+/**
+ * GET /api/admin/export/users —— 导出注册用户名单
+ *
+ * ⚠️ 手机号**一律脱敏**，与后台页面同一口径。导出也不给全号 ——
+ * 这是「给机构看的能力」，不是「把用户手机号发出去的能力」。
+ * 机构要联系用户，走页面上的既有流程，不靠这份文件。
+ */
+router.get('/export/users', async (req: Request, res: Response) => {
+  if (!assertAdmin(req, res)) return
+  try {
+    const users = await prisma.user.findMany({ orderBy: { createdAt: 'desc' } })
+    const rows = users.map((user) => [
+      user.id,
+      user.name,
+      user.org,
+      user.occupation,
+      parseTopics(user.topics).join('、'),
+      maskPhone(user.phone),
+      localDateTime(user.createdAt)
+    ])
+    sendCsv(res, `零废弃知识库-注册用户-${stamp()}.csv`, USER_CSV_HEADERS, rows)
+  } catch (err) {
+    sendAdminError(res, err, '导出')
+  }
+})
+
+/**
+ * GET /api/admin/export/stats —— 导出看板统计
+ *
+ * 看板数据是嵌套结构（概览 + 七类事件 + 四个榜单 + 按日趋势），单张 CSV 装不下多种形状。
+ * 这里统一压成**长表**（分组 / 名称 / 日期 / 数值）：每种榜单、每一天的每个指标都是一行，
+ * 在 Excel 里直接拖透视表就能还原成任意视图，比硬凑一张宽表更灵活。
+ */
+router.get('/export/stats', (req: Request, res: Response) => {
+  if (!assertAdmin(req, res)) return
+  try {
+    const summary = buildStatsSummary(readEvents())
+    const rows: unknown[][] = []
+    const add = (group: string, name: string, value: unknown, date = ''): void => {
+      rows.push([group, name, date, value])
+    }
+
+    add('概览', '事件总数', summary.totals.events)
+    add('概览', '页面访问 PV', summary.totals.pv)
+    add('概览', '独立访客 UV', summary.totals.uv)
+    // 报表要能自证「这是哪一刻的数」，否则事后无法判断新鲜度
+    add('概览', '数据生成于(UTC)', summary.generatedAt)
+
+    for (const evt of TRACK_EVENTS) add('事件分布', EVENT_CSV_LABELS[evt], summary.events[evt])
+
+    // 两个下载口径都留着：不等说明有绕过前端的直连调用，是信息不是错误
+    add('下载口径', '服务端（权威）', summary.downloads.server)
+    add('下载口径', '前端埋点', summary.downloads.events)
+
+    add('提问', '提问总数', summary.asks.total)
+    add('提问', '可判定', summary.asks.judged)
+    add('提问', '判定为无答案', summary.asks.noAnswer)
+    add('提问', '未判定', summary.asks.unjudged)
+    add('提问', '无答案率', summary.asks.noAnswerRate)
+
+    for (const item of summary.topSearchTerms) add('检索词 Top', item.term, item.count)
+    for (const item of summary.zeroResultSearchTerms) add('零结果检索词 Top', item.term, item.count)
+    for (const item of summary.topDownloads) add('下载 Top', item.fileName || item.docId, item.count)
+
+    for (const day of summary.daily) {
+      for (const metric of DAILY_CSV_METRICS) {
+        add('按日趋势', metric.label, day[metric.key], day.date)
+      }
+    }
+
+    sendCsv(res, `零废弃知识库-统计报表-${stamp()}.csv`, STATS_CSV_HEADERS, rows)
+  } catch (err) {
+    sendAdminError(res, err, '导出')
+  }
+})
+
+/* ================================================================== *
+ * 访客反馈（2026-10-14 新增）
+ *
+ *   GET /api/admin/feedback          反馈列表（需 X-Admin-Token）
+ *   GET /api/admin/export/feedback   反馈导出（CSV）
+ *
+ * ⚠️ 反馈里带提交者**自愿填写**的联系方式，属个人信息：
+ *    这两个接口都只给管理者，且不出现在任何对外页面上。
+ * ================================================================== */
+
+/** 反馈导出的表头 */
+const FEEDBACK_CSV_HEADERS = [
+  '编号',
+  '提交时间',
+  '类型',
+  '反馈内容',
+  '联系方式',
+  '关联资料',
+  '资料编号',
+  '来源页面'
+]
+
+/** GET /api/admin/feedback —— 反馈列表（已按提交时间倒序） */
+router.get('/feedback', (req: Request, res: Response) => {
+  if (!assertAdmin(req, res)) return
+  try {
+    const items = readFeedback().map((item) => ({
+      ...item,
+      // 中文类型名在服务端补好，前端与导出共用同一套叫法，免得两处各写一张映射表
+      kindLabel: FEEDBACK_KIND_LABELS[item.kind] ?? item.kind
+    }))
+    res.json({ success: true, total: items.length, items })
+  } catch (err) {
+    sendAdminError(res, err, '读取反馈')
+  }
+})
+
+/** GET /api/admin/export/feedback —— 导出反馈（CSV） */
+router.get('/export/feedback', (req: Request, res: Response) => {
+  if (!assertAdmin(req, res)) return
+  try {
+    const rows = readFeedback().map((item) => [
+      item.id,
+      localDateTime(new Date(item.ts)),
+      FEEDBACK_KIND_LABELS[item.kind] ?? item.kind,
+      item.message,
+      item.contact,
+      item.docTitle,
+      item.docId,
+      item.path
+    ])
+    sendCsv(res, `零废弃知识库-访客反馈-${stamp()}.csv`, FEEDBACK_CSV_HEADERS, rows)
+  } catch (err) {
+    sendAdminError(res, err, '导出')
   }
 })
 

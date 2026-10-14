@@ -8,6 +8,7 @@
  *     如需回退，删掉带「韶茹」注释的这几行即可，不影响其余路由。
  *   - 对外展示站改造（2026-10-10）：新增 `/insights` 数据概览、`/about` 关于项目。
  *     这两个页面的内容**全部来自真实数据与已核事实**，没有一段是编的（见页面内注释）。
+ *   - 访客反馈（2026-10-14）：新增 `/admin/feedback` 反馈管理页。
  */
 import { createRouter, createWebHistory } from 'vue-router'
 
@@ -28,6 +29,8 @@ const router = createRouter({
     { path: '/admin/knowledge', name: 'adminKnowledge', component: () => import('../views/AdminKnowledgeView.vue') },
     // 本地演示：老师后台 · 注册用户（GET /api/admin/users）
     { path: '/admin/users', name: 'adminUsers', component: () => import('../views/AdminUsersView.vue') },
+    // 访客反馈（2026-10-14）：收得进来、看得见、能导出 —— 只有接口没有页面等于只收不读
+    { path: '/admin/feedback', name: 'adminFeedback', component: () => import('../views/AdminFeedbackView.vue') },
     { path: '/:pathMatch(.*)*', name: 'notFound', component: () => import('../views/NotFoundView.vue') }
   ],
   scrollBehavior(to) {

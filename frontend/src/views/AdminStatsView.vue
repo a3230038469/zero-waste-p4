@@ -12,7 +12,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
-import { ADMIN_TOKEN_KEY } from '../api/admin'
+import { ADMIN_TOKEN_KEY, exportCsv } from '../api/admin'
 import { fetchStats, type StatsSummary, type TrackEventName } from '../api/track'
 
 /** 口令在 localStorage 的键名（与资料管理 / 注册用户两页共用；不在这里另写一份字面量，
@@ -27,6 +27,23 @@ const stats = ref<StatsSummary | null>(null)
 const loading = ref(false)
 const errorText = ref('')
 const autoRefresh = ref(false)
+const exporting = ref(false)
+
+/**
+ * 导出统计报表（CSV，长表）。
+ * 口径与页面同源（同一个后端聚合函数），所以导出的数就是屏幕上看到的数。
+ */
+async function doExport(): Promise<void> {
+  exporting.value = true
+  try {
+    await exportCsv(token.value, 'stats')
+    ElMessage.success('报表已开始下载')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '导出失败')
+  } finally {
+    exporting.value = false
+  }
+}
 
 let timer: number | null = null
 
@@ -160,6 +177,7 @@ onUnmounted(() => {
     <nav class="admin-nav">
       <RouterLink to="/admin/knowledge">资料管理</RouterLink>
       <RouterLink to="/admin/users">注册用户</RouterLink>
+      <RouterLink to="/admin/feedback">访客反馈</RouterLink>
       <RouterLink to="/admin/stats">数据看板</RouterLink>
     </nav>
 
@@ -175,6 +193,7 @@ onUnmounted(() => {
           @keyup.enter="applyToken"
         />
         <el-button type="primary" :loading="loading" @click="applyToken">查看看板</el-button>
+        <el-button v-if="stats" :loading="exporting" @click="doExport">导出报表 CSV</el-button>
         <el-button v-if="stats" @click="clearToken">清除口令</el-button>
         <div class="auto-refresh">
           <span>自动刷新</span>
@@ -335,7 +354,7 @@ onUnmounted(() => {
 }
 .sub {
   margin: 0;
-  color: #5b6b5b;
+  color: var(--zw-muted);
   font-size: 14px;
 }
 .back {
@@ -385,12 +404,12 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   font-size: 14px;
-  color: #5b6b5b;
+  color: var(--zw-muted);
   margin-left: auto;
 }
 .error {
   margin: 0;
-  color: #c0392b;
+  color: var(--zw-danger);
   font-size: 14px;
 }
 .kpis {
@@ -399,8 +418,8 @@ onUnmounted(() => {
   gap: 12px;
 }
 .kpi {
-  background: #fff;
-  border: 1px solid #e4ece4;
+  background: var(--zw-surface);
+  border: 1px solid var(--zw-line);
   border-radius: 10px;
   padding: 14px 16px;
   display: flex;
@@ -409,7 +428,7 @@ onUnmounted(() => {
 }
 .kpi-label {
   font-size: 13px;
-  color: #6b7b6b;
+  color: var(--zw-muted);
 }
 .kpi-value {
   font-size: 24px;
@@ -419,7 +438,7 @@ onUnmounted(() => {
 .stamp {
   margin: 0;
   font-size: 13px;
-  color: #7b8b7b;
+  color: var(--zw-faint);
 }
 .grid {
   display: grid;
@@ -434,7 +453,7 @@ onUnmounted(() => {
 }
 .panel-title {
   font-weight: 600;
-  color: #2b3a2b;
+  color: var(--zw-ink);
 }
 .panel-hint {
   font-size: 12px;
@@ -457,10 +476,10 @@ onUnmounted(() => {
   font-size: 13px;
 }
 .bar-label {
-  color: #4b5b4b;
+  color: var(--zw-text);
 }
 .bar-track {
-  background: #eef4ee;
+  background: var(--zw-mint);
   border-radius: 999px;
   height: 14px;
   overflow: hidden;
@@ -474,7 +493,7 @@ onUnmounted(() => {
 }
 .bar-count {
   text-align: right;
-  color: #2b3a2b;
+  color: var(--zw-ink);
   font-variant-numeric: tabular-nums;
 }
 .trend {
@@ -516,8 +535,8 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   font-size: 14px;
-  color: #4b5b4b;
-  border-bottom: 1px dashed #e4ece4;
+  color: var(--zw-text);
+  border-bottom: 1px dashed var(--zw-line);
   padding-bottom: 6px;
 }
 .rate {
@@ -525,7 +544,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 12px;
   font-size: 14px;
-  color: #4b5b4b;
+  color: var(--zw-text);
 }
 .rate :deep(.el-progress) {
   flex: 1;
@@ -533,7 +552,7 @@ onUnmounted(() => {
 .note {
   margin: 12px 0 0;
   font-size: 12px;
-  color: #7b8b7b;
+  color: var(--zw-faint);
   line-height: 1.6;
 }
 @media (max-width: 600px) {
