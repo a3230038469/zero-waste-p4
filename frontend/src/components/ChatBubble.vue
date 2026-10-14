@@ -51,8 +51,16 @@ const emit = defineEmits<{
   (e: 'open-source', url: string): void
 }>()
 
-/** 引擎的 <kb/> 引用标记（<kb doc="…" chunk_id="…" />）：对读者太吵，渲染前剥掉 */
-const SOURCE_TAG = /<kb\s+doc="[^"]*"[^>]*?\/?>/g
+/**
+ * 引擎的 `<kb/>` 引用标记（`<kb doc="文件名" chunk_id="…" kb_id="…" />`）。
+ *
+ * T9（2026-10-13）：**从"剥掉"改成"渲染成正文里可点的资料名"** —— 主人要求
+ * 「来源变成正文里能直接点的名字」。点一下跳那份资料的详情页（预览/下载在那页）。
+ *
+ * ⚠️ 标记里**只有文件名（`doc`）、没有资料 id** → 用文件名在 `sources` 里反查 `url`；
+ *    反查不到就降级成原来的弱化小字（绝不渲染成点不动的死链）。
+ */
+const SOURCE_TAG = /<kb\s+doc="([^"]*)"[^>]*?\/?>/g
 
 /**
  * 模型在正文里自己写的出处标记 `【资料名：xxx.pdf】`。
@@ -67,15 +75,68 @@ function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
+/** 去掉扩展名（正文里显示的资料名不必带 `.pdf`） */
+function stripExt(name: string): string {
+  return name.replace(/\.[a-z0-9]{2,5}$/i, '')
+}
+
+/**
+ * T9b（2026-10-13）：正文里**显示**的资料名要洗干净。
+ *
+ * 原始文件名长这样：`21-物业企业参与垃圾分类的动力和条件-物业企业参与垃圾分类的动力和条件.pdf`
+ * —— 前头带老师原始资料包的编号、后半截还是重复的，塞在句子中间又长又乱。
+ * 洗三步：去扩展名 → 去前导编号 → 去重复的那半截。**只改显示，不动数据库里的真名。**
+ */
+function cleanDisplayName(name: string): string {
+  let n = stripExt(name.trim())
+  // 前导编号（`21-` / `103_` / `8.` 这种），1–3 位数字，避免误伤 `2024年报告`
+  n = n.replace(/^\d{1,3}\s*[-_.、]\s*/, '')
+  // `A-A`（两半完全相同）取一半 —— 老师包里同一标题被拼了两遍
+  const dup = n.match(/^(.{4,})\s*[-—_]\s*\1$/)
+  if (dup) n = dup[1]
+  return n.trim()
+}
+
+/**
+ * 胶囊前面那个小文件图标（T9b）。
+ * 用 SVG 而不是 emoji：跟文字同色、任何系统上长得一样。
+ */
+const FILE_ICON =
+  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>'
+
+/**
+ * 用 `<kb doc="…">` 里的文件名，在本条回答的 sources 里反查可跳转的 url。
+ * 三级匹配：精确 → 去扩展名后相等 → 相互包含（文件名过长被截断时也能命中）。
+ */
+function findSourceUrl(doc: string, sources: AskSource[]): string {
+  const raw = doc.trim()
+  if (!raw) return ''
+  const stem = stripExt(raw)
+  const hit =
+    sources.find((s) => s.name === raw) ??
+    sources.find((s) => stripExt(s.name) === stem) ??
+    sources.find((s) => s.name.includes(stem) || stem.includes(stripExt(s.name)))
+  return hit?.url ?? ''
+}
+
 /**
  * 回答正文 -> 可 v-html 的 HTML。
  *
  * ⚠️ 渲染的是**模型输出**，必须过 DOMPurify —— v-html 直接吃未净化的字符串
  *    等于给站点开一个 XSS 口子。
  */
-function renderAnswer(text: string): string {
+function renderAnswer(text: string, sources: AskSource[]): string {
   const cleaned = text
-    .replace(SOURCE_TAG, '')
+    .replace(SOURCE_TAG, (_all, doc: string) => {
+      const raw = String(doc).trim()
+      const url = findSourceUrl(raw, sources)
+      const label = escapeHtml(cleanDisplayName(raw))
+      // 匹配不到资料 → 降级成原来的弱化小字（绝不留"点了没反应"的死链）
+      if (!url) return `<span class="cite">${label}</span>`
+      // T9b：做成「文件胶囊」——底色 + 边框 + 文件图标 + 洗过的短名。
+      // 原来只有"绿字+下划线"，在中文里看着像被强调的普通文字，认不出是份文件。
+      return `<a class="kb-link" href="${escapeHtml(url)}" title="${escapeHtml(raw)}">${FILE_ICON}<span class="kb-tx">${label}</span></a>`
+    })
     .replace(INLINE_CITE, (_all, name: string) => `<span class="cite">${escapeHtml(name)}</span>`)
     .replace(/[ \t]+$/gm, '')
     .replace(/\n{3,}/g, '\n\n')
@@ -87,9 +148,23 @@ function renderAnswer(text: string): string {
   return DOMPurify.sanitize(wrapped)
 }
 
+/**
+ * 正文里的资料名点击 → 与来源卡片走同一个出口（`open-source`），由宿主决定怎么跳。
+ * v-html 里的元素绑不了 Vue 事件，所以在正文容器上做事件委托。
+ */
+function onBodyClick(e: MouseEvent): void {
+  const el = (e.target as HTMLElement | null)?.closest?.('a.kb-link') as HTMLAnchorElement | null
+  if (!el) return
+  e.preventDefault()
+  const url = el.getAttribute('href') ?? ''
+  if (url) emit('open-source', url)
+}
+
 /** 只给 assistant 的正文算（user 走纯文本分支） */
 const answerHtml = computed(() =>
-  props.message.role === 'assistant' ? renderAnswer(props.message.text) : ''
+  props.message.role === 'assistant'
+    ? renderAnswer(props.message.text, props.message.sources ?? [])
+    : ''
 )
 
 /** 等待文案（非空才渲染，避免空 transition） */
@@ -129,8 +204,15 @@ function sourceTitle(source: AskSource): string {
          ⚠️ v-html 的来源已收口：文本先过 escapeHtml + marked，再过 DOMPurify.sanitize，
             DOMPurify 默认不在放行列表里保留 script 与事件属性，XSS 口子在这里堵上了。
             与 --max-warnings 0 冲突，所以带理由就地收口，不全局关规则。 -->
-    <!-- eslint-disable-next-line vue/no-v-html -->
-    <div v-else class="md" :class="{ settled: !streaming }" v-html="answerHtml"></div>
+    <!-- eslint-disable vue/no-v-html -->
+    <div
+      v-else
+      class="md"
+      :class="{ settled: !streaming }"
+      @click="onBodyClick"
+      v-html="answerHtml"
+    ></div>
+    <!-- eslint-enable vue/no-v-html -->
 
     <!-- 来源卡片：点一下跳资料详情页（预览 / 下载在那页）。
          appear + stagger 索引 = 流结束时逐个弹入
@@ -285,6 +367,46 @@ function sourceTitle(source: AskSource): string {
 .md {
   white-space: normal;
   overflow-wrap: anywhere;
+}
+/* T9：正文里的可点资料名（引擎 <kb/> 标记渲染而来）—— 长得像链接，点一下跳那份资料 */
+/* T9b：正文里的资料引用做成「文件胶囊」——
+   底色 + 边框 + 圆角 + 文件图标，四重信号叠一起，一眼认出"这是份资料、能点开"。
+   原来只有绿字+下划线，在中文里跟"划重点"没区别。 */
+.md :deep(a.kb-link) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 1px 8px 2px;
+  margin: 0 1px;
+  border: 0.5px solid #c0dd97;
+  border-radius: 6px;
+  background: #eaf3de;
+  color: #27500a;
+  font-size: 0.94em;
+  line-height: 1.5;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  vertical-align: baseline;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+/* 图标不吃掉收缩空间，名字太长时先截名字 */
+.md :deep(a.kb-link > svg) {
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+/* 超长文件名截断显示省略号，完整名字在 title 里（悬停可见） */
+.md :deep(a.kb-link .kb-tx) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.md :deep(a.kb-link:hover) {
+  background: #c0dd97;
+  border-color: #97c459;
+  color: #173404;
 }
 .md :deep(p) {
   margin: 0 0 6px;
