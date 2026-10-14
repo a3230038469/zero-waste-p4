@@ -95,6 +95,15 @@ export interface DocsQuery {
    * 单数参数名 `srcTable`，与数据字段同名，别写成 direction/topic。
    */
   srcTable: string[]
+  /**
+   * 【T10 追加】机构名**包含**这个关键词（单值文本式检索）。
+   *
+   * 与 `org`（精确多选）是两套语义，可共存、同时满足（AND）：
+   *   · `org=零萌公益` = 机构恰好是这一家（归一键全等，与下拉数字严格一致）；
+   *   · `orgLike=太平洋` = 机构名里**含**这个词（大小写不敏感，两侧空白已归一）。
+   * 空串 = 不按机构过滤。
+   */
+  orgLike: string
   q: string
   page: number
   pageSize: number

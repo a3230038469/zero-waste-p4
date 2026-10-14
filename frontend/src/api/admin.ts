@@ -138,6 +138,138 @@ export async function reuploadKnowledge(token: string, id: string): Promise<Reup
   return res.data
 }
 
+/* ------------------------------------------------------------------ *
+ * 设置页（T10：解析引擎设置 + 一键自检）
+ * ------------------------------------------------------------------ */
+
+/** 一个解析引擎的可用状态（字段名已由后端从引擎的 PascalCase 归一成小驼峰） */
+export interface ParserEngineInfo {
+  name: string
+  description: string
+  /** 这个引擎能吃哪些文件后缀 */
+  fileTypes: string[]
+  available: boolean
+  /** 不可用时引擎给的原因（英文原文，前端翻译成人话后展示） */
+  unavailableReason: string
+}
+
+/** 密钥字段的状态。🔴 **只有 configured，没有原值** —— 后端绝不回显真密钥 */
+export interface ParserSecretState {
+  configured: boolean
+}
+
+/** GET /api/admin/parser-config 的响应体 */
+export interface ParserConfigPayload {
+  success: boolean
+  /** 非密钥字段的原值（引擎实测 18 个字段，除密钥外全在这儿） */
+  values: Record<string, string | number | boolean>
+  /** 密钥字段的「已配置 / 未配置」 */
+  secrets: Record<string, ParserSecretState>
+  engines: ParserEngineInfo[]
+  /** 非空说明引擎列表取不到（配置本身照常返回，接口仍 200） */
+  enginesError: string
+}
+
+/** 读解析引擎设置 */
+export async function fetchParserConfig(token: string): Promise<ParserConfigPayload> {
+  const res = await http.get<ParserConfigPayload>('/admin/parser-config', {
+    headers: { 'X-Admin-Token': token },
+    silent: true
+  })
+  return res.data
+}
+
+/** 保存请求体：只放要改的字段。🔴 密钥留空 = 不改（后端会**不提交**该字段，保留原值） */
+export type ParserConfigPatch = Record<string, string | number | boolean>
+
+/** 回读校验的一项（老师要看得见「到底哪一项没过」） */
+export interface ParserFieldCheck {
+  key: string
+  label: string
+  expected: string
+  actual: string
+  ok: boolean
+}
+
+export interface ParserSaveResult {
+  /** 全部回读校验通过才是 true；false 时看 message 与 checks（配置已写入，只是有项没生效） */
+  success: boolean
+  message: string
+  changed: string[]
+  /** 本次**没有提交**的密钥字段（引擎保留原值） */
+  keptSecrets: string[]
+  /** 本次提交了几个字段 / 回读到了几个（任务单验收第 6 项要比对的就是它） */
+  submittedCount: number
+  readBackCount: number
+  /** 提交了但回读时不见了（应为空数组；非空说明引擎把它清掉了） */
+  missingFields: string[]
+  checks: ParserFieldCheck[]
+  /** 回读后的配置视图 */
+  config: ParserConfigPayload
+}
+
+export async function saveParserConfig(
+  token: string,
+  patch: ParserConfigPatch
+): Promise<ParserSaveResult> {
+  const res = await http.put<ParserSaveResult>('/admin/parser-config', patch, {
+    headers: { 'X-Admin-Token': token },
+    silent: true,
+    timeout: 60_000
+  })
+  return res.data
+}
+
+/** 测试连接（只测不存）：把待测配置丢给引擎的 parser-engines/check */
+export interface ParserCheckResult {
+  success: boolean
+  message: string
+  engines: ParserEngineInfo[]
+  /** 本次是否带了新密钥去测（false = 用引擎里已保存的那把测） */
+  usedPendingSecret: boolean
+}
+
+export async function checkParserConfig(
+  token: string,
+  patch: ParserConfigPatch
+): Promise<ParserCheckResult> {
+  const res = await http.post<ParserCheckResult>('/admin/parser-config/check', patch, {
+    headers: { 'X-Admin-Token': token },
+    silent: true,
+    timeout: 60_000
+  })
+  return res.data
+}
+
+/** 一键自检的一项（message 是人话，不是英文报错原文） */
+export interface SelfcheckItem {
+  key: 'engine' | 'database' | 'vector' | 'mineru'
+  label: string
+  ok: boolean
+  message: string
+  /** 这一项花了多久（毫秒） */
+  ms: number
+  /** 排障用的原始原因（前端只在失败时打到控制台） */
+  detail: string
+}
+
+export interface SelfcheckPayload {
+  success: boolean
+  /** 四项全过才是 true */
+  ok: boolean
+  generatedAt: string
+  items: SelfcheckItem[]
+}
+
+export async function runSelfcheck(token: string): Promise<SelfcheckPayload> {
+  const res = await http.post<SelfcheckPayload>('/admin/selfcheck', null, {
+    headers: { 'X-Admin-Token': token },
+    silent: true,
+    timeout: 30_000
+  })
+  return res.data
+}
+
 /** 管理视角的一个注册用户（手机号已脱敏） */
 export interface AdminUserItem {
   id: string

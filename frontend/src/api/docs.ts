@@ -33,7 +33,12 @@ export interface DocDetail extends DocItem {
 /** 书架页查询参数（对齐接口约定，多选维度用数组承载） */
 export interface DocListQuery {
   type?: string
-  orgs?: string[]
+  /**
+   * 【T10】机构名**包含**这个关键词（单值文本式检索）。
+   * 🔴 与 `orgs`（精确多选）是两套语义：这里传的就是用户在输入框里敲的那串字，
+   *    回车才发请求。空 = 不过滤。原先的机构下拉与远程搜索已整体下线。
+   */
+  orgLike?: string
   years?: string[]
   tags?: string[]
   /** 【T8 追加】所属方向，多选。值是数据原值（如 `知识查询（零废弃）`），不是显示名 */
@@ -105,9 +110,10 @@ function filterDocs(docs: DocItem[], query: DocListQuery): DocItem[] {
   if (query.type) {
     result = result.filter((d) => d.type === query.type)
   }
-  const orgs = query.orgs ?? []
-  if (orgs.length > 0) {
-    result = result.filter((d) => orgs.includes(d.org))
+  // T10：机构文本式检索（假数据分支也对齐后端口径：包含匹配）
+  const orgLike = query.orgLike?.trim().toLowerCase()
+  if (orgLike) {
+    result = result.filter((d) => d.org.toLowerCase().includes(orgLike))
   }
   const years = query.years ?? []
   if (years.length > 0) {
@@ -194,7 +200,9 @@ const REPEAT_ARRAY = { paramsSerializer: { indexes: null } } as const
 function toHttpParams(query: DocListQuery): Record<string, unknown> {
   return {
     type: query.type || undefined,
-    org: query.orgs?.length ? query.orgs : undefined,
+    // T10：机构只传 orgLike（单值文本式）。精确多选的 `org` 后端仍支持，
+    // 但页面上的机构筛选已改文本式，这里不再发它（留着就是没人用的死参数）。
+    orgLike: query.orgLike?.trim() || undefined,
     year: query.years?.length ? query.years : undefined,
     tag: query.tags?.length ? query.tags : undefined,
     srcTable: query.srcTables?.length ? query.srcTables : undefined,
@@ -215,32 +223,14 @@ async function getFacetsHttp(query: DocListQuery): Promise<FacetsResponse> {
   return res.data
 }
 
-/**
- * 机构搜索（T8）—— 调**同一个** facets 接口，只多带一个 `orgSearch`。
- *
- * 为什么需要：默认机构下拉只列出现 ≥2 次的单机构（老库实测 41 项），
- * 另有 296 个机构值只出现一次、186 个联合发文长串，靠这个搜索才能找到
- * （否则等于把它们藏起来）。
- * 后端返回的 `orgs[]` 最多 20 条，联合发文的长串会带 `label`（`A + B 等N家`）。
+/* ------------------------------------------------------------------ *
+ * 【T10 已删除】机构下拉的远程搜索
+ * ------------------------------------------------------------------ *
+ * 原先有 `searchOrgs()`（走 `/docs/facets?orgSearch=`）给机构下拉做远程搜索。
+ * 机构的筛选已改成**文本式输入框**（输完按回车，按机构名包含匹配筛），
+ * 这个函数全局确认已无调用方，随之下线 —— 留着就是死代码。
+ * 后端的 `?orgSearch=` 参数**保留未删**（老接口，别的调用方可能还在用）。
  */
-async function searchOrgsHttp(query: DocListQuery, keyword: string): Promise<FacetItem[]> {
-  const res = await http.get<FacetsResponse>('/docs/facets', {
-    params: { ...toHttpParams(query), orgSearch: keyword.trim() },
-    ...REPEAT_ARRAY
-  })
-  return res.data?.orgs ?? []
-}
-
-/** 假数据版：机构搜索（只按字符串包含匹配） */
-async function searchOrgsMock(query: DocListQuery, keyword: string): Promise<FacetItem[]> {
-  await delay(120)
-  const kw = keyword.trim().toLowerCase()
-  if (!kw) return []
-  const pool = filterDocs(MOCK_DOCS, { ...query, orgs: undefined })
-  return countByValue(pool, (d) => d.org)
-    .filter((item) => item.value.toLowerCase().includes(kw))
-    .slice(0, 20)
-}
 
 async function getDocDetailHttp(id: string): Promise<DocDetail | null> {
   const res = await http.get<DocDetail>(`/docs/${id}`, { silent: true })
@@ -425,11 +415,6 @@ export function getDocs(query: DocListQuery): Promise<DocListResponse> {
 
 export function getFacets(query: DocListQuery): Promise<FacetsResponse> {
   return USE_MOCK ? getFacetsMock(query) : getFacetsHttp(query)
-}
-
-/** 【T8】机构搜索：默认下拉只列高频机构，低频的（含联合发文长串）走这里找 */
-export function searchOrgs(query: DocListQuery, keyword: string): Promise<FacetItem[]> {
-  return USE_MOCK ? searchOrgsMock(query, keyword) : searchOrgsHttp(query, keyword)
 }
 
 export function getDocDetail(id: string): Promise<DocDetail | null> {

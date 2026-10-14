@@ -173,6 +173,36 @@ function aliasSpellings(canonical: string): string[] {
   return out
 }
 
+/**
+ * 归一后转小写（`orgLike` 的包含比对专用）。
+ *
+ * 🔴 为什么还要再转小写：老库里有 `UNEP` / `WWF` 这类大写写法，
+ *    用户输入 `unep` 也应该命中 —— 「大小写不敏感」是任务单的硬要求。
+ */
+function foldOrgText(raw: string): string {
+  return normalizeOrgWhitespace(raw).toLowerCase()
+}
+
+/**
+ * 「机构名包含这个关键词」（T10 书架机构改成文本式检索的判定口径）。
+ *
+ * 与下拉的精确匹配（`orgKey()` 全等）是**两套语义**，刻意并存：
+ *   · 下拉选一项 = 「机构恰好是这一家」（数字与筛出来的条数严格相等，接口约定的硬要求）；
+ *   · 这里输关键词 = 「机构名里含这个词」（老库 371 个机构值里 296 个只出现一次，
+ *     全列等于废掉；改成文本式之后，一次输入就能把所有含该词的资料都列出来）。
+ *
+ * 两侧都先做 Unicode 空白归一（`\xa0` / `\u3000` → 普通空格）再转小写：
+ * 老库实测有机构名里带 `\xa0`（如「中国家用电器研究院\xa0生产者责任延伸…」），
+ * 不归一的话用户敲普通空格就搜不到（任务单第二节 2.3 明确要求）。
+ *
+ * 关键词为空 = 「不按机构过滤」，返回 true。
+ */
+export function matchesOrgLike(raw: string, keyword: string): boolean {
+  const needle = foldOrgText(keyword)
+  if (!needle) return true
+  return foldOrgText(raw).includes(needle)
+}
+
 /** 数量从多到少；数量相同按字面序（与 routes/docs.ts 的排序口径一致） */
 function byCountThenValue(a: FacetItem, b: FacetItem): number {
   return b.count - a.count || a.value.localeCompare(b.value, 'zh-Hans-CN')

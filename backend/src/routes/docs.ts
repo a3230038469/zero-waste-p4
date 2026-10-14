@@ -7,6 +7,9 @@
  *   GET /api/docs/:id/preview  在线预览
  *   GET /api/docs/:id/download 下载原件（文件名「年份-机构-标题」）
  *
+ * T10：列表与筛选项都支持 `?orgLike=关键词`（机构名包含匹配，单值文本式检索）。
+ *      `?orgSearch=` 仍保留 —— 它只作用于 `facets` 的机构**下拉选项**（老接口，不删）。
+ *
  * 依赖：../weknora 对接层（自己写）
  * 注意：只改本文件，不要动 auth.ts / embed.ts
  */
@@ -32,6 +35,7 @@ import {
   JOINT_ORG_VALUE,
   buildOrgFacets,
   isJointOrg,
+  matchesOrgLike,
   orgKey,
   searchOrgFacets,
   srcTableLabel
@@ -96,6 +100,9 @@ function parseQuery(req: Request): DocsQuery {
     tag: toStringArray(req.query.tag),
     // T8：所属方向（传数据原值，不动显示名）
     srcTable: toStringArray(req.query.srcTable),
+    // T10：机构文本式检索（单值）。原始串原样带下去，比对时的空白归一与小写
+    // 都在 matchesOrgLike 里做（那里两侧对称处理，避免这里单边归一）。
+    orgLike: typeof req.query.orgLike === 'string' ? req.query.orgLike.trim() : '',
     q,
     page,
     pageSize,
@@ -135,6 +142,18 @@ function matchesOrg(doc: KbDocInternal, selected: string[]): boolean {
 }
 
 /**
+ * 机构**文本式**筛选（T10）：机构名里含这个关键词就算命中。
+ *
+ * 🔴 与上面 `matchesOrg` 是两套语义，可共存、同时满足（AND）：
+ *   前端书架的「机构」从下拉多选改成了输入框 + 回车，`?orgLike=太平洋`
+ *   要把「发布机构名称里含『太平洋』」的资料全列出来（可能命中多家不同机构）。
+ *   `org` 精确多选**保留**（接口约定里的老参数，别的调用方还在用）。
+ *
+ * 归一（`\xa0` / `\u3000` → 普通空格 + 转小写）与命中判定都在 data/orgs.ts 的
+ * `matchesOrgLike` 里，两侧对称处理 —— 只归一一边会出现「用户敲普通空格搜不到」。
+ */
+
+/**
  * 按条件筛选。
  *
  * skipDim 用于算筛选项数量：算某个维度的下拉数量时，**不带该维度自己的条件**，
@@ -147,6 +166,9 @@ function filterDocs(docs: KbDocInternal[], query: DocsQuery, skipDim?: Dim): KbD
       return false
     }
     if (skipDim !== 'org' && !matchesOrg(doc, query.org)) return false
+    // T10：orgLike 属于机构这一维，所以算「机构」的筛选项数量时同样不带它
+    // （否则下拉/计数会与实际筛选结果对不上）。
+    if (skipDim !== 'org' && !matchesOrgLike(doc.org, query.orgLike)) return false
     if (
       skipDim !== 'year' &&
       dimValues(query, 'year').length &&

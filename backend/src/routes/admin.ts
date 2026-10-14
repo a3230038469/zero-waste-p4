@@ -27,6 +27,14 @@ import {
   type AgentConfigPatch,
   type AgentConfigView
 } from '../weknora/agent-config.js'
+import {
+  SELFCHECK_ENGINE_TIMEOUT_MS,
+  checkParserConfig,
+  getParserConfigView,
+  listParserEngines,
+  updateParserConfig,
+  type ParserConfigPatch
+} from '../weknora/parser-config.js'
 import { EngineError } from '../weknora/types.js'
 import { baseNameOf, unzipFirstEntry } from '../weknora/zip.js'
 import {
@@ -1187,6 +1195,269 @@ router.put('/agent', requireAdmin, async (req: Request, res: Response) => {
   } catch (err) {
     sendEngineFailure(res, err, '保存智能体设置失败')
   }
+})
+
+/* ------------------------------------------------------------------ *
+ * 设置页（T10：解析引擎设置 + 一键自检）
+ * ------------------------------------------------------------------ *
+ *
+ *   GET  /api/admin/parser-config        读解析引擎配置（密钥只回「已配置 / 未配置」）
+ *   POST /api/admin/parser-config/check  测试连接（只测不存）
+ *   PUT  /api/admin/parser-config        保存（读全量 → 合并 → 整份写回 → 回读校验）
+ *   POST /api/admin/selfcheck            一键自检（引擎 / 数据库 / 向量 / MinerU 四项）
+ *
+ * 🔴 引擎那份配置的 PUT 是**整体替换**：只提交一部分字段，其余会被清零
+ *    （主控 2026-10-14 实测：提交 1 个字段，18 个被清掉 15 个）。
+ *    所以写入顺序与密钥的三条规则都写死在 weknora/parser-config.ts 里，
+ *    本节只做鉴权与错误信封翻译，**不要在这里拼 body**。
+ */
+
+/** 解析引擎配置的请求体（只放非密钥的基本类型字段） */
+function parserPatchBody(body: unknown): ParserConfigPatch {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    throw new EngineError('INVALID_PARSER_FIELD', '请求体得是一个对象', 400)
+  }
+  // 这里只做「是个对象 + 值是基本类型」的粗筛，字段名与类型的严格校验
+  // 交给 parser-config.parseParserPatch（它要先读到引擎当前配置才知道该长什么样）
+  const out: ParserConfigPatch = {}
+  for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
+    if (typeof value === 'string' || typeof value === 'boolean') {
+      out[key] = value
+      continue
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      out[key] = value
+      continue
+    }
+    throw new EngineError('INVALID_PARSER_FIELD', `${key} 只能是文本、开关或数字`, 400)
+  }
+  return out
+}
+
+/** GET /api/admin/parser-config —— 读配置 + 各解析引擎可用性（密钥不回显真值） */
+router.get('/parser-config', async (req: Request, res: Response) => {
+  if (!assertAdmin(req, res)) return
+
+  try {
+    res.json(await getParserConfigView())
+  } catch (err) {
+    sendEngineFailure(res, err, '读解析引擎设置失败')
+  }
+})
+
+/**
+ * POST /api/admin/parser-config/check —— 测试连接，**不保存**。
+ *
+ * ⚠️ 鉴权用 requireAdmin 中间件排在读请求体之前（与上传/qa-settings 同一考量）。
+ */
+router.post('/parser-config/check', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const patch = parserPatchBody(req.body)
+    res.json(await checkParserConfig(patch))
+  } catch (err) {
+    sendEngineFailure(res, err, '测试连接失败')
+  }
+})
+
+/**
+ * PUT /api/admin/parser-config —— 保存解析引擎设置（写引擎本体）。
+ *
+ * ⚠️ 校验没过**照样 200**（配置已经写进去了，抛错会让老师以为没保存）：
+ *    响应里 `success:false` + `checks[]` 逐项写清「期望什么、实际什么」。
+ */
+router.put('/parser-config', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const patch = parserPatchBody(req.body)
+    res.json(await updateParserConfig(patch))
+  } catch (err) {
+    sendEngineFailure(res, err, '保存解析引擎设置失败')
+  }
+})
+
+/* ------------------------------------------------------------------ *
+ * 一键自检
+ * ------------------------------------------------------------------ */
+
+/** 自检的一项（都是人话，不甩英文报错原文；原文放 detail 里给排障用） */
+interface SelfcheckItem {
+  key: string
+  label: string
+  ok: boolean
+  message: string
+  /** 这一项花了多久（毫秒） */
+  ms: number
+  /** 排障用的原始原因（前端不展示，只在失败时打印） */
+  detail: string
+}
+
+/** 一项检查的超时上限（毫秒） */
+const SELFCHECK_TIMEOUT_MS = 5_000
+
+/** 给任意 Promise 加个超时上限，避免某一项卡住把整个自检拖死 */
+async function withSelfcheckTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label}超时（${ms / 1000}s）`)), ms)
+      })
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/** 引擎给的原因 → 一句人话（2026-10-14 实测引擎原话是英文，前端不能直接甩给老师） */
+function mineruHumanReason(reason: string): string {
+  if (/api key/i.test(reason)) return 'API Key 没配或已失效，请在「设置」页的 MinerU 一栏填一下'
+  if (/token/i.test(reason)) return '云端 Token 没配，请在「设置」页的 MinerU 一栏填一下'
+  if (/endpoint|address|service not configured/i.test(reason)) return '服务地址没配，请在「设置」页的 MinerU 一栏填一下'
+  return '请到「设置」页检查 MinerU 的地址与密钥'
+}
+
+/**
+ * POST /api/admin/selfcheck —— 一次返回四项结果。
+ *
+ * 🔴 容错是硬要求：**任何一项失败都不能让整个接口 500**，一律返回 200 + `{ok:false}`，
+ *    失败项给一句人话（如「向量服务没启动：请先运行 Ollama」）。这个接口是给人看状态的，
+ *    一项挂了却弹「服务器错误」，等于让人没法排障。
+ */
+router.post('/selfcheck', requireAdmin, async (_req: Request, res: Response) => {
+  const items: SelfcheckItem[] = []
+
+  /* 1. 知识库引擎 ------------------------------------------------------- */
+  {
+    const started = Date.now()
+    let engines: Awaited<ReturnType<typeof listParserEngines>> = []
+    try {
+      engines = await withSelfcheckTimeout(
+        listParserEngines(SELFCHECK_ENGINE_TIMEOUT_MS),
+        SELFCHECK_ENGINE_TIMEOUT_MS + 500,
+        '探测知识库引擎'
+      )
+      items.push({
+        key: 'engine',
+        label: '知识库引擎',
+        ok: true,
+        message: `引擎正常，已识别 ${engines.length} 个解析引擎`,
+        ms: Date.now() - started,
+        detail: ''
+      })
+    } catch (err) {
+      items.push({
+        key: 'engine',
+        label: '知识库引擎',
+        ok: false,
+        message: '连不上知识库引擎，请确认 WeKnora 服务已经启动',
+        ms: Date.now() - started,
+        detail: err instanceof Error ? err.message : '未知错误'
+      })
+    }
+
+    /* 4. MinerU 云解析：直接复用上面那份引擎清单（不额外发请求） ------ */
+    const mineruStarted = Date.now()
+    const mineru = engines.find((e) => e.name === 'mineru_cloud')
+    if (!mineru) {
+      items.push({
+        key: 'mineru',
+        label: 'MinerU 云解析',
+        ok: false,
+        message: '引擎没返回 MinerU 云解析这一项，请到「设置」页查看',
+        ms: Date.now() - mineruStarted,
+        detail: 'parser-engines 里没有 mineru_cloud'
+      })
+    } else if (mineru.available) {
+      items.push({
+        key: 'mineru',
+        label: 'MinerU 云解析',
+        ok: true,
+        message: 'MinerU 云解析可用，新上传的 PDF 走的就是它',
+        ms: Date.now() - mineruStarted,
+        detail: ''
+      })
+    } else {
+      items.push({
+        key: 'mineru',
+        label: 'MinerU 云解析',
+        ok: false,
+        message: `MinerU 云解析不可用：${mineruHumanReason(mineru.unavailableReason)}`,
+        ms: Date.now() - mineruStarted,
+        detail: mineru.unavailableReason
+      })
+    }
+  }
+
+  /* 2. 数据库 ------------------------------------------------------------ */
+  {
+    const started = Date.now()
+    try {
+      const count = await withSelfcheckTimeout(prisma.user.count(), SELFCHECK_TIMEOUT_MS, '读数据库')
+      items.push({
+        key: 'database',
+        label: '数据库',
+        ok: true,
+        message: `数据库正常，已登记 ${count} 位注册用户`,
+        ms: Date.now() - started,
+        detail: ''
+      })
+    } catch (err) {
+      items.push({
+        key: 'database',
+        label: '数据库',
+        ok: false,
+        message: '数据库读不出来，请确认 backend/data 下的 SQLite 文件还在',
+        ms: Date.now() - started,
+        detail: err instanceof Error ? err.message : '未知错误'
+      })
+    }
+  }
+
+  /* 3. 向量服务（Ollama）-------------------------------------------------- */
+  {
+    const started = Date.now()
+    const base = (env('OLLAMA_BASE_URL') || 'http://127.0.0.1:11434').replace(/\/+$/, '')
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 3000)
+    try {
+      const upstream = await fetch(`${base}/api/version`, { signal: controller.signal })
+      if (!upstream.ok) {
+        throw new Error(`HTTP ${upstream.status}`)
+      }
+      const raw: unknown = await upstream.json().catch(() => null)
+      const version =
+        typeof raw === 'object' && raw !== null && 'version' in raw
+          ? String((raw as { version?: unknown }).version ?? '')
+          : ''
+      items.push({
+        key: 'vector',
+        label: '向量服务',
+        ok: true,
+        message: version ? `向量服务正常（Ollama ${version}）` : '向量服务正常',
+        ms: Date.now() - started,
+        detail: ''
+      })
+    } catch (err) {
+      const aborted = err instanceof Error && err.name === 'AbortError'
+      items.push({
+        key: 'vector',
+        label: '向量服务',
+        ok: false,
+        message: `向量服务没启动：请先运行 Ollama（默认地址 127.0.0.1:11434）；AI 问答会暂时不可用`,
+        ms: Date.now() - started,
+        detail: aborted ? '超时' : err instanceof Error ? err.message : '未知错误'
+      })
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  res.json({
+    success: true,
+    ok: items.every((item) => item.ok),
+    generatedAt: new Date().toISOString(),
+    items
+  })
 })
 
 export default router

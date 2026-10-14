@@ -11,6 +11,8 @@
  *   - T5（2026-10-12）：新增 `/chat` AI 问答独立页（会话存数据库，可接着聊）。
  *   - B09（2026-10-13）：新增 `/contribute` 我要投稿 + 意见反馈，与
  *     `/admin/contributions` 投稿审核队列。要回退就删掉带「B09 公众互动」注释的几行。
+ *   - T10（2026-10-14）：新增 `/admin/settings` 设置页（智能体设置从资料管理页搬来，
+ *     另有解析引擎设置与一键自检）。要回退就删掉带「T10」注释的那一行。
  */
 import { createRouter, createWebHistory } from 'vue-router'
 
@@ -41,6 +43,8 @@ const router = createRouter({
       name: 'adminContributions',
       component: () => import('../views/AdminContributionsView.vue')
     },
+    // T10：老师后台 · 设置（智能体设置 / 解析引擎设置 / 一键自检）
+    { path: '/admin/settings', name: 'adminSettings', component: () => import('../views/AdminSettingsView.vue') },
     { path: '/:pathMatch(.*)*', name: 'notFound', component: () => import('../views/NotFoundView.vue') }
   ],
   scrollBehavior(to) {
