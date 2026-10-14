@@ -28,12 +28,24 @@
  *   10. 筛选区改成**两行**：第一行（常用）机构输入框 + 主题 + 类型；
  *       第二行（辅助）所属方向 + 年份 + 排序 + 关键词。窄屏自动换行，不出横向滚动条。
  *
+ * T12 改动（2026-10-14）：
+ *   11. 顶部标签行由「9 个类型标签」改成**3 个方向标签**（全部 / 零废弃 / 化学品与健康），
+ *       类型下沉到工具栏的下拉。方向名**一律用后端给的 label**，前端不写死中文名；
+ *       数据源没有方向（老快照）时整行不渲染。
+ *   12. 工具栏里那个重复的「所属方向」下拉删掉了（已提升为顶部标签），
+ *       「当前筛选」里也不再单列方向 chip（顶部高亮已表达同一件事）；全部清除照旧清方向。
+ *   13. 跨方向切换时自动清掉失效的类型（在零废弃里选的「案例工具」到化学品下不存在，
+ *       留着就是空结果）。因为 facets 是异步的，校验放在**新方向的 facets 回来之后**。
+ *   14. 🔴 后端零改动：「类型跟着方向联动」是白拿的 —— `buildFacets()` 取 types 时
+ *       已经带上了当前的 srcTable 筛选，选完方向 facets.types 自动只剩该方向的类型。
+ *   15. 方向切换会同步地址栏（分享链接带得上），走 router.replace。
+ *
  * 数据走 src/api/docs.ts → 后端 GET /api/docs、/api/docs/facets
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getDocs, getFacets, type DocListQuery } from '../api/docs'
-import type { DocListResponse, FacetsResponse } from '../api/types'
+import type { DocListResponse, FacetItem, FacetsResponse } from '../api/types'
 import DocCard from '../components/DocCard.vue'
 
 const PAGE_SIZE = 20
@@ -62,32 +74,56 @@ const items = computed(() => list.value?.items ?? [])
 const total = computed(() => list.value?.total ?? 0)
 
 /**
- * 类型标签：库里实际存在的类型全列（不写死）。
- * 为什么不能只写死四个 —— 库里另有「研究实践报告」「各类标准」「国内政策法规」
- * 「国际公约」「科学认知」等类型（合计 100 多份），写死就永远筛不到它们。
+ * 【T12】方向清单：**固定用「不带任何筛选」的那一份**，只进一次（见 onMounted）。
+ *
+ * 为什么不能直接拿 facets.srcTables 当清单：后端算某一维的筛选项时是
+ * 「排除自己这一维、应用其余维度」，所以 facets.srcTables 会**跟着别的筛选一起收窄** ——
+ * 实测：选了「零废弃 + 类型案例工具」后它只剩 `零废弃:50`（化学品那条连同数字一起消失，
+ * 用户就没法横向切方向了）；关键词搜不到东西时它是空数组，整排标签会直接消失，
+ * 只能靠「全部清除」才能回来。标签是导航控件，不能被筛没了。
+ *
+ * 数字仍然取当前这次 facets（含义是「点这个方向会得到多少份」）：
+ * 当前筛选下没有命中的方向显示 0，切过去时 T12-C 会把失效的类型清掉，数字随即变过来。
  */
-const typeTabs = computed(() => {
-  const all = facets.value.types.map((t) => t.value).filter(Boolean)
-  const totalAll = facets.value.types.reduce((sum, t) => sum + t.count, 0)
-  return [{ value: '', label: '全部', count: totalAll }, ...all.map((v) => ({
-    value: v,
-    label: v,
-    count: facets.value.types.find((t) => t.value === v)?.count ?? 0
-  }))]
+const directions = ref<FacetItem[]>([])
+
+/**
+ * 【T12】顶部方向标签：全部 / 零废弃 / 化学品与健康。
+ *
+ * 为什么不再是类型：类型有 8 个，一行铺开又长又挤；其中 5 个只属于化学品方向，
+ * 平铺出来等于把「方向」这层结构抹平了。方向提上来做平级标签，类型下沉到工具栏。
+ *
+ * 两条硬要求：
+ *   1. 显示名**一律用后端给的 label**（`directions[].label`），前端不写死中文名 ——
+ *      方向改名只改后端 `srcTableLabel()` 一处。
+ *   2. 数据源没有方向时（清单是空数组，如老快照）返回空数组 → **整行不渲染**，
+ *      而不是摆一个点了筛不出东西的「全部」。
+ */
+const directionTabs = computed<{ value: string; label: string; count: number }[]>(() => {
+  if (directions.value.length === 0) return []
+  const live = facets.value.srcTables ?? []
+  const countOf = (value: string): number => live.find((d) => d.value === value)?.count ?? 0
+  return [
+    {
+      value: '',
+      label: '全部',
+      count: live.reduce((sum, d) => sum + d.count, 0)
+    },
+    ...directions.value.map((d) => ({ value: d.value, label: d.label ?? d.value, count: countOf(d.value) }))
+  ]
 })
 
-/** 【T8】所属方向下拉：数据源没有这一项时是空数组 → 页面不渲染它（不摆筛不中的假选项） */
-const srcTableOptions = computed(() => facets.value.srcTables ?? [])
+/**
+ * 当前方向（顶部标签是**单选**语义）。
+ * 地址栏上 `srcTable` 允许多值（T8 起就能带多个，参数可重复），那种老链接取第一个高亮。
+ */
+const activeDirection = computed(() => selectedSrcTables.value[0] ?? '')
 
 interface ActiveChip {
   /** 所属筛选维度，决定删掉它时该清哪个状态 */
-  dim: 'type' | 'orgLike' | 'year' | 'tag' | 'srcTable' | 'q'
+  dim: 'type' | 'orgLike' | 'year' | 'tag' | 'q'
   label: string
   value: string
-}
-
-function srcTableLabelOf(value: string): string {
-  return srcTableOptions.value.find((t) => t.value === value)?.label ?? value
 }
 
 /** 已选条件回显（给用户一个「我现在筛了什么」的确认） */
@@ -98,25 +134,19 @@ const activeChips = computed<ActiveChip[]>(() => {
   if (org) chips.push({ dim: 'orgLike', label: '机构含', value: org })
   for (const v of selectedYears.value) chips.push({ dim: 'year', label: '年份', value: `${v} 年` })
   for (const v of selectedTags.value) chips.push({ dim: 'tag', label: '主题', value: v })
-  for (const v of selectedSrcTables.value) chips.push({ dim: 'srcTable', label: '方向', value: v })
+  // T12：方向不再单独出 chip —— 顶部标签的高亮已经表达了同一件事，
+  // 再列一条会让人以为筛了两次。全部清除（resetAll）照旧清方向。
   if (activeType.value) chips.push({ dim: 'type', label: '类型', value: activeType.value })
   const q = keyword.value.trim()
   if (q) chips.push({ dim: 'q', label: '关键词', value: q })
   return chips
 })
 
-/** 已选条件的显示名（方向走 label，其余原样） */
-function chipText(chip: ActiveChip): string {
-  if (chip.dim === 'srcTable') return srcTableLabelOf(chip.value)
-  return chip.value
-}
-
 /** 按「维度 + 值」删条件：用索引删会在多选里错位（下拉顺序与 chip 顺序不一定一致） */
 function removeChip(chip: ActiveChip): void {
   if (chip.dim === 'orgLike') orgLike.value = ''
   else if (chip.dim === 'year') selectedYears.value = selectedYears.value.filter((v) => `${v} 年` !== chip.value)
   else if (chip.dim === 'tag') selectedTags.value = selectedTags.value.filter((v) => v !== chip.value)
-  else if (chip.dim === 'srcTable') selectedSrcTables.value = selectedSrcTables.value.filter((v) => v !== chip.value)
   else if (chip.dim === 'type') activeType.value = ''
   else keyword.value = ''
   onFilterChange()
@@ -136,6 +166,7 @@ function buildQuery(): DocListQuery {
   }
 }
 
+/** 只刷列表（翻页时筛选项没变，不必再取一次 facets） */
 async function fetchList(): Promise<void> {
   loading.value = true
   try {
@@ -145,14 +176,65 @@ async function fetchList(): Promise<void> {
   }
 }
 
-async function fetchFacets(): Promise<void> {
+/**
+ * 取筛选项，并顺手清掉在新方向下已不存在的类型。
+ *
+ * 【T12】切换方向后，原来选中的类型可能在新方向下压根不存在
+ * （「案例工具」只在零废弃方向里，到化学品方向会被筛成空结果，用户并不知道发生了什么）。
+ * 所以要等**新方向**的 facets 回来之后再校验并静默清掉 —— 拿切换前那份类型列表判断是没用的。
+ *
+ * ⚠️ `types` 为空**不能**当成「这个类型不存在」：那说明当前条件组合一份都没命中，
+ *    此时清类型等于把用户刚选的条件悄悄吃掉。
+ */
+async function refreshFacets(): Promise<void> {
   facets.value = await getFacets(buildQuery())
+  const typeLost =
+    activeType.value !== '' &&
+    facets.value.types.length > 0 &&
+    !facets.value.types.some((t) => t.value === activeType.value)
+  if (typeLost) {
+    activeType.value = ''
+    // 类型变了，主题 / 年份 / 机构的可选数量要按新类型重算一次
+    facets.value = await getFacets(buildQuery())
+  }
+}
+
+/** 筛选变更后刷新：**先取筛选项、再取列表**，顺序不能反（要先清失效类型再定最终条件）。 */
+async function refresh(): Promise<void> {
+  loading.value = true
+  try {
+    try {
+      await refreshFacets()
+    } catch {
+      // 筛选项取不到不该把列表一起拖下水（错误提示已由 http 拦截器统一弹），下面照样刷列表
+    }
+    list.value = await getDocs(buildQuery())
+  } finally {
+    loading.value = false
+  }
 }
 
 function onFilterChange(): void {
   page.value = 1
-  void fetchList()
-  void fetchFacets()
+  void refresh()
+}
+
+/**
+ * 【T12】方向切换后把方向同步进地址栏（分享链接要带得上）。
+ *
+ * ⚠️ 这个 replace 触发的 route 变化必须被下面的 watcher 认出来并跳过（见 selfPushedPath）：
+ *   否则 applyRouteQuery 会按「地址栏里有什么」重新灌一遍状态，把没进 URL 的筛选
+ *   （关键词 / 机构 / 主题…）统统清空 —— 用户刚搜完点个方向，搜索就没了。
+ */
+function onDirectionClick(value: string): void {
+  selectedSrcTables.value = value ? [value] : []
+  const query = { ...route.query }
+  if (value) query.srcTable = value
+  else delete query.srcTable
+  // replace 而不是 push：点筛选不该在浏览历史里堆一串记录
+  selfPushedPath = router.resolve({ path: '/shelf', query }).fullPath
+  void router.replace({ path: '/shelf', query })
+  onFilterChange()
 }
 
 function onPageChange(p: number): void {
@@ -200,13 +282,38 @@ function applyRouteQuery(): void {
   onFilterChange()
 }
 
-onMounted(applyRouteQuery)
+onMounted(() => {
+  applyRouteQuery()
+  // 方向清单只取这一次（不带任何筛选），见 directions 的注释
+  void getFacets({}).then((f) => {
+    directions.value = f.srcTables ?? []
+  })
+})
+
+/**
+ * 【T12】上一次由我们自己写进地址栏的方向（整条 fullPath）。
+ *
+ * watcher 见到它就跳过 applyRouteQuery —— 状态在 onDirectionClick 里已经是对的，
+ * 再按地址栏重灌一遍只会把没进 URL 的其他筛选（关键词 / 机构 / 主题…）冲掉。
+ * 存整条 fullPath 而不是布尔标记：点了**已选中**的方向时 replace 是空操作、路由不会触发变化，
+ * 布尔标记会一直挂着，把下一次真正的导航（从首页点主题进来）也一起吞掉。
+ */
+let selfPushedPath: string | null = null
 
 // 已在资料库页时，从首页再次点击主题/类型入口会带新的 query 过来，必须跟着变
 watch(
-  () => route.query,
-  () => {
-    if (route.path === '/shelf') applyRouteQuery()
+  () => route.fullPath,
+  (fullPath) => {
+    if (route.path !== '/shelf') {
+      selfPushedPath = null
+      return
+    }
+    if (selfPushedPath !== null && fullPath === selfPushedPath) {
+      selfPushedPath = null
+      return
+    }
+    selfPushedPath = null
+    applyRouteQuery()
   }
 )
 </script>
@@ -217,26 +324,28 @@ watch(
       <p class="zw-eyebrow">资料库</p>
       <h1>全部资料</h1>
       <p class="zw-sub">
-        共收录 <strong class="zw-num">{{ total }}</strong> 份资料，可按类型切换，
-        或按机构、年份、主题、方向组合筛选；除机构外的每一项下拉都标出了可命中的数量，
+        共收录 <strong class="zw-num">{{ total }}</strong> 份资料，可按方向浏览，
+        或按机构、年份、主题、类型组合筛选；除机构外的每一项下拉都标出了可命中的数量，
         机构可以输入关键字（输完按回车），会列出<b>机构名里含这个词</b>的所有资料。
       </p>
     </header>
 
-    <!-- 类型标签：库里实际存在的类型自动补全 -->
-    <div class="type-row" role="tablist" aria-label="资料类型">
+    <!-- 【T12】方向标签（全部 / 零废弃 / 化学品与健康）。
+         「类型」从这排标签上下沉到了工具栏的下拉，并跟着这里选的方向联动。
+         数据源没有方向时整行不渲染，别摆一个点了筛不出东西的「全部」。 -->
+    <div v-if="directionTabs.length > 0" class="type-row" role="tablist" aria-label="资料方向">
       <button
-        v-for="t in typeTabs"
-        :key="t.value || 'all'"
+        v-for="d in directionTabs"
+        :key="d.value || 'all'"
         type="button"
         role="tab"
         class="type-tab"
-        :class="{ 'is-active': activeType === t.value }"
-        :aria-selected="activeType === t.value"
-        @click="activeType = t.value; onFilterChange()"
+        :class="{ 'is-active': activeDirection === d.value }"
+        :aria-selected="activeDirection === d.value"
+        @click="onDirectionClick(d.value)"
       >
-        {{ t.label }}
-        <span class="tab-count zw-num">{{ t.count }}</span>
+        {{ d.label }}
+        <span class="tab-count zw-num">{{ d.count }}</span>
       </button>
     </div>
 
@@ -276,6 +385,8 @@ watch(
         class="filter-type"
         @change="onFilterChange"
       >
+        <!-- 【T12】类型下拉**保持原样**：选项来自 facets.types，而后端取这一维的筛选项时
+             已经带上了当前的方向筛选，选完方向这里自动只剩该方向的类型（后端零改动）。 -->
         <el-option v-for="f in facets.types" :key="f.value" :label="f.value" :value="f.value">
           <span class="opt-value">{{ f.value }}</span>
           <span class="opt-count">{{ f.count }}</span>
@@ -285,30 +396,6 @@ watch(
       <span class="filter-break" aria-hidden="true"></span>
 
       <!-- 第二行（辅助） -->
-      <!-- 【T8】所属方向（数据里只有两个值：零废弃 / 化学品与健康）。
-           数据源没有这一项时整块不渲染，别摆一个筛不中的假选项。 -->
-      <el-select
-        v-if="srcTableOptions.length > 0 || selectedSrcTables.length > 0"
-        v-model="selectedSrcTables"
-        multiple
-        collapse-tags
-        collapse-tags-tooltip
-        clearable
-        placeholder="所属方向"
-        class="filter-src"
-        @change="onFilterChange"
-      >
-        <el-option
-          v-for="f in srcTableOptions"
-          :key="f.value"
-          :label="f.label ?? f.value"
-          :value="f.value"
-        >
-          <span class="opt-value">{{ f.label ?? f.value }}</span>
-          <span class="opt-count">{{ f.count }}</span>
-        </el-option>
-      </el-select>
-
       <el-select
         v-model="selectedYears"
         multiple
@@ -347,7 +434,7 @@ watch(
         class="active-chip"
         @click="removeChip(c)"
       >
-        {{ c.label }}：{{ chipText(c) }} <span aria-hidden="true">×</span>
+        {{ c.label }}：{{ c.value }} <span aria-hidden="true">×</span>
       </button>
       <button type="button" class="clear-all" @click="resetAll">全部清除</button>
     </div>
@@ -403,7 +490,7 @@ watch(
   margin: 0 3px;
 }
 
-/* 类型标签 */
+/* 【T12】方向标签（class 名沿用原来的 type-row / type-tab，样式没动，只换了渲染的数据源） */
 .type-row {
   display: flex;
   flex-wrap: wrap;
@@ -453,7 +540,8 @@ watch(
   background: rgba(255, 255, 255, 0.22);
 }
 
-/* 工具栏：两行 —— 第一行（机构 / 主题 / 类型）＋第二行（方向 / 年份 / 排序 / 关键词）。
+/* 工具栏：两行 —— 第一行（机构 / 主题 / 类型）＋第二行（年份 / 排序 / 关键词）。
+   T12 起「所属方向」下拉已删（提升为顶部标签），第二行少了一项，其余位置与行为不动。
    用 grid 的显式两行 + flex 回退，窄屏（≤1100px）起自动收成单列，不出横向滚动条。 */
 .toolbar {
   display: flex;
@@ -480,13 +568,9 @@ watch(
   width: 230px;
 }
 
+/* T12：类型下拉跟着上方选中的方向变（选项本身只由后端 facets 决定） */
 .filter-type {
   width: 190px;
-}
-
-/* T8：所属方向（两个值，窄一点就够） */
-.filter-src {
-  width: 170px;
 }
 
 .filter-year {
@@ -597,7 +681,6 @@ watch(
   .filter-org,
   .filter-tag,
   .filter-type,
-  .filter-src,
   .filter-year,
   .filter-sort,
   .search-input {
