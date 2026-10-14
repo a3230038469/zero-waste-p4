@@ -12,6 +12,11 @@
   /* —— 主色（同时覆盖 Element Plus 的 primary，按钮/链接自动跟着走）—— */
   --zw-green: #2e7d32;
   --zw-green-deep: #1b5e20;
+  /* --zw-green-light 是看板图表的填充色（事件分布条 / 趋势柱）。
+     2026-10-11 复核补入：AdminStatsView 一直在引用它，但从未定义 —— CSS 自定义属性
+     解析失败会让整条 background 声明作废，表现为图表只剩底槽、没有柱子颜色。
+     值取主色与 soft 之间的中间绿，保证浅底上可辨识、又不与 var(--zw-green-soft) 撞脸。 */
+  --zw-green-light: #6fbf73;
   --zw-green-soft: #66bb6a;
   --zw-green-ink: #12331a;
   --zw-mint: #e9f3e9;
@@ -20,8 +25,14 @@
   /* —— 辅助色 —— */
   --zw-amber: #c8871f;
   --zw-amber-soft: #fdf3e0;
+  /* 琥珀的文字色（提示条正文）：--zw-amber 在浅琥珀底上对比度不够，深一档才够读 */
+  --zw-amber-ink: #8a5a12;
   --zw-teal: #2b7a78;
   --zw-teal-soft: #e6f2f1;
+  /* 错误 / 危险（后台的状态「异常」文字、失败提示）。2026-10-11 复核补入：
+     此前 AdminStatsView 用 #c0392b、AdminKnowledgeView 用 #c45656，两处各写各的，
+     同一个语义两种红。统一到令牌，以后调色只改一处。 */
+  --zw-danger: #c45656;
 
   /* —— 文字 —— */
   --zw-ink: #16241a;
