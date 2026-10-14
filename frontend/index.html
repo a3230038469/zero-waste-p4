@@ -3,7 +3,30 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      share-meta:start —— B09（2026-10-13）分享卡片用的一段标签，会被后端整段替换。
+
+      为什么要把这一段单独标出来：前端是 Vue SPA，转发链接时微信/QQ/钉钉的抓取程序
+      **不执行 JS**，只会读 HTML 里的这些标签。所以后端在回 /doc/:id 等页面时，
+      会把这一段替换成该页的真实标题与摘要（见 backend/src/share/meta.ts）。
+      下面这段是「默认值」，用于首页和没有单独注入规则的页面。
+      改这段没关系，但请保留 start / end 两个注释标记，否则替换会失效。
+    -->
+    <!-- share-meta:start -->
     <title>零废弃知识库</title>
+    <meta
+      name="description"
+      content="零废弃领域公开资料索引：政策法规、案例工具、研究报告、标准规范，支持筛选检索、在线预览与 AI 问答。"
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="零废弃知识库" />
+    <meta property="og:title" content="零废弃知识库" />
+    <meta
+      property="og:description"
+      content="政策法规、案例工具、研究报告、标准规范——按类型、发布机构、年份、主题筛选查找。"
+    />
+    <meta property="og:image" content="/share-cover.png" />
+    <!-- share-meta:end -->
   </head>
   <body>
     <div id="app"></div>

@@ -46,3 +46,5 @@ backend/data/qa-settings.json
 # 本机备份（含密钥 / 构建产物），绝不进仓库（2026-10-13 补）
 backend/.env.bak-*
 .demo-backup-*/
+# 待审投稿文件与元数据（B09 公众上传：含投稿人手机号，绝不进仓库）
+backend/data/contributions/

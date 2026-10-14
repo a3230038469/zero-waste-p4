@@ -724,8 +724,6 @@ export async function askKnowledgeBase(params: {
       ? params.knowledgeBaseIds
       : [engineKbId()]
 
-  const qaSettings = loadQaSettings()
-
   /* ── T7：先试智能体，失败自动回退 knowledge-chat ────────────────────── */
   const agentId = (params.agentId ?? getAgentId()).trim()
   if (agentId) {
@@ -743,6 +741,7 @@ export async function askKnowledgeBase(params: {
     params.sessionId
   )}`
 
+  const qaSettings = loadQaSettings()
   const askBody: Record<string, unknown> = {
     query: buildStyledQuery(params.query, qaSettings.style),
     knowledge_base_ids: kbIds,

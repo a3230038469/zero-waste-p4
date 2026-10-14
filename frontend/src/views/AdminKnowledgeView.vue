@@ -485,6 +485,8 @@ async function enterAdmin(): Promise<void> {
     <nav class="admin-nav">
       <router-link to="/admin/knowledge">资料管理</router-link>
       <router-link to="/admin/users">注册用户</router-link>
+      <!-- B09（2026-10-13）：只加了一条导航链接指向新增的投稿审核页，未动本页任何逻辑 -->
+      <router-link to="/admin/contributions">投稿审核</router-link>
       <router-link to="/admin/stats">数据看板</router-link>
     </nav>
 
