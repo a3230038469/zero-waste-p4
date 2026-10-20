@@ -236,7 +236,7 @@ onUnmounted(() => {
   box-shadow: 0 6px 18px rgba(46, 125, 50, 0.35);
 }
 .bubble-glyph {
-  font-size: 16px;
+  font-size: var(--zw-fs-body);
   font-weight: 600;
 }
 .ask-panel {
@@ -245,8 +245,8 @@ onUnmounted(() => {
   bottom: 72px;
   width: min(380px, calc(100vw - 48px));
   height: min(560px, calc(100vh - 120px));
-  background: #fff;
-  border: 1px solid #e3ece3;
+  background: var(--zw-surface);
+  border: 1px solid var(--zw-line);
   border-radius: 12px;
   box-shadow: 0 12px 32px rgba(31, 45, 31, 0.18);
   display: flex;
@@ -258,7 +258,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  border-bottom: 1px solid #eef4ee;
+  border-bottom: 1px solid var(--zw-mint-2);
 }
 .ask-title {
   font-weight: 600;
@@ -272,9 +272,9 @@ onUnmounted(() => {
 }
 .ask-hint {
   margin: 4px 2px 10px;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   line-height: 1.6;
-  color: #7b8b7b;
+  color: var(--zw-faint);
 }
 /* T5：气泡本身的样式（配色 / Markdown / 来源卡片 / 等待文案）全在 ChatBubble.vue。
    这里只留「谁在左边谁在右边」的排布。 */
@@ -291,13 +291,13 @@ onUnmounted(() => {
   flex-wrap: wrap;
   gap: 2px 8px;
   padding: 0 12px 8px;
-  border-top: 1px solid #f4f8f4;
+  border-top: 1px solid var(--zw-bg);
 }
 .ask-foot {
   display: flex;
   gap: 8px;
   padding: 10px 12px;
-  border-top: 1px solid #eef4ee;
+  border-top: 1px solid var(--zw-mint-2);
 }
 .pop-enter-active,
 .pop-leave-active {

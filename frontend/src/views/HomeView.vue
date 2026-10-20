@@ -293,7 +293,7 @@ onMounted(() => {
 }
 
 .search-icon {
-  font-size: 14px;
+  font-size: var(--zw-fs-sm);
   opacity: 0.55;
 }
 
@@ -333,7 +333,7 @@ onMounted(() => {
 .hot-chip:hover {
   color: var(--zw-green-deep);
   border-color: var(--zw-green);
-  background: #fff;
+  background: var(--zw-surface);
 }
 
 /* ---------------- 数据速览 ---------------- */
@@ -567,7 +567,7 @@ onMounted(() => {
   padding: 22px 22px 24px;
   border: 1px solid var(--zw-line);
   border-radius: var(--zw-radius);
-  background: linear-gradient(160deg, var(--zw-mint-2), #fff 62%);
+  background: linear-gradient(160deg, var(--zw-mint-2), var(--zw-surface) 62%);
 }
 
 .ask-samples {
@@ -579,7 +579,7 @@ onMounted(() => {
 
 .sample-chip {
   border: 1px solid var(--zw-line-strong);
-  background: #fff;
+  background: var(--zw-surface);
   color: var(--zw-text);
   font: inherit;
   font-size: var(--zw-fs-sm);
@@ -629,7 +629,7 @@ onMounted(() => {
 
 @media (max-width: 640px) {
   .hero h1 {
-    font-size: 27px;
+    font-size: var(--zw-fs-h2);
   }
 
   .search-row {
@@ -641,7 +641,7 @@ onMounted(() => {
   }
 
   .stat-value {
-    font-size: 22px;
+    font-size: var(--zw-fs-h3);
   }
 }
 </style>

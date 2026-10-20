@@ -35,7 +35,7 @@
 }
 
 .notfound__code {
-  font-size: 64px;
+  font-size: var(--zw-fs-display);
   font-weight: 700;
   line-height: 1;
   color: var(--zw-green-soft);

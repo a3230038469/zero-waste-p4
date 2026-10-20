@@ -100,13 +100,13 @@ const tone = computed(() => TYPE_TONE[props.doc.type] ?? 'default')
 }
 
 .tone-policy {
-  --tone: #2e7d32;
+  --tone: var(--zw-green);
 }
 .tone-research {
-  --tone: #2b7a78;
+  --tone: var(--zw-teal);
 }
 .tone-tool {
-  --tone: #c8871f;
+  --tone: var(--zw-amber);
 }
 .tone-standard {
   --tone: #5a6ea8;
@@ -118,7 +118,7 @@ const tone = computed(() => TYPE_TONE[props.doc.type] ?? 'default')
   --tone: #a85a7a;
 }
 .tone-default {
-  --tone: #93a396;
+  --tone: var(--zw-faint);
 }
 
 .card-top {
@@ -128,7 +128,7 @@ const tone = computed(() => TYPE_TONE[props.doc.type] ?? 'default')
 }
 
 .type-badge {
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   font-weight: 600;
   color: var(--zw-green-deep);
   background: var(--zw-mint);
@@ -137,7 +137,7 @@ const tone = computed(() => TYPE_TONE[props.doc.type] ?? 'default')
 }
 
 .year {
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-faint);
   margin-left: auto;
   font-variant-numeric: tabular-nums;
@@ -145,7 +145,7 @@ const tone = computed(() => TYPE_TONE[props.doc.type] ?? 'default')
 
 .doc-title {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--zw-fs-body);
   line-height: 1.5;
   color: var(--zw-ink);
   display: -webkit-box;
@@ -157,7 +157,7 @@ const tone = computed(() => TYPE_TONE[props.doc.type] ?? 'default')
 
 .doc-org {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -172,7 +172,7 @@ const tone = computed(() => TYPE_TONE[props.doc.type] ?? 'default')
 }
 
 .tag {
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-teal);
   background: var(--zw-teal-soft);
   border-radius: 6px;
@@ -190,7 +190,7 @@ const tone = computed(() => TYPE_TONE[props.doc.type] ?? 'default')
   gap: 10px;
   margin-top: auto;
   padding-top: 4px;
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-faint);
 }
 

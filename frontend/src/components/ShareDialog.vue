@@ -159,12 +159,12 @@ function saveQrImage(): void {
   height: 196px;
   border: 1px solid var(--zw-line-strong);
   border-radius: var(--zw-radius-sm);
-  background: #fff;
+  background: var(--zw-surface);
 }
 
 .qr-caption {
   margin: 10px 0 0;
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-muted);
 }
 
@@ -175,14 +175,14 @@ function saveQrImage(): void {
 
 .share-title {
   margin: 0 0 12px;
-  font-size: 15px;
+  font-size: var(--zw-fs-body);
   line-height: 1.6;
   color: var(--zw-ink);
 }
 
 .link-label {
   display: block;
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-muted);
   margin-bottom: 6px;
 }
@@ -190,7 +190,7 @@ function saveQrImage(): void {
 .link-input {
   width: 100%;
   padding: 8px 10px;
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-text);
   background: var(--zw-mint-2);
   border: 1px solid var(--zw-line-strong);
@@ -206,19 +206,19 @@ function saveQrImage(): void {
 .share-tips {
   margin: 0;
   padding-left: 18px;
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   line-height: 1.9;
   color: var(--zw-muted);
 }
 
 .share-empty {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   line-height: 1.9;
   color: var(--zw-muted);
 }
 
 .foot-hint {
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-faint);
 }
 

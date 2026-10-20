@@ -84,7 +84,7 @@ onMounted(() => {
 .site-footer {
   margin-top: 48px;
   padding: 40px 0 24px;
-  background: #fff;
+  background: var(--zw-surface);
   border-top: 1px solid var(--zw-line);
 }
 
@@ -96,13 +96,13 @@ onMounted(() => {
 
 .foot-brand h3 {
   margin: 0 0 10px;
-  font-size: 18px;
+  font-size: var(--zw-fs-lg);
   color: var(--zw-green-deep);
 }
 
 .foot-brand p {
   margin: 0 0 10px;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   line-height: 1.8;
   color: var(--zw-muted);
   max-width: 34em;
@@ -114,7 +114,7 @@ onMounted(() => {
 
 .foot-stat strong {
   color: var(--zw-green);
-  font-size: 18px;
+  font-size: var(--zw-fs-lg);
   margin: 0 3px;
 }
 
@@ -126,13 +126,13 @@ onMounted(() => {
 
 .foot-col h4 {
   margin: 0 0 3px;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-ink);
   letter-spacing: 0.06em;
 }
 
 .foot-col a {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-muted);
   text-decoration: none;
 }
@@ -149,7 +149,7 @@ onMounted(() => {
   padding: 0;
   text-align: left;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-muted);
   cursor: pointer;
 }
@@ -172,7 +172,7 @@ onMounted(() => {
   margin-top: 32px;
   padding-top: 16px;
   border-top: 1px dashed var(--zw-line);
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-faint);
 }
 

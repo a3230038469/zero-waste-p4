@@ -371,7 +371,7 @@ watch(
 .type-tab.is-active {
   background: var(--zw-green);
   border-color: var(--zw-green);
-  color: #fff;
+  color: var(--zw-surface);
 }
 
 .tab-count {
@@ -442,7 +442,7 @@ watch(
 
 .active-chip {
   border: 1px solid var(--zw-line-strong);
-  background: #fff;
+  background: var(--zw-surface);
   color: var(--zw-green-deep);
   font: inherit;
   font-size: var(--zw-fs-xs);
@@ -478,7 +478,7 @@ watch(
 }
 
 .skeleton-card {
-  background: #fff;
+  background: var(--zw-surface);
   border: 1px solid var(--zw-line);
   border-radius: var(--zw-radius);
   padding: 20px;
@@ -521,7 +521,7 @@ watch(
   }
 
   .page-head h1 {
-    font-size: 24px;
+    font-size: var(--zw-fs-h2);
   }
 }
 </style>

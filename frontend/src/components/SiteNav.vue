@@ -122,7 +122,7 @@ onMounted(() => {
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  color: #fff;
+  color: var(--zw-surface);
   background: linear-gradient(140deg, var(--zw-green), var(--zw-green-deep));
   box-shadow: 0 4px 12px rgba(46, 125, 50, 0.28);
 }
@@ -134,13 +134,13 @@ onMounted(() => {
 }
 
 .brand-text strong {
-  font-size: 16px;
+  font-size: var(--zw-fs-body);
   letter-spacing: 0.01em;
 }
 
 .brand-text em {
   font-style: normal;
-  font-size: 11px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-muted);
   letter-spacing: 0.08em;
 }
@@ -155,7 +155,7 @@ onMounted(() => {
   position: relative;
   padding: 8px 14px;
   border-radius: 999px;
-  font-size: 15px;
+  font-size: var(--zw-fs-body);
   color: var(--zw-text);
   text-decoration: none;
   transition:
@@ -179,7 +179,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  font-size: 14px;
+  font-size: var(--zw-fs-sm);
   white-space: nowrap;
 }
 
@@ -194,7 +194,7 @@ onMounted(() => {
   padding: 7px 16px;
   border: 1px solid var(--zw-line-strong);
   border-radius: 999px;
-  background: #fff;
+  background: var(--zw-surface);
   transition:
     border-color 0.18s ease,
     box-shadow 0.18s ease;
@@ -210,7 +210,7 @@ onMounted(() => {
   background: none;
   padding: 4px 2px;
   font: inherit;
-  font-size: 14px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-muted);
   cursor: pointer;
 }
@@ -248,7 +248,7 @@ onMounted(() => {
 
   .nav-link {
     padding: 6px 12px;
-    font-size: 14px;
+    font-size: var(--zw-fs-sm);
   }
 }
 </style>

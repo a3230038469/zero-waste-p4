@@ -175,12 +175,12 @@ onMounted(() => {
 }
 .title {
   margin: 0 0 6px;
-  font-size: 22px;
+  font-size: var(--zw-fs-h3);
   color: var(--zw-green-ink);
 }
 .sub {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-muted);
 }
 .admin-nav {
@@ -189,7 +189,7 @@ onMounted(() => {
   margin: 12px 0 4px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--zw-line);
-  font-size: 14px;
+  font-size: var(--zw-fs-sm);
 }
 .admin-nav a {
   color: var(--zw-muted);
@@ -215,7 +215,7 @@ onMounted(() => {
 }
 .err {
   margin: 8px 0 0;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-amber);
 }
 .stat {
@@ -223,7 +223,7 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   margin: 4px 0 10px;
-  font-size: 14px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-text);
 }
 .stat .dot {
@@ -236,11 +236,11 @@ onMounted(() => {
   margin-bottom: 10px;
 }
 .bar .count {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-muted);
 }
 .table {
-  background: #fff;
+  background: var(--zw-surface);
 }
 .topic {
   margin-right: 4px;
@@ -258,7 +258,7 @@ onMounted(() => {
 }
 .empty-text {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-muted);
 }
 </style>

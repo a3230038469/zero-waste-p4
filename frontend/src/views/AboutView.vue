@@ -240,7 +240,7 @@ const SECTIONS = [
 }
 
 .page-head h1 {
-  font-size: 34px;
+  font-size: var(--zw-fs-h1);
   margin: 0 0 12px;
 }
 
@@ -260,7 +260,7 @@ const SECTIONS = [
 }
 
 .anchor-nav a {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-muted);
   text-decoration: none;
   padding: 4px 12px;
@@ -270,7 +270,7 @@ const SECTIONS = [
 
 .anchor-nav a:hover {
   color: var(--zw-green-deep);
-  background: #fff;
+  background: var(--zw-surface);
   border-color: var(--zw-line);
 }
 
@@ -280,7 +280,7 @@ const SECTIONS = [
 }
 
 .prose p {
-  font-size: 15px;
+  font-size: var(--zw-fs-body);
   line-height: 1.95;
   color: var(--zw-text);
   margin: 0 0 14px;
@@ -307,12 +307,12 @@ const SECTIONS = [
 }
 
 .fact-label {
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-muted);
 }
 
 .fact-value {
-  font-size: 19px;
+  font-size: var(--zw-fs-h3);
   font-weight: 700;
   color: var(--zw-green-deep);
 }
@@ -327,13 +327,13 @@ const SECTIONS = [
 
 .use-card h3 {
   margin: 0 0 8px;
-  font-size: 15px;
+  font-size: var(--zw-fs-body);
   color: var(--zw-green-deep);
 }
 
 .use-card p {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   line-height: 1.8;
   color: var(--zw-text);
 }
@@ -347,7 +347,7 @@ const SECTIONS = [
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 14px;
+  font-size: var(--zw-fs-sm);
 }
 
 th,
@@ -360,7 +360,7 @@ td {
 }
 
 th {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-green-deep);
   background: var(--zw-mint-2);
   white-space: nowrap;
@@ -386,14 +386,14 @@ td:first-child {
 }
 
 .rules li {
-  font-size: 14px;
+  font-size: var(--zw-fs-sm);
   line-height: 1.85;
   color: var(--zw-text);
 }
 
 /* 提示与占位 */
 .hint {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   line-height: 1.8;
   color: var(--zw-muted);
   background: var(--zw-mint-2);
@@ -411,7 +411,7 @@ td:first-child {
 
 .todo h3 {
   margin: 0 0 10px;
-  font-size: 15px;
+  font-size: var(--zw-fs-body);
   color: var(--zw-amber);
 }
 
@@ -424,20 +424,20 @@ td:first-child {
 }
 
 .todo li {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-text);
 }
 
 .todo-note {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   line-height: 1.8;
   color: var(--zw-faint);
 }
 
 .updated {
   margin: 34px 0 12px;
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-faint);
 }
 
@@ -452,7 +452,7 @@ td:first-child {
 
 @media (max-width: 640px) {
   .page-head h1 {
-    font-size: 26px;
+    font-size: var(--zw-fs-h2);
   }
 
   .use-grid {

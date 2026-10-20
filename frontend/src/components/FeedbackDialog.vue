@@ -172,7 +172,7 @@ async function onSubmit(): Promise<void> {
 <style scoped>
 .fb-intro {
   margin: 0 0 16px;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   line-height: 1.8;
   color: var(--zw-muted);
 }
@@ -184,7 +184,7 @@ async function onSubmit(): Promise<void> {
 .fb-label {
   display: block;
   margin-bottom: 8px;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-ink);
 }
 

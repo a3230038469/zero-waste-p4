@@ -232,12 +232,12 @@ onMounted(() => {
 }
 
 .page-head h1 {
-  font-size: 32px;
+  font-size: var(--zw-fs-h1);
   margin: 0 0 12px;
 }
 
 .page-head code {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   background: var(--zw-mint);
   color: var(--zw-green-deep);
   border-radius: 5px;
@@ -262,12 +262,12 @@ onMounted(() => {
 }
 
 .metric-label {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-muted);
 }
 
 .metric-value {
-  font-size: 26px;
+  font-size: var(--zw-fs-h2);
   font-weight: 700;
   color: var(--zw-green-deep);
   line-height: 1.15;
@@ -275,14 +275,14 @@ onMounted(() => {
 
 .metric-value em {
   font-style: normal;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   font-weight: 500;
   color: var(--zw-muted);
   margin-left: 3px;
 }
 
 .metric-note {
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-faint);
 }
 
@@ -298,7 +298,7 @@ onMounted(() => {
 }
 
 .peak {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-green-deep);
   background: var(--zw-mint);
   border-radius: 999px;
@@ -333,7 +333,7 @@ onMounted(() => {
 }
 
 .year-count {
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-muted);
 }
 
@@ -358,14 +358,14 @@ onMounted(() => {
 }
 
 .year-label {
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-muted);
   white-space: nowrap;
 }
 
 .chart-foot {
   margin: 12px 0 0;
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-faint);
 }
 
@@ -399,7 +399,7 @@ onMounted(() => {
   grid-template-columns: 132px 1fr 46px 50px;
   align-items: center;
   gap: 10px;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
 }
 
 .bar-list--wide li {
@@ -448,7 +448,7 @@ onMounted(() => {
 .bar-share {
   text-align: right;
   color: var(--zw-faint);
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
 }
 
 /* ---------------- 口径说明 ---------------- */
@@ -466,7 +466,7 @@ onMounted(() => {
 }
 
 .notes li {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   line-height: 1.8;
   color: var(--zw-text);
 }
@@ -491,7 +491,7 @@ onMounted(() => {
 
 @media (max-width: 640px) {
   .page-head h1 {
-    font-size: 25px;
+    font-size: var(--zw-fs-h2);
   }
 
   .year-chart {

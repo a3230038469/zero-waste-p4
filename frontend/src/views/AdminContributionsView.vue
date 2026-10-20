@@ -333,14 +333,14 @@ onMounted(() => {
 
 .title {
   margin: 0 0 8px;
-  font-size: 22px;
+  font-size: var(--zw-fs-h3);
   color: var(--zw-ink);
 }
 
 .sub {
   margin: 0;
   max-width: 52em;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   line-height: 1.8;
   color: var(--zw-muted);
 }
@@ -355,7 +355,7 @@ onMounted(() => {
 }
 
 .admin-nav a {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-muted);
   text-decoration: none;
 }
@@ -382,8 +382,8 @@ onMounted(() => {
 
 .err {
   margin: 10px 0 0;
-  font-size: 13px;
-  color: #c0392b;
+  font-size: var(--zw-fs-sm);
+  color: var(--zw-danger);
 }
 
 .stat-row {
@@ -392,12 +392,12 @@ onMounted(() => {
   gap: 8px;
   flex-wrap: wrap;
   margin-bottom: 12px;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-muted);
 }
 
 .stat-row b {
-  font-size: 16px;
+  font-size: var(--zw-fs-body);
 }
 
 .warn {
@@ -409,7 +409,7 @@ onMounted(() => {
 }
 
 .bad {
-  color: #c0392b;
+  color: var(--zw-danger);
 }
 
 .dot {
@@ -443,24 +443,24 @@ onMounted(() => {
 }
 
 .cell-title {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-ink);
 }
 
 .cell-note {
   margin-top: 2px;
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-muted);
   line-height: 1.6;
 }
 
 .cell-sub {
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-faint);
 }
 
 .reason {
-  color: #c0392b;
+  color: var(--zw-danger);
 }
 
 .link-btn {
@@ -468,7 +468,7 @@ onMounted(() => {
   background: none;
   padding: 0;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-green);
   cursor: pointer;
   text-align: left;

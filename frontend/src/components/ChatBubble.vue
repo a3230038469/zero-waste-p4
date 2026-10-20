@@ -142,27 +142,27 @@ const waitingText = computed(() => (props.waitingText ?? '').trim())
   max-width: 86%;
   padding: 8px 12px;
   border-radius: 10px;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-word;
-  background: #f3f8f3;
-  color: #24352a;
+  background: var(--zw-mint-2);
+  color: var(--zw-green-ink);
 }
 .bubble.user {
   margin-left: auto;
-  background: var(--zw-green, #2e7d32);
-  color: #fff;
+  background: var(--zw-green);
+  color: var(--zw-surface);
 }
 .bubble.failed {
-  background: #fff7e6;
-  color: #b26a00;
+  background: var(--zw-amber-soft);
+  color: var(--zw-amber);
 }
 .plain {
   white-space: pre-wrap;
 }
 .typing {
-  color: #6b7d6b;
+  color: var(--zw-muted);
 }
 
 /* ---- 等待文案切换：淡出 300ms → 淡入 300ms ---- */
@@ -190,17 +190,17 @@ const waitingText = computed(() => (props.waitingText ?? '').trim())
   gap: 4px 6px;
   margin-top: 8px;
   padding-top: 6px;
-  border-top: 1px dashed #dfe9df;
+  border-top: 1px dashed var(--zw-line);
   white-space: normal;
 }
 .chip {
   max-width: 100%;
   padding: 2px 8px;
-  border: 1px solid #cfe0cf;
+  border: 1px solid var(--zw-line-strong);
   border-radius: 10px;
-  background: #fff;
-  color: var(--zw-green, #2e7d32);
-  font-size: 11px;
+  background: var(--zw-surface);
+  color: var(--zw-green);
+  font-size: var(--zw-fs-xs);
   line-height: 1.7;
   text-align: left;
   white-space: nowrap;
@@ -214,8 +214,8 @@ const waitingText = computed(() => (props.waitingText ?? '').trim())
     border-color 0.18s ease;
 }
 .chip:hover {
-  background: #f0f7f0;
-  border-color: var(--zw-green, #2e7d32);
+  background: var(--zw-mint-2);
+  border-color: var(--zw-green);
 }
 .chip-enter-active {
   transition:
@@ -239,8 +239,8 @@ const waitingText = computed(() => (props.waitingText ?? '').trim())
 }
 /* 「来源」二字（独立页要显示标签，这里补一个） */
 .sources-label {
-  font-size: 11px;
-  color: #8aa08c;
+  font-size: var(--zw-fs-xs);
+  color: var(--zw-faint);
 }
 
 /* ---- 回答正文（Markdown） ---- */
@@ -265,17 +265,17 @@ const waitingText = computed(() => (props.waitingText ?? '').trim())
   line-height: 1.45;
 }
 .md :deep(h1) {
-  font-size: 16px;
+  font-size: var(--zw-fs-body);
 }
 .md :deep(h2) {
-  font-size: 15px;
+  font-size: var(--zw-fs-body);
 }
 .md :deep(h3) {
-  font-size: 14px;
+  font-size: var(--zw-fs-sm);
 }
 .md :deep(h4) {
-  font-size: 13px;
-  color: #3c5243;
+  font-size: var(--zw-fs-sm);
+  color: var(--zw-text);
 }
 .md :deep(ul),
 .md :deep(ol) {
@@ -286,7 +286,7 @@ const waitingText = computed(() => (props.waitingText ?? '').trim())
   margin: 0 0 2px;
 }
 .md :deep(a) {
-  color: var(--zw-green, #2e7d32);
+  color: var(--zw-green);
   text-decoration: underline;
 }
 /* 表格：加边框 + 斑马纹；窄气泡里允许横向滚，别把面板撑破。
@@ -295,7 +295,7 @@ const waitingText = computed(() => (props.waitingText ?? '').trim())
   margin: 6px 0;
   border-radius: 8px;
   overflow-x: auto;
-  border: 1px solid #dfe9df;
+  border: 1px solid var(--zw-line);
 }
 .md :deep(table) {
   display: block;
@@ -303,35 +303,35 @@ const waitingText = computed(() => (props.waitingText ?? '').trim())
   overflow-x: auto;
   margin: 0;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
 }
 .md :deep(th),
 .md :deep(td) {
   padding: 4px 7px;
-  border: 1px solid #dfe9df;
+  border: 1px solid var(--zw-line);
   text-align: left;
   white-space: nowrap;
 }
 .md :deep(th) {
-  background: #eef5ee;
+  background: var(--zw-mint-2);
   font-weight: 600;
 }
 .md :deep(tbody tr:nth-child(even) td) {
-  background: #f7faf7;
+  background: var(--zw-mint-2);
 }
 /* 代码：浅灰底 */
 .md :deep(code) {
   padding: 1px 4px;
   border-radius: 3px;
-  background: #eef1ee;
+  background: var(--zw-mint-2);
   font-family: Consolas, 'Courier New', monospace;
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
 }
 .md :deep(pre) {
   margin: 6px 0;
   padding: 8px;
   border-radius: 6px;
-  background: #eef1ee;
+  background: var(--zw-mint-2);
   overflow-x: auto;
 }
 .md :deep(pre code) {
@@ -341,18 +341,18 @@ const waitingText = computed(() => (props.waitingText ?? '').trim())
 .md :deep(blockquote) {
   margin: 6px 0;
   padding: 2px 8px;
-  border-left: 3px solid #cfe0cf;
-  color: #55685a;
+  border-left: 3px solid var(--zw-line-strong);
+  color: var(--zw-muted);
 }
 .md :deep(hr) {
   margin: 8px 0;
   border: none;
-  border-top: 1px solid #e3ece3;
+  border-top: 1px solid var(--zw-line);
 }
 /* 模型自己写的出处标记：弱化成小字，不抢正文 */
 .md :deep(.cite) {
-  color: #8aa08c;
-  font-size: 12px;
+  color: var(--zw-faint);
+  font-size: var(--zw-fs-xs);
 }
 
 /* ---- T5-4 特效：只在流结束后（settled）触发，避免流式重刷反复重放 ---- */

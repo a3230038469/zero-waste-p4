@@ -409,12 +409,12 @@ onMounted(async () => {
 .side-title {
   font-weight: 600;
   color: var(--zw-green-deep);
-  font-size: 14px;
+  font-size: var(--zw-fs-sm);
 }
 .side-hint {
   margin: 0;
   padding: 14px;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   line-height: 1.7;
   color: var(--zw-muted);
 }
@@ -454,7 +454,7 @@ onMounted(async () => {
   border-radius: var(--zw-radius-sm);
 }
 .conv-title {
-  font-size: 14px;
+  font-size: var(--zw-fs-sm);
   font-weight: 600;
   color: var(--zw-ink);
   white-space: nowrap;
@@ -464,11 +464,11 @@ onMounted(async () => {
 .conv-sub {
   display: flex;
   gap: 8px;
-  font-size: 11px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-faint);
 }
 .conv-preview {
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   line-height: 1.5;
   color: var(--zw-muted);
   white-space: nowrap;
@@ -481,7 +481,7 @@ onMounted(async () => {
   width: 28px;
   border: 0;
   background: none;
-  font-size: 16px;
+  font-size: var(--zw-fs-body);
   line-height: 1;
   color: var(--zw-faint);
   cursor: pointer;
@@ -493,7 +493,7 @@ onMounted(async () => {
   opacity: 1;
 }
 .conv-del:hover {
-  color: #c0392b;
+  color: var(--zw-danger);
 }
 
 /* ---- 右：对话流 ---- */
@@ -519,7 +519,7 @@ onMounted(async () => {
   color: var(--zw-ink);
 }
 .main-tip {
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-faint);
 }
 .stream {
@@ -531,12 +531,12 @@ onMounted(async () => {
 .empty {
   margin: 32px 0;
   text-align: center;
-  font-size: 14px;
+  font-size: var(--zw-fs-sm);
   line-height: 1.9;
   color: var(--zw-muted);
 }
 .empty-sub {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-faint);
 }
 .msg {
@@ -549,7 +549,7 @@ onMounted(async () => {
 /* 气泡自身有 max-width:86%，这里再放宽一点：独立页比首页气泡宽得多，卡太窄反而难读 */
 .msg :deep(.bubble) {
   max-width: min(92%, 760px);
-  font-size: 14px;
+  font-size: var(--zw-fs-sm);
   line-height: 1.8;
 }
 .msg.user :deep(.bubble) {

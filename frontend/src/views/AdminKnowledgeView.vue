@@ -668,24 +668,24 @@ async function enterAdmin(): Promise<void> {
 }
 .kb-title {
   margin: 0 0 6px;
-  font-size: 22px;
+  font-size: var(--zw-fs-h3);
   color: var(--zw-green-ink);
 }
 .kb-sub {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-muted);
 }
 .kb-actions {
   padding-top: 4px;
 }
 .file-input {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-text);
 }
 .picked {
   margin-left: 10px;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-muted);
 }
 .token-card {
@@ -698,7 +698,7 @@ async function enterAdmin(): Promise<void> {
 }
 .err {
   margin: 8px 0 0;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-amber);
 }
 .admin-nav {
@@ -707,7 +707,7 @@ async function enterAdmin(): Promise<void> {
   margin: 12px 0 4px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--zw-line);
-  font-size: 14px;
+  font-size: var(--zw-fs-sm);
 }
 .admin-nav a {
   color: var(--zw-muted);
@@ -728,7 +728,7 @@ async function enterAdmin(): Promise<void> {
   align-items: center;
   gap: 8px;
   margin: 4px 0 10px;
-  font-size: 14px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-text);
 }
 .kb-stat .ok {
@@ -759,11 +759,11 @@ async function enterAdmin(): Promise<void> {
 }
 .qa-title {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--zw-fs-body);
   color: var(--zw-green-ink);
 }
 .qa-now {
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-muted);
 }
 .qa-grid {
@@ -774,18 +774,18 @@ async function enterAdmin(): Promise<void> {
 .qa-field label {
   display: block;
   margin-bottom: 6px;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-text);
 }
 .qa-hint {
   margin: 6px 0 0;
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   line-height: 1.6;
   color: var(--zw-faint);
 }
 .qa-warn {
   margin: 0 0 12px;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-amber);
 }
 .qa-foot {
@@ -795,16 +795,16 @@ async function enterAdmin(): Promise<void> {
   margin-top: 16px;
 }
 .qa-time {
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-faint);
   font-variant-numeric: tabular-nums;
 }
 .kb-bar .count {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-muted);
 }
 .kb-table {
-  background: #fff;
+  background: var(--zw-surface);
 }
 .kb-pager {
   margin-top: 14px;
@@ -833,7 +833,7 @@ async function enterAdmin(): Promise<void> {
 }
 .dlg-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-faint);
 }
 </style>

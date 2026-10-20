@@ -107,7 +107,7 @@ h4 {
 /* 区块小标题（英文眉标 + 中文主标题 + 一句引言） */
 .zw-eyebrow {
   display: inline-block;
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   font-weight: 600;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -119,13 +119,13 @@ h4 {
 }
 
 .zw-h2 {
-  font-size: 26px;
+  font-size: var(--zw-fs-h2);
   margin: 0 0 10px;
 }
 
 .zw-sub {
   color: var(--zw-muted);
-  font-size: 15px;
+  font-size: var(--zw-fs-body);
   line-height: 1.8;
   margin: 0;
 }
@@ -372,4 +372,27 @@ h4 {
 /* 表单校验错误：错误文字统一走语义色（Element 默认红与站内不一致） */
 .el-form-item.is-error .el-form-item__error {
   color: var(--zw-danger);
+}
+
+/* —— 9. 按下态（2026-10-20 补齐）——
+ * 悬停浮起之后必须要有「按下去」的回落反馈，否则手感是断的：
+ * 用户按了却不知道有没有触发。这里是全站唯一定义处，组件不必自己写。
+ */
+:where(button, [role='button'], .el-button, .zw-error__retry, .zw-card--clickable):not(
+    :disabled
+  ):active {
+  /* 下沉 1px + 收回阴影：视觉上「压进去了」，与悬停浮起形成完整闭环 */
+  transform: translateY(1px);
+  box-shadow: var(--zw-shadow-sm);
+}
+
+/* 链接：按下加深一档 */
+.zw-link:active {
+  color: var(--zw-green-deep);
+}
+
+/* 禁用态不接受按下位移，避免「还能按」的错觉 */
+.zw-disabled:active,
+:disabled:active {
+  transform: none;
 }

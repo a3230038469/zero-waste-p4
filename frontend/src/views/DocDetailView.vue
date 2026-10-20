@@ -484,7 +484,7 @@ watch(
 
 .tag-chip {
   border: 1px solid var(--zw-line-strong);
-  background: #fff;
+  background: var(--zw-surface);
   color: var(--zw-teal);
   font: inherit;
   font-size: var(--zw-fs-sm);
@@ -572,12 +572,12 @@ watch(
   justify-content: space-between;
   padding: 8px 14px;
   background: var(--zw-green);
-  color: #fff;
+  color: var(--zw-surface);
   font-size: var(--zw-fs-body);
 }
 
 .preview-close {
-  color: #fff;
+  color: var(--zw-surface);
 }
 
 .pdf-frame {
@@ -643,7 +643,7 @@ watch(
   }
 
   .doc-title {
-    font-size: 21px;
+    font-size: var(--zw-fs-h3);
   }
 
   .meta-grid {

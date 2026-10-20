@@ -445,14 +445,14 @@ function goLogin(): void {
 
 .page-head h1 {
   margin: 0 0 10px;
-  font-size: 26px;
+  font-size: var(--zw-fs-h2);
   color: var(--zw-green-deep);
 }
 
 .page-head p {
   margin: 0 0 18px;
   max-width: 46em;
-  font-size: 14px;
+  font-size: var(--zw-fs-sm);
   line-height: 1.9;
   color: var(--zw-muted);
 }
@@ -469,13 +469,13 @@ function goLogin(): void {
 
 .login-gate h3 {
   margin: 0 0 10px;
-  font-size: 17px;
+  font-size: var(--zw-fs-lg);
   color: var(--zw-ink);
 }
 
 .login-gate p {
   margin: 0 0 16px;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   line-height: 1.9;
   color: var(--zw-muted);
 }
@@ -485,7 +485,7 @@ function goLogin(): void {
   padding: 12px 14px;
   border-radius: var(--zw-radius-sm);
   background: var(--zw-mint-2);
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   line-height: 1.8;
   color: var(--zw-text);
 }
@@ -497,7 +497,7 @@ function goLogin(): void {
 .ct-label {
   display: block;
   margin-bottom: 8px;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-ink);
 }
 
@@ -529,7 +529,7 @@ function goLogin(): void {
 }
 
 .file-name {
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   color: var(--zw-text);
 }
 
@@ -544,14 +544,26 @@ function goLogin(): void {
   background: none;
   padding: 0;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-muted);
   cursor: pointer;
   text-decoration: underline;
+  transition: color var(--zw-dur-fast) var(--zw-ease);
+}
+
+/* 交互态补齐：删除附件是不可逆操作，悬停要给出「会删」的信号（转语义红），
+   而不是停留在中性的灰。焦点环保证键盘用户也能定位到它。 */
+.file-clear:hover {
+  color: var(--zw-danger);
+}
+
+.file-clear:focus-visible {
+  outline: none;
+  box-shadow: var(--zw-focus-ring);
 }
 
 .file-hint {
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-faint);
 }
 
@@ -564,7 +576,7 @@ function goLogin(): void {
 }
 
 .ct-actions-hint {
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-faint);
 }
 
@@ -577,7 +589,7 @@ function goLogin(): void {
   align-items: center;
   gap: 10px;
   margin: 0 0 12px;
-  font-size: 16px;
+  font-size: var(--zw-fs-body);
   color: var(--zw-ink);
 }
 
@@ -590,7 +602,7 @@ function goLogin(): void {
   padding: 0 6px;
   border-radius: 10px;
   background: var(--zw-mint);
-  font-size: 12px;
+  font-size: var(--zw-fs-xs);
   color: var(--zw-green-deep);
 }
 
@@ -601,17 +613,17 @@ function goLogin(): void {
 }
 
 .reason {
-  color: #c0392b;
+  color: var(--zw-danger);
 }
 
 .ok-note {
   color: var(--zw-green);
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
 }
 
 .pending-note {
   color: var(--zw-muted);
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
 }
 
 .fb-options {

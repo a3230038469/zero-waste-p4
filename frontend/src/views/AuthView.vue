@@ -250,13 +250,13 @@ async function handleRegister(): Promise<void> {
 }
 .title {
   margin: 4px 0 6px;
-  font-size: 20px;
+  font-size: var(--zw-fs-h3);
   text-align: center;
   color: var(--zw-green, #2e7d4f);
 }
 .subtitle {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: var(--zw-fs-sm);
   text-align: center;
   color: #888;
 }
