@@ -411,10 +411,10 @@ function goLogin(): void {
               </el-tag>
             </h3>
 
-            <el-empty
-              v-if="!mineLoading && mine.length === 0"
-              description="还没有投过稿，上方提交后会在这里显示"
-            />
+            <div v-if="!mineLoading && mine.length === 0" class="zw-empty">
+              <p class="zw-empty__title">还没有投过稿</p>
+              <p class="zw-empty__desc">上方提交后会在这里显示进度。</p>
+            </div>
 
             <el-table v-else v-loading="mineLoading" :data="mine" class="mine-table">
               <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />

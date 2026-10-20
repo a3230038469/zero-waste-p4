@@ -464,6 +464,11 @@ onMounted(async () => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  transition: color var(--zw-dur-fast) var(--zw-ease);
+}
+/* 父级 .conv:hover 已给整行换底色，这里再让标题变主色，悬停指向更明确 */
+.conv-main:hover .conv-title {
+  color: var(--zw-green-deep);
 }
 .conv-sub {
   display: flex;

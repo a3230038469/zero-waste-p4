@@ -28,6 +28,8 @@
 }
 
 .notfound__panel {
+  max-width: 620px;
+  margin-inline: auto;
   border: 1px solid var(--zw-line);
   border-radius: var(--zw-radius);
   background: var(--zw-surface);

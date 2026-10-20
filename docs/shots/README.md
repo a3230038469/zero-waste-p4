@@ -6,48 +6,66 @@
 
 ---
 
-## 截图清单
+## 截图清单（2026-10-20 拍摄）
 
-| 文件 | 页面 | 路由 | 状态 |
+| 文件 | 内容 | 路由 | 覆盖的状态 |
 |---|---|---|---|
-| `home.png` | 首页 | `/` | ⬜ 待补 |
-| `shelf.png` | 书架页 | `/shelf` | ⬜ 待补 |
-| `auth.png` | 注册 / 登录页 | `/auth` | ⬜ 待补 |
-| `doc-detail.png` | 资料详情页 | `/doc/:id` | ⬜ 待补 |
-| `admin-stats.png` | 管理统计页 | `/admin/stats` | ⬜ 待补 |
+| `01-home.png` | 首页 | `/` | 正常 |
+| `02-shelf.png` | 资料库（617 份，卡片网格） | `/shelf` | 正常 |
+| `03-doc-detail.png` | 资料详情 | `/doc/k-16` | 正常 |
+| `04-auth.png` | 注册 / 登录 | `/auth` | 正常 |
+| `05-contribute.png` | 我要投稿 | `/contribute` | 正常（空态：还没投过稿） |
+| `06-insights.png` | 数据概览 | `/insights` | 正常 |
+| `07-404.png` | 404 空态 | `/404-not-exist` | 空态 |
+| `08-state-hover.png` | 首页类型卡片悬停 | `/` | 悬停 |
+| `09-state-focus.png` | 资料库类型标签键盘焦点 | `/shelf` | 键盘焦点 |
+| `10-state-empty.png` | 资料库搜索无结果 | `/shelf?q=zzzzzznotfound` | 空态 |
 
-每个页面需覆盖**四种态**（正常 / 加载 / 空 / 错误），共 5 × 4 = 20 张。
+未覆盖（需后端制造故障才能拍，留待 QA 批次）：接口失败的错误态、表单校验失败态、加载骨架屏的定格。
+
+## 怎么复现
+
+### 前置
+
+```bash
+npm run dev:backend    # 必须先起，否则页面全是错误态
+npm run dev:frontend   # 默认 http://localhost:5173
+```
+
+### 拍摄
+
+**不要用 `chrome --headless --screenshot`。** 这种方式不推进 `requestAnimationFrame`，
+Vue 的页面过渡会卡在 `fade-slide-enter-from`（`opacity: 0`），拍出来是一片空白
+（2026-10-20 实际踩过，404 页当时就是这么拍成空白的）。
+
+用 Puppeteer 驱动本机 Chrome，等 `networkidle` + 动画结束后再截：
+
+```bash
+npm i puppeteer-core            # 装在仓库外即可，不污染项目依赖
+node scripts-local/shots.js     # 逐页 goto -> 等 <main> 有内容 -> sleep 1.2s -> screenshot
+```
+
+脚本要点：
+
+- `executablePath` 指向本机 Chrome，不用下载 Chromium（国内拉 `storage.googleapis.com` 经常超时）
+- 每页 `waitForFunction(() => document.querySelector('.app-main').children.length > 0)`
+- 截图前 `sleep(1200)`，等 `<transition>` 的进场动画跑完
+- 交互态用 `element.hover()` / `keyboard.press('Tab')` 真实触发，不要用 CSS 伪造
 
 ## 目录结构
 
 ```
 docs/shots/
 ├─ README.md
-├─ home.png
-├─ shelf.png
-├─ auth.png
-├─ doc-detail.png
-├─ admin-stats.png
+├─ 01-home.png … 10-state-empty.png
 └─ QA01/          # 按 QA 批次归档
    └─ QA01FIX/    # 修复轮，与 QA01 对照
 ```
 
-## 怎么补
-
-```bash
-# 1. 起服务
-npm run dev:backend    # 终端 1（必须先起，否则页面全是错误态）
-npm run dev:frontend   # 终端 2
-
-# 2. 浏览器访问 localhost:5173 逐页截图
-
-# 3. 压体积（单张 ≤ 200KB）
-npx -p sharp-cli sharp -i input.png -o docs/shots/home.png resize 1280
-```
-
 ## 纪律
 
-- 命名：小写 + 短横线（`doc-detail.png`，不写 `DocDetail.png`）
-- Markdown 引用用**相对路径**：`../shots/home.png`
-- 单张 ≤ 200KB；超了先压再传
+- 命名：两位序号 + 短横线（`03-doc-detail.png`），交互态用 `state-` 前缀
+- Markdown 引用用**相对路径**：`../shots/03-doc-detail.png`
+- 单张 ≤ 400KB（1440×900 PNG 实测 130–380KB，属于正常范围）；超了先压再传
+- 需要更小体积时统一压到 1280 宽：`npx -p sharp-cli sharp -i in.png -o out.png resize 1280`
 - 别把大二进制拖进仓——portal 根目录那个 55MB `cloudflared.exe` 就是教训

@@ -119,9 +119,12 @@ onMounted(() => {
 
     <el-skeleton v-if="loading" :rows="8" animated />
 
-    <el-empty v-else-if="failed || !overview" description="暂时取不到统计数据">
-      <el-button type="primary" @click="load">重新加载</el-button>
-    </el-empty>
+    <!-- 取数失败是「错误」不是「没有数据」：给红字原因 + 重试，避免用户误以为统计为空 -->
+    <div v-else-if="failed || !overview" class="zw-error">
+      <p class="zw-error__title">统计数据加载失败</p>
+      <p class="zw-error__desc">网络或服务暂时不可用，点下面按钮重试。</p>
+      <button type="button" class="zw-error__retry" @click="load">重新加载</button>
+    </div>
 
     <template v-else>
       <!-- 口径卡片 -->

@@ -256,12 +256,13 @@ watch(
       </div>
     </div>
 
+    <!-- 不存在：走站内 zw-empty 规范，与全站 404 页同一套观感 -->
     <div v-else-if="!doc" class="detail-card zw-card">
-      <el-result icon="warning" title="404" sub-title="这份资料不存在或已下架">
-        <template #extra>
-          <el-button type="primary" @click="goShelf">返回资料库</el-button>
-        </template>
-      </el-result>
+      <div class="zw-empty">
+        <p class="zw-empty__title">这份资料不存在或已下架</p>
+        <p class="zw-empty__desc">它可能已被移除，或者链接里的编号不对。</p>
+        <el-button type="primary" @click="goShelf">返回资料库</el-button>
+      </div>
     </div>
 
     <template v-else>

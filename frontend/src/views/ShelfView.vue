@@ -77,6 +77,12 @@ const activeChips = computed<ActiveChip[]>(() => {
   return chips
 })
 
+/** 切换类型标签：抽成方法而不是模板内联两句，避免格式化工具折行时把分号吞掉导致编译报错 */
+function selectType(value: string): void {
+  activeType.value = value
+  onFilterChange()
+}
+
 /** 按「维度 + 值」删条件：用索引删会在多选里错位（下拉顺序与 chip 顺序不一定一致） */
 function removeChip(chip: ActiveChip): void {
   if (chip.dim === 'org') selectedOrgs.value = selectedOrgs.value.filter((v) => v !== chip.value)
@@ -203,10 +209,7 @@ watch(
         class="type-tab"
         :class="{ 'is-active': activeType === t.value }"
         :aria-selected="activeType === t.value"
-        @click="
-          activeType = t.value
-          onFilterChange()
-        "
+        @click="selectType(t.value)"
       >
         {{ t.label }}
         <span class="tab-count zw-num">{{ t.count }}</span>
@@ -327,13 +330,19 @@ watch(
       </div>
     </template>
 
-    <el-empty v-else description="没有匹配的资料">
-      <p class="empty-tip">换一个关键词，或者放宽筛选条件试试。</p>
+    <!-- 空态：走站内 zw-empty 规范（与 404、错误态同一套留白与字号），不用 el-empty 默认插画 -->
+    <div v-else class="zw-empty">
+      <svg class="empty-ico" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+        <circle cx="21" cy="21" r="11" stroke="currentColor" stroke-width="2" />
+        <path d="M29.5 29.5 38 38" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+      </svg>
+      <p class="zw-empty__title">没有匹配的资料</p>
+      <p class="zw-empty__desc">换一个关键词，或者放宽筛选条件试试。</p>
       <div class="empty-actions">
         <el-button @click="resetAll">清除筛选</el-button>
         <el-button type="primary" @click="goAskAi">试试问 AI</el-button>
       </div>
-    </el-empty>
+    </div>
   </div>
 </template>
 
@@ -515,15 +524,16 @@ watch(
   margin-top: 28px;
 }
 
-.empty-tip {
-  margin: 0 0 14px;
-  font-size: var(--zw-fs-sm);
-  color: var(--zw-muted);
+.empty-ico {
+  width: 44px;
+  height: 44px;
+  color: var(--zw-green-soft);
 }
 
 .empty-actions {
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: var(--zw-space-3);
   justify-content: center;
 }
 

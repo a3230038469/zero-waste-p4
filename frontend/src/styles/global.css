@@ -220,6 +220,23 @@ h4 {
   border-radius: var(--zw-radius-sm);
 }
 
+/* —— 1b. 按下态兜底：任何可点元素按下时轻微下沉，给即时反馈 ——
+   用 :where() 保持 0 优先级，组件自己写的 :active 永远能覆盖这里；
+   卡片/链接有专门的下沉与变色，排除在外避免叠加。 */
+
+:where(a, button, input[type='button'], input[type='submit'], [tabindex]):active:not(
+    .zw-card--clickable
+  ):not(.zw-link):not(:disabled) {
+  transform: translateY(1px);
+  transition-duration: var(--zw-dur-fast);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(a, button, input, [tabindex]):active {
+    transform: none;
+  }
+}
+
 /* —— 2. 可点卡片：悬停上浮 + 阴影升级，按下下沉 —— */
 
 .zw-card--clickable {

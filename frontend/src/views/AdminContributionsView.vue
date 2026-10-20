@@ -263,7 +263,10 @@ onMounted(() => {
         </div>
       </div>
 
-      <el-empty v-if="!loading && !hasItems" description="这个状态下暂时没有投稿" />
+      <div v-if="!loading && !hasItems" class="zw-empty">
+        <p class="zw-empty__title">这个状态下暂时没有投稿</p>
+        <p class="zw-empty__desc">切换上方状态筛选，或者等新的投稿进来。</p>
+      </div>
 
       <el-table v-else v-loading="loading" :data="items" class="ct-table">
         <el-table-column label="标题" min-width="200">
@@ -494,5 +497,9 @@ onMounted(() => {
   text-align: left;
   text-decoration: underline;
   word-break: break-all;
+  transition: color var(--zw-dur-fast) var(--zw-ease);
+}
+.link-btn:hover {
+  color: var(--zw-green-deep);
 }
 </style>

@@ -14,10 +14,11 @@
     "lint": "npm run lint --workspace backend && npm run lint --workspace frontend",
     "typecheck": "npm run typecheck --workspace backend && npm run typecheck --workspace frontend",
     "typecheck:frontend": "npm run typecheck --workspace frontend",
+    "build:frontend": "npm run build --workspace frontend",
     "format": "prettier --write \"**/*.{js,ts,vue,json,css,scss,yml,html}\"",
     "format:check": "prettier --check \"**/*.{js,ts,vue,json,css,scss,yml,html}\"",
-    "verify": "npm run lint --workspaces --if-present && npm run typecheck:frontend && npm run format:check",
-    "verify:all": "npm run lint && npm run typecheck && npm run format:check"
+    "verify": "npm run lint --workspaces --if-present && npm run typecheck:frontend && npm run build:frontend && npm run format:check",
+    "verify:all": "npm run lint && npm run typecheck && npm run build && npm run format:check"
   },
   "engines": {
     "node": ">=20"
