@@ -1,0 +1,114 @@
+{
+ "date": "2026-10-20",
+ "base": "http://localhost:5173",
+ "results": [
+  {
+   "name": "首页搜索跳转结果页",
+   "ok": true,
+   "detail": "20 个结果"
+  },
+  {
+   "name": "结果页点开详情",
+   "ok": true,
+   "detail": "中国低值废塑料回收再生指南"
+  },
+  {
+   "name": "键盘焦点环可见",
+   "ok": true,
+   "detail": "10/10 个聚焦元素有阴影环"
+  },
+  {
+   "name": "登录空提交被前端拦截",
+   "ok": true,
+   "detail": "出现校验文案"
+  },
+  {
+   "name": "UI 登录成功且导航显示问候",
+   "ok": true,
+   "detail": "月月验收"
+  },
+  {
+   "name": "刷新后登录态保持",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "404 兜底渲染",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "移动端无横向溢出 /",
+   "ok": true,
+   "detail": "scrollWidth 超出 0px"
+  },
+  {
+   "name": "移动端无横向溢出 /shelf",
+   "ok": true,
+   "detail": "scrollWidth 超出 0px"
+  }
+ ],
+ "focusLog": [
+  {
+   "tag": "a",
+   "cls": "brand",
+   "shadow": "rgba(46, 125, 50, 0.35) 0px 0px 0px 3px",
+   "outline": "none"
+  },
+  {
+   "tag": "a",
+   "cls": "nav-link",
+   "shadow": "rgba(46, 125, 50, 0.35) 0px 0px 0px 3px",
+   "outline": "none"
+  },
+  {
+   "tag": "a",
+   "cls": "router-link-active router-link",
+   "shadow": "rgba(46, 125, 50, 0.35) 0px 0px 0px 3px",
+   "outline": "none"
+  },
+  {
+   "tag": "a",
+   "cls": "nav-link",
+   "shadow": "rgba(46, 125, 50, 0.35) 0px 0px 0px 3px",
+   "outline": "none"
+  },
+  {
+   "tag": "a",
+   "cls": "nav-link",
+   "shadow": "rgba(46, 125, 50, 0.35) 0px 0px 0px 3px",
+   "outline": "none"
+  },
+  {
+   "tag": "a",
+   "cls": "nav-link",
+   "shadow": "rgba(46, 125, 50, 0.35) 0px 0px 0px 3px",
+   "outline": "none"
+  },
+  {
+   "tag": "a",
+   "cls": "nav-link",
+   "shadow": "rgba(46, 125, 50, 0.35) 0px 0px 0px 3px",
+   "outline": "none"
+  },
+  {
+   "tag": "a",
+   "cls": "login-link",
+   "shadow": "rgba(46, 125, 50, 0.298) 0px 0px 0px 2.5555px",
+   "outline": "none"
+  },
+  {
+   "tag": "button",
+   "cls": "type-tab is-active",
+   "shadow": "rgba(46, 125, 50, 0.35) 0px 0px 0px 3px",
+   "outline": "none"
+  },
+  {
+   "tag": "button",
+   "cls": "type-tab",
+   "shadow": "rgba(46, 125, 50, 0.35) 0px 0px 0px 3px",
+   "outline": "none"
+  }
+ ],
+ "okAll": true
+}

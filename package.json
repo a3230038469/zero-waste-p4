@@ -18,12 +18,18 @@
     "format": "prettier --write \"**/*.{js,ts,vue,json,css,scss,yml,html}\"",
     "format:check": "prettier --check \"**/*.{js,ts,vue,json,css,scss,yml,html}\"",
     "verify": "npm run lint --workspaces --if-present && npm run typecheck:frontend && npm run build:frontend && npm run format:check",
-    "verify:all": "npm run lint && npm run typecheck && npm run build && npm run format:check"
+    "verify:all": "npm run lint && npm run typecheck && npm run build && npm run format:check",
+    "audit:interaction": "python scripts/audit-interaction-states.py",
+    "audit:tokens": "python scripts/analyze-style-coverage.py",
+    "qa:shots": "node scripts/qa-shots.js",
+    "qa:e2e": "node scripts/qa-e2e.js",
+    "qa:overflow": "node scripts/diag-overflow.js"
   },
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
-    "prettier": "^3.9.10"
+    "prettier": "^3.9.10",
+    "puppeteer-core": "^25.14.0"
   }
 }
