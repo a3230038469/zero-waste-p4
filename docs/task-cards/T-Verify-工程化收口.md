@@ -16,8 +16,9 @@
 | `format` | `prettier --write`，全仓格式化 |
 | `format:check` | `prettier --check`，只检查不改 |
 | `typecheck:frontend` | 只跑前端 `vue-tsc` |
-| `verify` | **日常用**：`lint(--workspaces) + typecheck:frontend + format:check` |
-| `verify:all` | **完整体检**：含 backend typecheck（当前会有 Prisma 旧账报错，见下） |
+| `build:frontend` | 只构建前端（`vue-tsc --noEmit && vite build`） |
+| `verify` | **日常用**：`lint(--workspaces) + typecheck:frontend + build:frontend + format:check` |
+| `verify:all` | **完整体检**：含 backend typecheck 与全量 build（当前会在 backend 撞 Prisma 旧账，见下） |
 
 `verify` 默认跳过 backend typecheck 的原因：`backend/src/chat/store.ts` 用了 `prisma.conversation` / `prisma.message`，但 Prisma schema 缺这两个 model。这是**先前就存在的旧账**，与本卡无关，已另记待办。
 
@@ -44,9 +45,12 @@ npm run verify
 | frontend lint | 静默（0 错误 0 警告） |
 | backend lint | 静默 |
 | frontend typecheck | 静默（0 报错） |
+| frontend build | `✓ built in Xs`（有 chunk > 500KB 的提示属正常） |
 | format:check | `All matched files use Prettier code style!` |
 
-## 五、已知坑（本卡最大的坑）
+> `build` 关是 2026-10-20 补的，原因见下一节「第二个坑」。**没有 build 的 verify 是不完整的**。
+
+## 五、已知坑（本卡两个坑，第二个更危险）
 
 **prettier 与 eslint 会打架。** 首跑 `prettier --write` 后，出现了 **64 条 eslint 警告**：prettier 把多行的 `<el-button>` / `<el-radio>` 折回单行，触发 `vue/html-closing-bracket-newline` 与 `vue/multiline-html-element-content-newline`。
 
@@ -57,6 +61,30 @@ npm run verify
 ```
 
 若顺序写错（放中间或开头），冲突规则不会被关掉，警告依旧。
+
+### 第二个坑：prettier 折行吞掉模板里的分号（会导致整页白屏）
+
+格式化 `.vue` 模板时，prettier 会把 `v-on` 的内联多语句折成多行，**并删掉语句间分号**：
+
+```html
+<!-- 之前（合法） -->
+@click="activeType = t.value; onFilterChange()"
+
+<!-- 之后（Vue 编译报 Unexpected token） -->
+@click="
+  activeType = t.value
+  onFilterChange()
+"
+```
+
+后果：`/shelf` 整页白屏。而当时 `verify` 只有 lint + typecheck + format:check，
+**三道全绿**——`vue-tsc --noEmit` 不校验模板内联表达式语法，eslint 也不查。
+
+补救与规矩：
+
+1. 模板里不写多语句内联处理器，抽成方法（`@click="selectType(t.value)"`）
+2. `verify` 补 `build` 关；只跑 lint 不能算验完
+3. 全仓扫描同类问题：多行 `@event` 且不含分号的即嫌疑，当前仅 1 处（已修）
 
 ## 六、墓碑候选
 
