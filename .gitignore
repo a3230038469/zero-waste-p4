@@ -32,6 +32,8 @@ Thumbs.db
 # 临时
 .tmp/
 tmp/
+# Vite 改 vite.config.ts 时冒出来的临时配置副本
+*.timestamp-*.mjs
 
 # 本地资料包：PDF 原件体积大（35 份约 60MB），不进仓库
 # 注意：同目录的 kb-index.json 与 README.md **要进**，前端靠索引开发
