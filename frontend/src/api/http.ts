@@ -34,13 +34,28 @@ http.interceptors.request.use((config) => {
   return config
 })
 
+/**
+ * 同一条错误文案的全局去重窗口（毫秒）。
+ *
+ * 后端一挂，列表 + 筛选项这类并发请求会同时失败，不去重就连弹两三条一模一样的红条，
+ * 看着像连出三次错（2026-10-20 从队友视觉分支移植的修复）。
+ */
+const DEDUPE_MS = 1200
+let lastMsg = ''
+let lastAt = 0
+
 // 响应拦截：统一错误 toast 提示
 http.interceptors.response.use(
   (res) => res,
   (err) => {
     const msg = err?.response?.data?.error?.message ?? err.message ?? '请求失败'
     if (!err.config?.silent) {
-      ElMessage.error(msg)
+      const now = Date.now()
+      if (msg !== lastMsg || now - lastAt > DEDUPE_MS) {
+        ElMessage.error(msg)
+        lastMsg = msg
+        lastAt = now
+      }
     }
     return Promise.reject(err)
   }

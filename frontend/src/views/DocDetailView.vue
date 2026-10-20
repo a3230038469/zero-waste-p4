@@ -87,6 +87,11 @@ const {
 
 const loading = ref(false)
 const doc = ref<DocDetail | null>(null)
+/**
+ * 详情加载失败（接口错误，可重试；与「资料不存在」区分开）。
+ * 2026-10-20 从队友视觉分支移植：没这一分支时接口挂了也落进 404 卡片，会误导用户。
+ */
+const loadError = ref(false)
 
 /* 页面内预览区：预览在本页展开、文件可上下滚动读；不分栏。
    「全屏」= 预览区占满视口（替代原来弹窗里那个全屏），手机上看 PDF 才读得动。 */
@@ -133,6 +138,7 @@ async function fetchDetail(): Promise<void> {
   loading.value = true
   doc.value = null
   related.value = []
+  loadError.value = false
   try {
     doc.value = await getDocDetail(id)
     // 标签标题换成资料名：转发出去时读者第一眼看到的就是它
@@ -140,6 +146,9 @@ async function fetchDetail(): Promise<void> {
       document.title = `${doc.value.title} · ${SITE_TITLE}`
       void fetchRelated(doc.value)
     }
+  } catch {
+    // 接口挂了和「资料不存在」是两回事：前者可重试，后者只能回资料库
+    loadError.value = true
   } finally {
     loading.value = false
   }
@@ -247,13 +256,23 @@ watch(
       <el-skeleton :rows="6" animated />
     </div>
 
+    <!-- 接口失败：可重试；别和下面的「不存在」混成一张卡 -->
+    <div v-else-if="loadError" class="doc-sheet zw-card">
+      <div class="zw-error">
+        <p class="zw-error__title">资料加载失败</p>
+        <p class="zw-error__desc">可能是网络暂时不通，也可能这份资料已下架 —— 稍后重试一般能恢复。</p>
+        <button type="button" class="zw-error__retry" @click="fetchDetail">重试</button>
+      </div>
+    </div>
+
     <div v-else-if="!doc" class="doc-sheet zw-card">
-      <!-- 措辞与全站 404 页保持一致：标题说「什么没了」，副标题说「为什么 / 怎么办」 -->
-      <el-result icon="warning" title="资料不存在" sub-title="这份资料可能已下架，或者链接有误。">
-        <template #extra>
-          <el-button type="primary" @click="goShelf">返回资料库</el-button>
-        </template>
-      </el-result>
+      <!-- 不存在：走站内 zw-empty 规范，与全站 404 页同一套观感；
+           措辞与 404 页保持一致：标题说「什么没了」，副标题说「为什么 / 怎么办」 -->
+      <div class="zw-empty">
+        <p class="zw-empty__title">这份资料不存在或已下架</p>
+        <p class="zw-empty__desc">它可能已被移除，或者链接里的编号不对。</p>
+        <el-button type="primary" @click="goShelf">返回资料库</el-button>
+      </div>
     </div>
 
     <template v-else>

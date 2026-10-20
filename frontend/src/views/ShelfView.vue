@@ -81,10 +81,22 @@ const moreOpen = ref(false)
 const page = ref(1)
 const loading = ref(false)
 const list = ref<DocListResponse | null>(null)
+/**
+ * 接口失败（区别于「没有匹配的资料」）。
+ * 2026-10-20 从队友视觉分支移植：失败时给可重试的错误态，别让页面空着只剩一句「没有匹配」，
+ * 更别把 0 当成份数显示出来。
+ */
+const loadError = ref(false)
 const facets = ref<FacetsResponse>({ types: [], orgs: [], years: [], tags: [], srcTables: [] })
 
 const items = computed(() => list.value?.items ?? [])
 const total = computed(() => list.value?.total ?? 0)
+
+/** 首屏还没拿到任何数据：数字要显示「—」，不能显示 0（0 份会被误读成「资料库是空的」） */
+const firstLoadPending = computed(() => !list.value && !loadError.value)
+
+/** 页头份数展示：未回 / 失败都显示「—」 */
+const totalText = computed(() => (firstLoadPending.value || loadError.value ? '—' : String(total.value)))
 
 /**
  * 【T12】方向清单：**固定用「不带任何筛选」的那一份**，只进一次（见 onMounted）。
@@ -212,6 +224,10 @@ async function fetchList(): Promise<void> {
   loading.value = true
   try {
     list.value = await getDocs(buildQuery())
+    loadError.value = false
+  } catch {
+    // 错误提示由 http 拦截器统一弹；这里只记住「失败了」，好让模板切到可重试的错误态
+    loadError.value = true
   } finally {
     loading.value = false
   }
@@ -249,7 +265,12 @@ async function refresh(): Promise<void> {
     } catch {
       // 筛选项取不到不该把列表一起拖下水（错误提示已由 http 拦截器统一弹），下面照样刷列表
     }
-    list.value = await getDocs(buildQuery())
+    try {
+      list.value = await getDocs(buildQuery())
+      loadError.value = false
+    } catch {
+      loadError.value = true
+    }
   } finally {
     loading.value = false
   }
@@ -376,11 +397,13 @@ watch(
            全库总数只在首页「资料分布」那一块出现，不在本页再说一遍。
            没筛任何条件时它就是全库总数，所以措辞跟着换一下，别写死「共收录」。 -->
       <p class="zw-sub">
-        <template v-if="hasFilter">
-          当前条件下找到 <strong class="zw-num">{{ total }}</strong> 份资料。
+        <!-- 接口挂了就别报份数（「共 — 份」读起来别扭），直接说没加载出来 -->
+        <template v-if="loadError">资料列表暂时没能加载出来。</template>
+        <template v-else-if="hasFilter">
+          当前条件下找到 <strong class="zw-num">{{ totalText }}</strong> 份资料。
         </template>
         <template v-else>
-          共 <strong class="zw-num">{{ total }}</strong> 份资料。可按方向浏览，或用下方筛选缩小范围。
+          共 <strong class="zw-num">{{ totalText }}</strong> 份资料。可按方向浏览，或用下方筛选缩小范围。
         </template>
       </p>
     </header>
@@ -388,7 +411,7 @@ watch(
     <!-- 【T12】方向标签（全部 / 零废弃 / 化学品与健康）。
          「类型」从这排标签上下沉到了工具栏的下拉，并跟着这里选的方向联动。
          数据源没有方向时整行不渲染，别摆一个点了筛不出东西的「全部」。 -->
-    <div v-if="directionTabs.length > 0" class="type-row" role="tablist" aria-label="资料方向">
+    <div v-if="directionTabs.length > 0 && !loadError" class="type-row" role="tablist" aria-label="资料方向">
       <button
         v-for="d in directionTabs"
         :key="d.value || 'all'"
@@ -400,7 +423,8 @@ watch(
         @click="onDirectionClick(d.value)"
       >
         {{ d.label }}
-        <span class="tab-count zw-num">{{ d.count }}</span>
+        <!-- 首屏还没回数据时数字一律「—」：显示 0 会让人以为这个方向一份都没有 -->
+        <span class="tab-count zw-num">{{ firstLoadPending ? '—' : d.count }}</span>
       </button>
     </div>
 
@@ -409,7 +433,7 @@ watch(
          窄屏下光筛选区就占掉一屏，资料本身一份都看不见。
          收起状态不骗人：里面只要有条件生效，按钮上挂数字角标，
          那些条件也照样出现在下面的「当前筛选」行里，可以单独点掉。 -->
-    <div class="toolbar">
+    <div v-if="!loadError" class="toolbar">
       <el-input
         v-model="keyword"
         placeholder="搜索资料名称、机构……"
@@ -466,7 +490,7 @@ watch(
     </div>
 
     <!-- 更多筛选：机构 / 年份 / 排序 -->
-    <div v-show="moreOpen" id="shelf-more-filters" class="toolbar toolbar--more">
+    <div v-show="moreOpen && !loadError" id="shelf-more-filters" class="toolbar toolbar--more">
       <el-input
         v-model="orgLike"
         placeholder="发布机构（输完按回车筛选）"
@@ -517,30 +541,45 @@ watch(
       </div>
     </div>
 
+    <!-- 接口失败：可重试的错误态（区别于「没有匹配的资料」） -->
+    <div v-else-if="loadError" class="zw-error load-error">
+      <p class="zw-error__title">资料列表加载失败</p>
+      <p class="zw-error__desc">网络或服务暂时不可用，稍后重试一般就能恢复。</p>
+      <button type="button" class="zw-error__retry" @click="onFilterChange">重试</button>
+    </div>
+
     <template v-else-if="items.length > 0">
       <div class="cards">
         <DocCard v-for="doc in items" :key="doc.id" :doc="doc" />
       </div>
 
       <div class="pager">
+        <!-- pager-count 收到 5：375 宽下 9 个页码 + 总数会撑出横向滚动 -->
         <el-pagination
           background
           layout="total, prev, pager, next"
           :total="total"
           :page-size="PAGE_SIZE"
+          :pager-count="5"
           :current-page="page"
           @current-change="onPageChange"
         />
       </div>
     </template>
 
-    <el-empty v-else description="没有匹配的资料">
-      <p class="empty-tip">换一个关键词，或者放宽筛选条件试试。</p>
+    <!-- 空态：走站内 zw-empty 规范（与 404、错误态同一套留白与字号），不用 el-empty 默认插画 -->
+    <div v-else class="zw-empty">
+      <svg class="empty-ico" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+        <circle cx="21" cy="21" r="11" stroke="currentColor" stroke-width="2" />
+        <path d="M29.5 29.5 38 38" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+      </svg>
+      <p class="zw-empty__title">没有匹配的资料</p>
+      <p class="zw-empty__desc">换一个关键词，或者放宽筛选条件试试。</p>
       <div class="empty-actions">
         <el-button @click="resetAll">清除筛选</el-button>
         <el-button type="primary" @click="goAskAi">试试问 AI</el-button>
       </div>
-    </el-empty>
+    </div>
   </div>
 </template>
 
@@ -797,17 +836,31 @@ watch(
     justify-content: center;
     row-gap: 6px;
   }
+
+  .pager {
+    overflow-x: auto;
+    padding-bottom: var(--zw-space-1);
+  }
 }
 
-.empty-tip {
-  margin: 0 0 14px;
-  font-size: 13px;
-  color: var(--zw-muted);
+/* 加载失败卡片：跟骨架屏卡片同样的外框，保持网格节奏 */
+.load-error {
+  border: 1px solid var(--zw-line);
+  border-radius: var(--zw-radius);
+  background: var(--zw-surface);
+  box-shadow: var(--zw-shadow-sm);
+}
+
+.empty-ico {
+  width: 44px;
+  height: 44px;
+  color: var(--zw-green-soft);
 }
 
 .empty-actions {
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: var(--zw-space-3);
   justify-content: center;
 }
 
