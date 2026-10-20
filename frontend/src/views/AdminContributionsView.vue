@@ -443,20 +443,36 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--zw-space-3);
   flex-wrap: wrap;
-  margin-bottom: 12px;
+  margin-bottom: var(--zw-space-3);
 }
 
 .filter-right {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--zw-space-2);
 }
 
 /* 搜索框固定一档宽度：太窄打不完一个机构名，太宽会把状态筛选挤到第二行 */
 .search-box {
   width: 220px;
+}
+
+/* 窄屏：搜索框独占一行，三个按钮换行排（整行 366px 会把 375 的屏撑破） */
+@media (max-width: 640px) {
+  .filter-row {
+    align-items: stretch;
+  }
+
+  .filter-right {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .search-box {
+    width: 100%;
+  }
 }
 
 .ct-table {

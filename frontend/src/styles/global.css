@@ -368,6 +368,15 @@ h4 {
 
 /* —— 8. Element Plus 对齐：焦点环 / 悬停 / 禁用跟随本站令牌 —— */
 
+/* 全局提示条下移到站内导航下方。
+   Element 默认从 top:20px 起排，正好压在 64px 高的导航上，挡住菜单文字。
+   这里用 margin-top 而不是 `top: ... !important`：后者的写法会让多条提示
+   全部叠在同一个位置，而 margin 是在各自 top 之上整体平移，堆叠顺序不受影响。 */
+.el-message {
+  margin-top: var(--zw-space-9);
+  border-radius: var(--zw-radius-sm);
+}
+
 /* 输入框与选择器：键盘焦点环统一（Element 默认只换边框色，不够显眼） */
 :where(.el-input__inner, .el-textarea__inner, .el-select__wrapper):focus-visible {
   outline: none;

@@ -35,12 +35,24 @@ http.interceptors.request.use((config) => {
 })
 
 // 响应拦截：统一错误 toast 提示
+//
+// 同一句话在 1.2s 内只弹一次：一个页面常常并发两三个请求（列表 + 筛选项计数），
+// 后端一挂就同时失败，不去重会连弹两三条一模一样的红条，看着像连出三次错。
+// 页面自己有错误态卡片的，请在请求上带 `silent: true`，交给页面渲染。
+const DEDUPE_MS = 1200
+let lastMsg = ''
+let lastAt = 0
+
 http.interceptors.response.use(
   (res) => res,
   (err) => {
     const msg = err?.response?.data?.error?.message ?? err.message ?? '请求失败'
-    if (!err.config?.silent) {
+    const now = Date.now()
+    const shouldToast = msg !== lastMsg || now - lastAt > DEDUPE_MS
+    if (!err.config?.silent && shouldToast) {
       ElMessage.error(msg)
+      lastMsg = msg
+      lastAt = now
     }
     return Promise.reject(err)
   }

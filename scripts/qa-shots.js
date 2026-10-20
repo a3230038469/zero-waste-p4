@@ -75,6 +75,34 @@ async function waitContent(page, name) {
   await page.screenshot({ path: `${OUT}/10-state-empty.png` })
   console.log('  10-state-empty.png')
 
+  // 5) 错误态：把所有 /api/ 请求掐掉，逼页面走 zw-error。
+  //    以前只能靠「手动停后端」复现，现在脚本里可重复，不用折腾环境。
+  await page.setRequestInterception(true)
+  const blockApi = (req) => {
+    // 只掐真正的接口。别用 includes('/api/')：
+    // Vite 的模块路径是 /src/api/auth.ts，也含 '/api/'，掐了它整个应用都起不来（白屏）。
+    let isApi = false
+    try {
+      isApi = new URL(req.url()).pathname.startsWith('/api/')
+    } catch {
+      isApi = false
+    }
+    if (isApi) req.abort('failed').catch(() => {})
+    else req.continue().catch(() => {})
+  }
+  page.on('request', blockApi)
+  for (const [name, p] of [
+    ['13-state-error-shelf', '/shelf'],
+    ['14-state-error-insights', '/insights']
+  ]) {
+    await page.goto(BASE + p, { waitUntil: 'domcontentloaded', timeout: 30000 })
+    await sleep(2500)
+    await page.screenshot({ path: `${OUT}/${name}.png` })
+    console.log(`  ${name}.png`)
+  }
+  page.off('request', blockApi)
+  await page.setRequestInterception(false)
+
   await browser.close()
   console.log(`done -> ${OUT}`)
 })().catch((e) => {

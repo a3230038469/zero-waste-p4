@@ -194,13 +194,14 @@ watch(
       <p class="zw-eyebrow">资料库</p>
       <h1>全部资料</h1>
       <p class="zw-sub">
-        共收录 <strong class="zw-num">{{ total }}</strong> 份资料，可按类型切换，
+        共收录 <strong class="zw-num">{{ loadError ? '—' : total }}</strong> 份资料，可按类型切换，
         或按机构、年份、主题组合筛选；每项下拉都标出了可命中的数量。
       </p>
     </header>
 
-    <!-- 类型标签：库里实际存在的类型自动补全 -->
-    <div class="type-row" role="tablist" aria-label="资料类型">
+    <!-- 类型标签：库里实际存在的类型自动补全。
+         加载失败时藏起来——否则会显示一排 0，让人误以为库里没数据 -->
+    <div v-if="!loadError" class="type-row" role="tablist" aria-label="资料类型">
       <button
         v-for="t in typeTabs"
         :key="t.value || 'all'"
@@ -216,8 +217,8 @@ watch(
       </button>
     </div>
 
-    <!-- 筛选区 -->
-    <div class="toolbar">
+    <!-- 筛选区（加载失败时一并隐藏，空下拉同样会误导） -->
+    <div v-if="!loadError" class="toolbar">
       <el-select
         v-model="selectedOrgs"
         multiple

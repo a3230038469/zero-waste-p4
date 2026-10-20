@@ -22,8 +22,13 @@
 | `10-state-empty.png` | 资料库搜索无结果 | `/shelf?q=zzzzzznotfound` | 空态 |
 | `11-mobile-home.png` | 移动端首页（375×812） | `/` | 正常 · 响应式 |
 | `12-mobile-shelf.png` | 移动端资料库（375×812） | `/shelf` | 正常 · 响应式 |
+| `13-state-error-shelf.png` | 资料库接口失败 | `/shelf`（掐断 /api/） | 错误态 + 重试 |
+| `14-state-error-insights.png` | 数据概览接口失败 | `/insights`（掐断 /api/） | 错误态 + 重试 |
 
-未覆盖（需后端制造故障才能拍，留待 QA 批次）：接口失败的错误态、表单校验失败态、加载骨架屏的定格。
+另有 `e2e-report.json`（端到端 9 项明细）与 `stat-snapshot.json`（令牌覆盖基线）。
+
+未覆盖：表单校验失败态、加载骨架屏的定格。骨架屏出现时间太短（本地接口毫秒级返回），
+要稳定拍摄得给接口加延迟，属测试专用改造，暂时不做。
 
 ## 怎么复现
 
@@ -32,27 +37,26 @@
 ```bash
 npm run dev:backend    # 必须先起，否则页面全是错误态
 npm run dev:frontend   # 默认 http://localhost:5173
+npm run qa:shots       # 一次拍完 12 张
 ```
 
-### 拍摄
+`puppeteer-core` 已在根 `devDependencies`，不用另装；
+浏览器用本机 Chrome / Edge，不下载 Chromium（国内拉 `storage.googleapis.com` 经常超时）。
+
+### 拍摄要点
 
 **不要用 `chrome --headless --screenshot`。** 这种方式不推进 `requestAnimationFrame`，
 Vue 的页面过渡会卡在 `fade-slide-enter-from`（`opacity: 0`），拍出来是一片空白
 （2026-10-20 实际踩过，404 页当时就是这么拍成空白的）。
 
-用 Puppeteer 驱动本机 Chrome，等 `networkidle` + 动画结束后再截：
+脚本里的关键处理：
 
-```bash
-npm i puppeteer-core            # 装在仓库外即可，不污染项目依赖
-node scripts-local/shots.js     # 逐页 goto -> 等 <main> 有内容 -> sleep 1.2s -> screenshot
-```
-
-脚本要点：
-
-- `executablePath` 指向本机 Chrome，不用下载 Chromium（国内拉 `storage.googleapis.com` 经常超时）
 - 每页 `waitForFunction(() => document.querySelector('.app-main').children.length > 0)`
 - 截图前 `sleep(1200)`，等 `<transition>` 的进场动画跑完
 - 交互态用 `element.hover()` / `keyboard.press('Tab')` 真实触发，不要用 CSS 伪造
+- 错误态用请求拦截 `req.abort()`，只掐 `pathname.startsWith('/api/')`；
+  **别用 `url.includes('/api/')`** —— Vite 的模块路径 `/src/api/auth.ts` 也含 `/api/`，
+  掐了它整个应用起不来，拍出来是纯白（这个坑已经踩过）
 
 ## 目录结构
 

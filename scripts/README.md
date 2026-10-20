@@ -14,14 +14,15 @@
 |---|---|---|
 | `npm run audit:interaction` | 交互态是否配齐（悬停/焦点/按下） | Python |
 | `npm run audit:tokens` | 设计令牌覆盖率、硬编码残留 | Python |
-| `npm run qa:shots` | 拍 10 张验收截图 | 服务在跑 + puppeteer-core |
+| `npm run qa:shots` | 拍 12 张验收截图（含错误态）| 服务在跑 + puppeteer-core |
 | `npm run qa:e2e` | 端到端 9 项验收 | 服务在跑 + puppeteer-core |
-| `npm run qa:overflow` | 窄屏横向溢出定位 | 服务在跑 + puppeteer-core |
+| `npm run qa:overflow` | 单个页面窄屏溢出定位 | 服务在跑 + puppeteer-core |
+| `npm run qa:responsive` | **全部 12 页 × 3 个宽度**批量体检 | 服务在跑 + puppeteer-core |
 
-前两个是 Python 写的（标准库，无需装包）；后三个要开浏览器。
+前两个是 Python 写的（标准库，无需装包）；后四个要开浏览器。
 
 > Windows 上提示「python 不是内部或外部命令」= PATH 里没有 Python。
-> 装一个就行；不想装的话，只用 `qa:*` 那三个也够验收了。
+> 装一个就行；不想装的话，只用 `qa:*` 那四个也够验收了。
 
 ---
 
