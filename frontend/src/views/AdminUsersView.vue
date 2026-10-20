@@ -107,9 +107,13 @@ onMounted(() => {
 
     <template v-if="items.length">
       <div class="stat">
-        <span>共 <b>{{ items.length }}</b> 位注册用户</span>
+        <span
+          >共 <b>{{ items.length }}</b> 位注册用户</span
+        >
         <span class="dot">·</span>
-        <span>涉及 <b>{{ orgCount }}</b> 个机构</span>
+        <span
+          >涉及 <b>{{ orgCount }}</b> 个机构</span
+        >
       </div>
 
       <div class="bar">

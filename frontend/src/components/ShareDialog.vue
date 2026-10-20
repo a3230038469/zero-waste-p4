@@ -51,7 +51,9 @@ const qrPath = computed(() => (matrix.value ? qrSvgPath(matrix.value) : ''))
 const linkInput = ref<HTMLInputElement | null>(null)
 
 /** 微信内置浏览器里，系统分享菜单才是主路径，提示语要不一样 */
-const inWechat = computed(() => /MicroMessenger/i.test(typeof navigator === 'undefined' ? '' : navigator.userAgent))
+const inWechat = computed(() =>
+  /MicroMessenger/i.test(typeof navigator === 'undefined' ? '' : navigator.userAgent)
+)
 
 watch(visible, (open) => {
   if (!open) return

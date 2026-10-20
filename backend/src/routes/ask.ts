@@ -95,9 +95,12 @@ function describeError(err: unknown): string {
 /** 流开始前的错误：普通 JSON，能改状态码 */
 function sendPreStreamError(res: Response, err: unknown): void {
   if (err instanceof EngineError) {
-    res
-      .status(err.status)
-      .json({ success: false, type: 'error', content: err.message, error: { code: err.code, message: err.message } })
+    res.status(err.status).json({
+      success: false,
+      type: 'error',
+      content: err.message,
+      error: { code: err.code, message: err.message }
+    })
     return
   }
   const message = err instanceof Error ? err.message : '服务器内部错误'
@@ -111,7 +114,9 @@ router.post('/', (req: Request, res: Response) => {
 async function handleAsk(req: Request, res: Response): Promise<void> {
   const body = parseAskBody(req.body)
   if (body === null) {
-    res.status(400).json({ success: false, type: 'error', content: '请求体需为 {"query":"你的问题"}' })
+    res
+      .status(400)
+      .json({ success: false, type: 'error', content: '请求体需为 {"query":"你的问题"}' })
     return
   }
   if (body.query.length > MAX_QUERY_LEN) {

@@ -50,8 +50,9 @@ const FILTERS: { value: ContributionStatus | ''; label: string }[] = [
 const hasItems = computed(() => items.value.length > 0)
 
 function errorMessage(err: unknown, fallback: string): string {
-  const response = (err as { response?: { status?: number; data?: { error?: { message?: string } } } })
-    .response
+  const response = (
+    err as { response?: { status?: number; data?: { error?: { message?: string } } } }
+  ).response
   if (response?.status === 403) return '口令不正确。'
   return response?.data?.error?.message ?? fallback
 }
@@ -170,7 +171,10 @@ async function reject(row: AdminContribution): Promise<void> {
   }
 }
 
-function statusTag(status: ContributionStatus): { type: 'success' | 'warning' | 'danger'; text: string } {
+function statusTag(status: ContributionStatus): {
+  type: 'success' | 'warning' | 'danger'
+  text: string
+} {
   if (status === 'approved') return { type: 'success', text: '已通过' }
   if (status === 'rejected') return { type: 'danger', text: '已退回' }
   return { type: 'warning', text: '待审核' }
@@ -225,16 +229,24 @@ onMounted(() => {
 
     <template v-if="!errorText">
       <div class="stat-row">
-        <span>待审核 <b class="warn">{{ counts.pending }}</b></span>
+        <span
+          >待审核 <b class="warn">{{ counts.pending }}</b></span
+        >
         <span class="dot">·</span>
-        <span>已通过 <b class="ok">{{ counts.approved }}</b></span>
+        <span
+          >已通过 <b class="ok">{{ counts.approved }}</b></span
+        >
         <span class="dot">·</span>
-        <span>已退回 <b class="bad">{{ counts.rejected }}</b></span>
+        <span
+          >已退回 <b class="bad">{{ counts.rejected }}</b></span
+        >
       </div>
 
       <div class="filter-row">
         <el-radio-group :model-value="statusFilter" @change="onFilterChange">
-          <el-radio-button v-for="f in FILTERS" :key="f.label" :value="f.value">{{ f.label }}</el-radio-button>
+          <el-radio-button v-for="f in FILTERS" :key="f.label" :value="f.value">{{
+            f.label
+          }}</el-radio-button>
         </el-radio-group>
         <div class="filter-right">
           <el-input
@@ -278,7 +290,9 @@ onMounted(() => {
 
         <el-table-column label="原件" width="150">
           <template #default="{ row }">
-            <button type="button" class="link-btn" @click="viewFile(row)">{{ row.fileName }}</button>
+            <button type="button" class="link-btn" @click="viewFile(row)">
+              {{ row.fileName }}
+            </button>
             <div class="cell-sub">{{ formatBytes(row.size) }}</div>
           </template>
         </el-table-column>
@@ -289,9 +303,13 @@ onMounted(() => {
 
         <el-table-column label="状态" width="150">
           <template #default="{ row }">
-            <el-tag :type="statusTag(row.status).type" size="small">{{ statusTag(row.status).text }}</el-tag>
+            <el-tag :type="statusTag(row.status).type" size="small">{{
+              statusTag(row.status).text
+            }}</el-tag>
             <div v-if="row.status === 'rejected'" class="cell-sub reason">{{ row.reason }}</div>
-            <div v-else-if="row.status === 'approved'" class="cell-sub">{{ fmtTime(row.reviewedAt) }}</div>
+            <div v-else-if="row.status === 'approved'" class="cell-sub">
+              {{ fmtTime(row.reviewedAt) }}
+            </div>
           </template>
         </el-table-column>
 
@@ -306,7 +324,9 @@ onMounted(() => {
               >
                 通过
               </el-button>
-              <el-button size="small" :disabled="actingId === row.id" @click="reject(row)">退回</el-button>
+              <el-button size="small" :disabled="actingId === row.id" @click="reject(row)"
+                >退回</el-button
+              >
             </template>
             <span v-else class="cell-sub">已处理</span>
           </template>

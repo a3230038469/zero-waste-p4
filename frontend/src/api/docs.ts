@@ -73,9 +73,25 @@ const TITLE_POOL = [
   '垃圾焚烧飞灰处置技术规范'
 ]
 
-const ORG_POOL = ['零萌公益', '生态环境部', '住房和城乡建设部', '自然之友', '深圳市城市管理和综合执法局', '中国城市环境卫生协会']
+const ORG_POOL = [
+  '零萌公益',
+  '生态环境部',
+  '住房和城乡建设部',
+  '自然之友',
+  '深圳市城市管理和综合执法局',
+  '中国城市环境卫生协会'
+]
 
-const TAG_POOL = ['垃圾分类', '厨余处理', '循环经济', '塑料治理', '堆肥', '无废城市', '回收利用', '政策解读']
+const TAG_POOL = [
+  '垃圾分类',
+  '厨余处理',
+  '循环经济',
+  '塑料治理',
+  '堆肥',
+  '无废城市',
+  '回收利用',
+  '政策解读'
+]
 
 function buildMockDocs(): DocItem[] {
   const items: DocItem[] = []
@@ -128,7 +144,9 @@ function countByValue(docs: DocItem[], pick: (d: DocItem) => string): FacetItem[
     const key = pick(d)
     map.set(key, (map.get(key) ?? 0) + 1)
   }
-  return [...map.entries()].map(([value, count]) => ({ value, count })).sort((a, b) => b.count - a.count)
+  return [...map.entries()]
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => b.count - a.count)
 }
 
 function countByTag(docs: DocItem[]): FacetItem[] {
@@ -138,7 +156,9 @@ function countByTag(docs: DocItem[]): FacetItem[] {
       map.set(t, (map.get(t) ?? 0) + 1)
     }
   }
-  return [...map.entries()].map(([value, count]) => ({ value, count })).sort((a, b) => b.count - a.count)
+  return [...map.entries()]
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => b.count - a.count)
 }
 
 /** 假数据版：资料列表（结构对齐 DocListResponse） */
@@ -167,7 +187,9 @@ async function getFacetsMock(query: DocListQuery): Promise<FacetsResponse> {
     filterDocs(MOCK_DOCS, { ...query, [dim]: undefined })
   return {
     orgs: countByValue(without('orgs'), (d) => d.org),
-    years: countByValue(without('years'), (d) => String(d.year)).sort((a, b) => b.value.localeCompare(a.value)),
+    years: countByValue(without('years'), (d) => String(d.year)).sort((a, b) =>
+      b.value.localeCompare(a.value)
+    ),
     tags: countByTag(without('tags')),
     types: countByValue(MOCK_DOCS, (d) => d.type)
   }
@@ -200,12 +222,18 @@ function toHttpParams(query: DocListQuery): Record<string, unknown> {
 }
 
 async function getDocsHttp(query: DocListQuery): Promise<DocListResponse> {
-  const res = await http.get<DocListResponse>('/docs', { params: toHttpParams(query), ...REPEAT_ARRAY })
+  const res = await http.get<DocListResponse>('/docs', {
+    params: toHttpParams(query),
+    ...REPEAT_ARRAY
+  })
   return res.data
 }
 
 async function getFacetsHttp(query: DocListQuery): Promise<FacetsResponse> {
-  const res = await http.get<FacetsResponse>('/docs/facets', { params: toHttpParams(query), ...REPEAT_ARRAY })
+  const res = await http.get<FacetsResponse>('/docs/facets', {
+    params: toHttpParams(query),
+    ...REPEAT_ARRAY
+  })
   return res.data
 }
 

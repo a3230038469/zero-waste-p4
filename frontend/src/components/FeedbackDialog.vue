@@ -143,7 +143,8 @@ async function onSubmit(): Promise<void> {
 
     <div class="fb-field">
       <label class="fb-label">
-        详细说明<span v-if="isDoc" class="fb-opt">（选填）</span><span v-else class="fb-req">*</span>
+        详细说明<span v-if="isDoc" class="fb-opt">（选填）</span
+        ><span v-else class="fb-req">*</span>
       </label>
       <el-input
         v-model="form.text"

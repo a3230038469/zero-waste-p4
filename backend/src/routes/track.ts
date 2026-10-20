@@ -33,9 +33,12 @@ const router = Router()
  * ------------------------------------------------------------------ */
 
 /** 拆信封：单条 / 裸数组 / { events: [...] } 三种都收 */
-function parseEnvelope(body: unknown): { ok: true; items: unknown[] } | { ok: false; issue: TrackIssue } {
+function parseEnvelope(
+  body: unknown
+): { ok: true; items: unknown[] } | { ok: false; issue: TrackIssue } {
   if (Array.isArray(body)) {
-    if (body.length === 0) return { ok: false, issue: { index: 0, code: 'EMPTY_BATCH', message: '事件数组为空' } }
+    if (body.length === 0)
+      return { ok: false, issue: { index: 0, code: 'EMPTY_BATCH', message: '事件数组为空' } }
     if (body.length > TRACK_MAX_EVENTS_PER_REQUEST) {
       return {
         ok: false,

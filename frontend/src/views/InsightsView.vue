@@ -46,7 +46,10 @@ const yearBars = computed(() => {
 const yearTotal = computed(() => yearBars.value.reduce((sum, b) => sum + b.count, 0))
 
 /** 横向条形：算好百分比宽度与占比文案 */
-function toBars(items: FacetItem[], limit: number): { value: string; count: number; width: string; share: string }[] {
+function toBars(
+  items: FacetItem[],
+  limit: number
+): { value: string; count: number; width: string; share: string }[] {
   const sliced = items.slice(0, limit)
   const max = Math.max(1, ...sliced.map((i) => i.count))
   const total = items.reduce((sum, i) => sum + i.count, 0) || 1
@@ -67,12 +70,27 @@ const metrics = computed(() => {
   const d = overview.value
   if (!d) return []
   return [
-    { label: '收录资料', value: formatCount(d.total), unit: '份', note: `去重后 ${formatCount(d.uniqueTotal)} 份` },
+    {
+      label: '收录资料',
+      value: formatCount(d.total),
+      unit: '份',
+      note: `去重后 ${formatCount(d.uniqueTotal)} 份`
+    },
     { label: '资料体积', value: formatBytes(d.totalBytes), unit: '', note: '全部原件合计' },
-    { label: '覆盖年份', value: formatYearSpan(d.yearRange), unit: '', note: `另有 ${d.yearUnknown} 份年份待补` },
+    {
+      label: '覆盖年份',
+      value: formatYearSpan(d.yearRange),
+      unit: '',
+      note: `另有 ${d.yearUnknown} 份年份待补`
+    },
     { label: '发布机构', value: formatCount(d.orgCount), unit: '家', note: '含联合发布' },
     { label: '知识类型', value: formatCount(d.typeCount), unit: '类', note: '政策 / 报告 / 标准…' },
-    { label: '主题领域', value: formatCount(d.topicCount), unit: '类', note: `已标注 ${formatCount(d.topicCovered)} 份` }
+    {
+      label: '主题领域',
+      value: formatCount(d.topicCount),
+      unit: '类',
+      note: `已标注 ${formatCount(d.topicCovered)} 份`
+    }
   ]
 })
 
@@ -123,7 +141,8 @@ onMounted(() => {
           <div>
             <h2 class="zw-h2">按年份分布</h2>
             <p class="zw-sub">
-              近十年资料逐年列出，更早的并入「更早」一项；另有 {{ overview.yearUnknown }} 份台账未填年份，未计入图中。
+              近十年资料逐年列出，更早的并入「更早」一项；另有
+              {{ overview.yearUnknown }} 份台账未填年份，未计入图中。
             </p>
           </div>
           <span v-if="busiestYear" class="peak">
@@ -136,13 +155,18 @@ onMounted(() => {
             <div v-for="b in yearBars" :key="b.value" class="year-col">
               <span class="year-count zw-num">{{ b.count }}</span>
               <div class="year-track">
-                <div class="year-bar" :style="{ height: b.height }" :title="`${b.value}：${b.count} 份 · ${formatBytes(b.bytes)}`" />
+                <div
+                  class="year-bar"
+                  :style="{ height: b.height }"
+                  :title="`${b.value}：${b.count} 份 · ${formatBytes(b.bytes)}`"
+                />
               </div>
               <span class="year-label">{{ b.value }}</span>
             </div>
           </div>
           <p class="chart-foot">
-            图中合计 {{ formatCount(yearTotal) }} 份（不含未填年份的 {{ overview.yearUnknown }} 份）。
+            图中合计 {{ formatCount(yearTotal) }} 份（不含未填年份的
+            {{ overview.yearUnknown }} 份）。
           </p>
         </div>
       </section>
@@ -155,7 +179,9 @@ onMounted(() => {
           <ul class="bar-list">
             <li v-for="b in typeBars" :key="b.value">
               <span class="bar-name" :title="b.value">{{ b.value }}</span>
-              <span class="bar-track"><span class="bar-fill tone-type" :style="{ width: b.width }" /></span>
+              <span class="bar-track"
+                ><span class="bar-fill tone-type" :style="{ width: b.width }"
+              /></span>
               <span class="bar-value zw-num">{{ b.count }}</span>
               <span class="bar-share zw-num">{{ b.share }}</span>
             </li>
@@ -168,7 +194,9 @@ onMounted(() => {
           <ul class="bar-list">
             <li v-for="b in topicBars" :key="b.value">
               <span class="bar-name" :title="b.value">{{ b.value }}</span>
-              <span class="bar-track"><span class="bar-fill tone-topic" :style="{ width: b.width }" /></span>
+              <span class="bar-track"
+                ><span class="bar-fill tone-topic" :style="{ width: b.width }"
+              /></span>
               <span class="bar-value zw-num">{{ b.count }}</span>
               <span class="bar-share zw-num">{{ b.share }}</span>
             </li>
@@ -186,7 +214,9 @@ onMounted(() => {
         <ul class="bar-list bar-list--wide">
           <li v-for="b in orgBars" :key="b.value">
             <span class="bar-name" :title="b.value">{{ b.value }}</span>
-            <span class="bar-track"><span class="bar-fill tone-org" :style="{ width: b.width }" /></span>
+            <span class="bar-track"
+              ><span class="bar-fill tone-org" :style="{ width: b.width }"
+            /></span>
             <span class="bar-value zw-num">{{ b.count }}</span>
           </li>
         </ul>
@@ -201,19 +231,24 @@ onMounted(() => {
             统计按文件算。
           </li>
           <li>
-            <strong>去重口径</strong>：库中有 {{ overview.duplicateGroups }} 组、
-            共 {{ overview.duplicateCopies }} 份资料内容完全相同（按文件逐字节比对得出）。
+            <strong>去重口径</strong>：库中有 {{ overview.duplicateGroups }} 组、 共
+            {{ overview.duplicateCopies }} 份资料内容完全相同（按文件逐字节比对得出）。
             本页「收录资料」按原始份数计，卡片上会标注「另有相同副本」。是否撤下重复件待业务方确认。
           </li>
           <li>
-            <strong>主题标注覆盖</strong>：{{ formatCount(overview.topicCovered) }} / {{ formatCount(overview.total) }} 份有主题标签。
+            <strong>主题标注覆盖</strong>：{{ formatCount(overview.topicCovered) }} /
+            {{ formatCount(overview.total) }} 份有主题标签。
             该部分标签来自原始台账的「知识领域」列；化学品子库在原台账中没有这一列，已按子库归属统一标注。
           </li>
           <li>
-            <strong>机构数为去重计数</strong>：多部门联合发布的文件会把全部署名机构作为一个机构名计入，
-            因此「机构数」偏大属正常。
+            <strong>机构数为去重计数</strong
+            >：多部门联合发布的文件会把全部署名机构作为一个机构名计入， 因此「机构数」偏大属正常。
           </li>
-          <li>统计时间：{{ new Date(overview.generatedAt).toLocaleString('zh-CN') }}（每次打开本页实时计算）。</li>
+          <li>
+            统计时间：{{
+              new Date(overview.generatedAt).toLocaleString('zh-CN')
+            }}（每次打开本页实时计算）。
+          </li>
         </ul>
       </section>
     </template>

@@ -153,7 +153,9 @@ function localDateKey(date: Date): string {
 
 /** 计数从多到少；数量相同按字面序 */
 function sortByCount(counter: Map<string, number>): [string, number][] {
-  return [...counter.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh-Hans-CN'))
+  return [...counter.entries()].sort(
+    (a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh-Hans-CN')
+  )
 }
 
 function readPayloadString(evt: StoredEvent, key: string): string {

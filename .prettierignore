@@ -1,4 +1,8 @@
 node_modules
 dist
 build
+coverage
+docs/shots
+.workbuddy
 *.md
+*.log

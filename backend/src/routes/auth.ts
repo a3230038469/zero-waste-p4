@@ -42,7 +42,9 @@ const PASSWORD_MAX = 72
 function getJwtSecret(): string {
   const secret = process.env.JWT_SECRET
   if (!secret || secret.length < 16) {
-    throw new Error('JWT_SECRET 未配置或太短：请在 backend/.env 里设置一个随机长字符串（至少 16 位）')
+    throw new Error(
+      'JWT_SECRET 未配置或太短：请在 backend/.env 里设置一个随机长字符串（至少 16 位）'
+    )
   }
   return secret
 }
@@ -117,7 +119,14 @@ interface UserRow {
   phone: string
 }
 
-function publicUser(u: UserRow): { id: string; name: string; org: string; occupation: string; topics: string[]; phone: string } {
+function publicUser(u: UserRow): {
+  id: string
+  name: string
+  org: string
+  occupation: string
+  topics: string[]
+  phone: string
+} {
   let topics: string[] = []
   try {
     const parsed: unknown = JSON.parse(u.topics)
@@ -131,7 +140,8 @@ function publicUser(u: UserRow): { id: string; name: string; org: string; occupa
 }
 
 /** 取凭证的结果：拿到字符串 / 没拿到（区分两种失败原因） */
-type TokenResult = { ok: true; token: string } | { ok: false; code: 'AUTH_NO_TOKEN' | 'AUTH_BAD_TOKEN' }
+type TokenResult =
+  { ok: true; token: string } | { ok: false; code: 'AUTH_NO_TOKEN' | 'AUTH_BAD_TOKEN' }
 
 /** 手动解析 cookie 请求头，取出 zwp_token。
  *  不引 cookie-parser（硬约束：不许加依赖），按 ';' 切分后手工 decode。 */
@@ -202,7 +212,12 @@ function setAuthCookie(res: Response, token: string): void {
 
 /** Prisma 唯一约束冲突（并发下同手机号同时注册） */
 function isUniqueViolation(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && 'code' in err && (err as { code?: string }).code === 'P2002'
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    (err as { code?: string }).code === 'P2002'
+  )
 }
 
 // —— POST /api/auth/register：注册（成功 201）——
@@ -236,7 +251,10 @@ router.post('/register', async (req: Request, res: Response, next: NextFunction)
 
     // 登录态 cookie（第二条通路，见 setAuthCookie 注释）。
     // 响应体仍按接口约定只回 { user }，不额外塞 token，避免改动契约字段。
-    setAuthCookie(res, jwt.sign({}, getJwtSecret(), { subject: user.id, expiresIn: JWT_EXPIRES_IN }))
+    setAuthCookie(
+      res,
+      jwt.sign({}, getJwtSecret(), { subject: user.id, expiresIn: JWT_EXPIRES_IN })
+    )
 
     res.status(201).json({ user: publicUser(user) })
   } catch (err) {

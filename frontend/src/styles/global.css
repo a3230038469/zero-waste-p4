@@ -66,7 +66,12 @@ html {
 
 body {
   margin: 0;
-  font-family: 'PingFang SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+  font-family:
+    'PingFang SC',
+    'Microsoft YaHei',
+    system-ui,
+    -apple-system,
+    sans-serif;
   color: var(--zw-text);
   background: var(--zw-bg);
   -webkit-font-smoothing: antialiased;
@@ -265,12 +270,7 @@ h4 {
 
 .zw-skeleton {
   border-radius: var(--zw-radius-sm);
-  background: linear-gradient(
-    90deg,
-    var(--zw-line) 25%,
-    var(--zw-mint) 37%,
-    var(--zw-line) 63%
-  );
+  background: linear-gradient(90deg, var(--zw-line) 25%, var(--zw-mint) 37%, var(--zw-line) 63%);
   background-size: 400% 100%;
   animation: zw-skeleton-wave 1.4s ease infinite;
 }

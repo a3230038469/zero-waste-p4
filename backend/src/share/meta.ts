@@ -131,7 +131,9 @@ function routeShareMeta(pathname: string, origin: string): ShareMeta {
   ]
   const hit = routes.find(([re]) => re.test(pathname))
   const title = hit ? `${hit[1]} · ${SITE_NAME}` : SITE_NAME
-  const description = hit ? hit[2] : '零废弃领域公开资料索引：政策法规、案例工具、研究报告、标准规范。'
+  const description = hit
+    ? hit[2]
+    : '零废弃领域公开资料索引：政策法规、案例工具、研究报告、标准规范。'
   return {
     title,
     description,

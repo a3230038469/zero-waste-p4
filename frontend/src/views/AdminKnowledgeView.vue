@@ -75,7 +75,10 @@ function hasMeta(row: AdminKnowledgeItem): boolean {
  * （重新上传、新上传的资料都会经过它们）。别只认 `processing` —— 漏一个老师
  * 就会在表格里看到一串英文（2026-10-12 实测踩中）。
  */
-function statusTag(status: string): { type: 'success' | 'warning' | 'danger' | 'info'; text: string } {
+function statusTag(status: string): {
+  type: 'success' | 'warning' | 'danger' | 'info'
+  text: string
+} {
   if (status === 'completed') return { type: 'success', text: '已入库' }
   if (status === 'failed') return { type: 'danger', text: '解析失败' }
   if (status === 'pending' || status === 'processing' || status === 'finalizing') {
@@ -322,7 +325,9 @@ const qaUpdatedAt = ref('')
 
 /** 已存的模型在引擎列表里查不到 → 老师得重新选一个，别装作一切正常 */
 const qaModelMissing = computed(
-  () => Boolean(qaCurrent.value.modelId) && !qaModels.value.some((m) => m.id === qaCurrent.value.modelId)
+  () =>
+    Boolean(qaCurrent.value.modelId) &&
+    !qaModels.value.some((m) => m.id === qaCurrent.value.modelId)
 )
 
 /** 引擎里正在下载/下载失败的模型，选了大概率答不出来 */
@@ -416,9 +421,7 @@ async function enterAdmin(): Promise<void> {
     <header class="kb-head">
       <div>
         <h2 class="kb-title">资料管理</h2>
-        <p class="kb-sub">
-          这里管的是<b>知识库里的全部资料</b>——网页书架和 AI 问答用的都是它。
-        </p>
+        <p class="kb-sub">这里管的是<b>知识库里的全部资料</b>——网页书架和 AI 问答用的都是它。</p>
       </div>
       <div class="kb-actions">
         <el-button type="primary" @click="openUpload">上传资料</el-button>
@@ -449,13 +452,21 @@ async function enterAdmin(): Promise<void> {
 
     <template v-if="items.length">
       <div class="kb-stat">
-        <span>共 <b>{{ items.length }}</b> 份</span>
+        <span
+          >共 <b>{{ items.length }}</b> 份</span
+        >
         <span class="dot">·</span>
-        <span>已入库 <b class="ok">{{ storedCount }}</b></span>
+        <span
+          >已入库 <b class="ok">{{ storedCount }}</b></span
+        >
         <span v-if="failedCount" class="dot">·</span>
-        <span v-if="failedCount">解析失败 <b class="bad">{{ failedCount }}</b></span>
+        <span v-if="failedCount"
+          >解析失败 <b class="bad">{{ failedCount }}</b></span
+        >
         <span class="dot">·</span>
-        <span>已带标签 <b class="ok">{{ taggedCount }}</b></span>
+        <span
+          >已带标签 <b class="ok">{{ taggedCount }}</b></span
+        >
       </div>
 
       <!-- 问答设置：老师在这里换回答模型 / 回答方式 / 思考强度，不用去碰引擎 -->
@@ -464,8 +475,9 @@ async function enterAdmin(): Promise<void> {
           <h3 class="qa-title">问答设置</h3>
           <span class="qa-now">
             当前生效：{{ qaCurrent.modelName || '引擎默认模型' }} ·
-            {{ styleLabel(qaCurrent.style) }} ·
-            思考强度{{ qaCurrent.reasoningEffort ? effortLabel(qaCurrent.reasoningEffort) : '跟随模型' }}
+            {{ styleLabel(qaCurrent.style) }} · 思考强度{{
+              qaCurrent.reasoningEffort ? effortLabel(qaCurrent.reasoningEffort) : '跟随模型'
+            }}
           </span>
         </div>
 
@@ -509,12 +521,7 @@ async function enterAdmin(): Promise<void> {
             <label>思考强度</label>
             <el-select v-model="qaEffort" placeholder="跟随模型" style="width: 100%">
               <el-option value="" label="跟随模型（不指定）" />
-              <el-option
-                v-for="e in qaEfforts"
-                :key="e.value"
-                :value="e.value"
-                :label="e.label"
-              />
+              <el-option v-for="e in qaEfforts" :key="e.value" :value="e.value" :label="e.label" />
             </el-select>
             <p class="qa-hint">
               这个是引擎真实支持的参数（reasoning_effort）。选「跟随模型」表示不下发，
@@ -573,7 +580,9 @@ async function enterAdmin(): Promise<void> {
         </el-table-column>
         <el-table-column label="操作" width="196" align="center" fixed="right">
           <template #default="scope">
-            <el-button link type="primary" size="small" @click="download(scope.row)">下载</el-button>
+            <el-button link type="primary" size="small" @click="download(scope.row)"
+              >下载</el-button
+            >
             <el-button
               v-if="scope.row.parseStatus === 'failed'"
               link
@@ -622,7 +631,12 @@ async function enterAdmin(): Promise<void> {
           <el-input v-model="uploadForm.org" placeholder="例如：生态环境部" clearable />
         </el-form-item>
         <el-form-item label="发布年份">
-          <el-input v-model="uploadForm.year" maxlength="4" placeholder="四位数字，例如 2024" clearable />
+          <el-input
+            v-model="uploadForm.year"
+            maxlength="4"
+            placeholder="四位数字，例如 2024"
+            clearable
+          />
         </el-form-item>
         <el-form-item label="类型">
           <el-select
@@ -640,9 +654,7 @@ async function enterAdmin(): Promise<void> {
           <el-input v-model="uploadForm.tags" placeholder="主题词，多个用逗号隔开" clearable />
         </el-form-item>
       </el-form>
-      <p class="dlg-hint">
-        这四项不用都填。填了就会显示在资料的标签上，也会出现在书架的筛选项里。
-      </p>
+      <p class="dlg-hint">这四项不用都填。填了就会显示在资料的标签上，也会出现在书架的筛选项里。</p>
       <template #footer>
         <el-button @click="uploadDialog = false">取消</el-button>
         <el-button type="primary" :loading="uploading" @click="submitUpload">

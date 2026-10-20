@@ -82,7 +82,8 @@ function toLocalDoc(raw: unknown, line: number): KbDocInternal {
   if (!isRecord(raw)) {
     throw new EngineError('LOCAL_DATA_BROKEN', `本地索引第 ${line} 条不是对象`, 500)
   }
-  const { id, title, org, year, type, tags, size, sourceUrl, fileName, filePath, sizeDeclared } = raw
+  const { id, title, org, year, type, tags, size, sourceUrl, fileName, filePath, sizeDeclared } =
+    raw
   if (
     typeof id !== 'string' ||
     typeof title !== 'string' ||
@@ -476,7 +477,10 @@ export async function getDoc(id: string): Promise<KbDocInternal> {
  *
  * mode=inline 给在线预览，mode=attachment 给下载；本地与引擎两种来源统一成 DocStream。
  */
-export async function getFileStream(id: string, _mode: 'inline' | 'attachment'): Promise<DocStream> {
+export async function getFileStream(
+  id: string,
+  _mode: 'inline' | 'attachment'
+): Promise<DocStream> {
   const doc = await getDoc(id)
 
   // 云端演示版：快照里只有目录信息，没有原件 —— 明确告知，不假装下载成功
@@ -647,7 +651,11 @@ export async function createAskSession(title: string): Promise<string> {
   // 云端演示版：ask 流程是「先建会话、再问答」，所以必须在建会话这里就拦，
   // 否则队友会看到「未配置 WEKNORA_API_KEY」这种内部错误文案（2026-10-08 实测踩中）。
   if (getDataSource() === 'snapshot') {
-    throw new EngineError('ENGINE_NOT_CONFIGURED', 'AI 问答暂未开放（当前为演示版，引擎未接入）', 503)
+    throw new EngineError(
+      'ENGINE_NOT_CONFIGURED',
+      'AI 问答暂未开放（当前为演示版，引擎未接入）',
+      503
+    )
   }
   const payload = await engineJson('/api/v1/sessions', {
     method: 'POST',
@@ -683,7 +691,11 @@ export async function askKnowledgeBase(params: {
   // 云端演示版：快照数据源没有引擎可问 —— 不管密钥环境如何，一律友好拒绝。
   // （2026-10-08 实测：某些环境下密钥检查拦不住，问答会以诡异方式落到本地引擎上。）
   if (getDataSource() === 'snapshot') {
-    throw new EngineError('ENGINE_NOT_CONFIGURED', 'AI 问答暂未开放（当前为演示版，引擎未接入）', 503)
+    throw new EngineError(
+      'ENGINE_NOT_CONFIGURED',
+      'AI 问答暂未开放（当前为演示版，引擎未接入）',
+      503
+    )
   }
   const apiKey = requireEngineApiKey()
   const kbIds =

@@ -29,7 +29,12 @@ import {
   type ContributionStatus,
   type MyContribution
 } from '../api/contributions'
-import { FEEDBACK_TEXT_MAX, SITE_FEEDBACK_HINT, SITE_KINDS, submitFeedback } from '../constants/feedback'
+import {
+  FEEDBACK_TEXT_MAX,
+  SITE_FEEDBACK_HINT,
+  SITE_KINDS,
+  submitFeedback
+} from '../constants/feedback'
 import { useAuth } from '../composables/useAuth'
 import { formatBytes } from '../utils/format'
 
@@ -55,7 +60,12 @@ interface FacetsLike {
 }
 
 /** 四维下拉的选项（来自 /api/docs/facets；取不到就只留 allow-create 的自由输入） */
-const options = reactive({ orgs: [] as FacetsLike[], years: [] as FacetsLike[], types: [] as FacetsLike[], tags: [] as FacetsLike[] })
+const options = reactive({
+  orgs: [] as FacetsLike[],
+  years: [] as FacetsLike[],
+  types: [] as FacetsLike[],
+  tags: [] as FacetsLike[]
+})
 
 const mine = ref<MyContribution[]>([])
 const mineLoading = ref(false)
@@ -107,7 +117,9 @@ function onPickFile(event: Event): void {
     return
   }
   if (file.size > MAX_CONTRIBUTION_BYTES) {
-    ElMessage.error(`文件不能超过 ${Math.round(MAX_CONTRIBUTION_BYTES / 1024 / 1024)}MB，请压缩后再投稿`)
+    ElMessage.error(
+      `文件不能超过 ${Math.round(MAX_CONTRIBUTION_BYTES / 1024 / 1024)}MB，请压缩后再投稿`
+    )
     input.value = ''
     return
   }
@@ -165,7 +177,10 @@ async function onSubmit(): Promise<void> {
   }
 }
 
-function statusTag(status: ContributionStatus): { type: 'success' | 'warning' | 'danger'; text: string } {
+function statusTag(status: ContributionStatus): {
+  type: 'success' | 'warning' | 'danger'
+  text: string
+} {
   if (status === 'approved') return { type: 'success', text: '已通过' }
   if (status === 'rejected') return { type: 'danger', text: '已退回' }
   return { type: 'warning', text: '待审核' }
@@ -254,8 +269,8 @@ function goLogin(): void {
         <template v-else>
           <el-card shadow="never" class="ct-card">
             <p class="ct-note">
-              提交后稿件状态为<b>待审核</b>。审核通过前，它不会出现在资料库里，
-              也不会被检索到 —— 管理员通过后会由系统送入知识库。
+              提交后稿件状态为<b>待审核</b>。审核通过前，它不会出现在资料库里， 也不会被检索到 ——
+              管理员通过后会由系统送入知识库。
             </p>
 
             <div class="ct-field">
@@ -280,7 +295,12 @@ function goLogin(): void {
 
             <div class="ct-field">
               <label class="ct-label">资料标题<span class="req">*</span></label>
-              <el-input v-model="form.title" maxlength="120" show-word-limit placeholder="例：城市生活垃圾分类制度实施方案" />
+              <el-input
+                v-model="form.title"
+                maxlength="120"
+                show-word-limit
+                placeholder="例：城市生活垃圾分类制度实施方案"
+              />
             </div>
 
             <div class="ct-grid">
@@ -294,7 +314,12 @@ function goLogin(): void {
                   placeholder="选择或输入机构"
                   style="width: 100%"
                 >
-                  <el-option v-for="o in options.orgs" :key="o.value" :label="o.label" :value="o.value" />
+                  <el-option
+                    v-for="o in options.orgs"
+                    :key="o.value"
+                    :label="o.label"
+                    :value="o.value"
+                  />
                 </el-select>
               </div>
 
@@ -308,7 +333,12 @@ function goLogin(): void {
                   placeholder="选择或输入年份"
                   style="width: 100%"
                 >
-                  <el-option v-for="o in options.years" :key="o.value" :label="o.label" :value="o.value" />
+                  <el-option
+                    v-for="o in options.years"
+                    :key="o.value"
+                    :label="o.label"
+                    :value="o.value"
+                  />
                 </el-select>
               </div>
 
@@ -322,7 +352,12 @@ function goLogin(): void {
                   placeholder="选择或输入类型"
                   style="width: 100%"
                 >
-                  <el-option v-for="o in options.types" :key="o.value" :label="o.label" :value="o.value" />
+                  <el-option
+                    v-for="o in options.types"
+                    :key="o.value"
+                    :label="o.label"
+                    :value="o.value"
+                  />
                 </el-select>
               </div>
 
@@ -336,7 +371,12 @@ function goLogin(): void {
                   placeholder="选择或输入主题"
                   style="width: 100%"
                 >
-                  <el-option v-for="o in options.tags" :key="o.value" :label="o.label" :value="o.value" />
+                  <el-option
+                    v-for="o in options.tags"
+                    :key="o.value"
+                    :label="o.label"
+                    :value="o.value"
+                  />
                 </el-select>
               </div>
             </div>
@@ -371,13 +411,18 @@ function goLogin(): void {
               </el-tag>
             </h3>
 
-            <el-empty v-if="!mineLoading && mine.length === 0" description="还没有投过稿，上方提交后会在这里显示" />
+            <el-empty
+              v-if="!mineLoading && mine.length === 0"
+              description="还没有投过稿，上方提交后会在这里显示"
+            />
 
             <el-table v-else v-loading="mineLoading" :data="mine" class="mine-table">
               <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
               <el-table-column label="状态" width="100">
                 <template #default="{ row }">
-                  <el-tag :type="statusTag(row.status).type" size="small">{{ statusTag(row.status).text }}</el-tag>
+                  <el-tag :type="statusTag(row.status).type" size="small">{{
+                    statusTag(row.status).text
+                  }}</el-tag>
                 </template>
               </el-table-column>
               <el-table-column label="提交时间" width="150">
@@ -385,7 +430,9 @@ function goLogin(): void {
               </el-table-column>
               <el-table-column label="审核说明" min-width="200">
                 <template #default="{ row }">
-                  <span v-if="row.status === 'rejected'" class="reason">{{ row.reason || '（未填理由）' }}</span>
+                  <span v-if="row.status === 'rejected'" class="reason">{{
+                    row.reason || '（未填理由）'
+                  }}</span>
                   <span v-else-if="row.status === 'approved'" class="ok-note">
                     已收录进资料库{{ row.reviewedAt ? `（${fmtTime(row.reviewedAt)}）` : '' }}
                   </span>
@@ -405,7 +452,9 @@ function goLogin(): void {
           <div class="ct-field">
             <label class="ct-label">反馈分类<span class="req">*</span></label>
             <el-radio-group v-model="fbForm.reason" class="fb-options">
-              <el-radio v-for="opt in SITE_KINDS" :key="opt.value" :value="opt.value">{{ opt.label }}</el-radio>
+              <el-radio v-for="opt in SITE_KINDS" :key="opt.value" :value="opt.value">{{
+                opt.label
+              }}</el-radio>
             </el-radio-group>
           </div>
 
@@ -422,8 +471,15 @@ function goLogin(): void {
           </div>
 
           <div class="ct-field">
-            <label class="ct-label">联系方式<span class="opt">（选填，便于我们回复你）</span></label>
-            <el-input v-model="fbForm.contact" maxlength="60" clearable placeholder="邮箱 / 微信等，选填" />
+            <label class="ct-label"
+              >联系方式<span class="opt">（选填，便于我们回复你）</span></label
+            >
+            <el-input
+              v-model="fbForm.contact"
+              maxlength="60"
+              clearable
+              placeholder="邮箱 / 微信等，选填"
+            />
           </div>
 
           <div class="ct-actions">

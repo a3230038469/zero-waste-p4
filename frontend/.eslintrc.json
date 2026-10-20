@@ -4,7 +4,8 @@
   "extends": [
     "eslint:recommended",
     "plugin:vue/vue3-recommended",
-    "@vue/eslint-config-typescript"
+    "@vue/eslint-config-typescript",
+    "prettier"
   ],
   "parserOptions": { "ecmaVersion": 2022, "sourceType": "module" },
   "rules": {

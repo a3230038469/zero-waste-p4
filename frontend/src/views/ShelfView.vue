@@ -48,11 +48,14 @@ const total = computed(() => list.value?.total ?? 0)
 const typeTabs = computed(() => {
   const all = facets.value.types.map((t) => t.value).filter(Boolean)
   const totalAll = facets.value.types.reduce((sum, t) => sum + t.count, 0)
-  return [{ value: '', label: '全部', count: totalAll }, ...all.map((v) => ({
-    value: v,
-    label: v,
-    count: facets.value.types.find((t) => t.value === v)?.count ?? 0
-  }))]
+  return [
+    { value: '', label: '全部', count: totalAll },
+    ...all.map((v) => ({
+      value: v,
+      label: v,
+      count: facets.value.types.find((t) => t.value === v)?.count ?? 0
+    }))
+  ]
 })
 
 interface ActiveChip {
@@ -77,8 +80,10 @@ const activeChips = computed<ActiveChip[]>(() => {
 /** 按「维度 + 值」删条件：用索引删会在多选里错位（下拉顺序与 chip 顺序不一定一致） */
 function removeChip(chip: ActiveChip): void {
   if (chip.dim === 'org') selectedOrgs.value = selectedOrgs.value.filter((v) => v !== chip.value)
-  else if (chip.dim === 'year') selectedYears.value = selectedYears.value.filter((v) => `${v} 年` !== chip.value)
-  else if (chip.dim === 'tag') selectedTags.value = selectedTags.value.filter((v) => v !== chip.value)
+  else if (chip.dim === 'year')
+    selectedYears.value = selectedYears.value.filter((v) => `${v} 年` !== chip.value)
+  else if (chip.dim === 'tag')
+    selectedTags.value = selectedTags.value.filter((v) => v !== chip.value)
   else if (chip.dim === 'type') activeType.value = ''
   else keyword.value = ''
   onFilterChange()
@@ -151,7 +156,11 @@ function applyRouteQuery(): void {
   activeType.value = typeof type === 'string' ? type : ''
 
   const toList = (value: unknown): string[] =>
-    typeof value === 'string' ? [value] : Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []
+    typeof value === 'string'
+      ? [value]
+      : Array.isArray(value)
+        ? value.filter((v): v is string => typeof v === 'string')
+        : []
 
   selectedTags.value = toList(tag)
   selectedOrgs.value = toList(org)
@@ -194,7 +203,10 @@ watch(
         class="type-tab"
         :class="{ 'is-active': activeType === t.value }"
         :aria-selected="activeType === t.value"
-        @click="activeType = t.value; onFilterChange()"
+        @click="
+          activeType = t.value
+          onFilterChange()
+        "
       >
         {{ t.label }}
         <span class="tab-count zw-num">{{ t.count }}</span>
@@ -230,7 +242,12 @@ watch(
         class="filter-select filter-year"
         @change="onFilterChange"
       >
-        <el-option v-for="f in facets.years" :key="f.value" :label="`${f.value} 年 (${f.count})`" :value="f.value" />
+        <el-option
+          v-for="f in facets.years"
+          :key="f.value"
+          :label="`${f.value} 年 (${f.count})`"
+          :value="f.value"
+        />
       </el-select>
 
       <el-select

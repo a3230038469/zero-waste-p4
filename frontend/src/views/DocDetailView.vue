@@ -26,7 +26,14 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { LARGE_FILE_LIMIT, downloadDoc, getDocDetail, getDocs, getPreviewUrl, type DocDetail } from '../api/docs'
+import {
+  LARGE_FILE_LIMIT,
+  downloadDoc,
+  getDocDetail,
+  getDocs,
+  getPreviewUrl,
+  type DocDetail
+} from '../api/docs'
 import type { DocItem } from '../api/types'
 import { useAuth } from '../composables/useAuth'
 import DocCard from '../components/DocCard.vue'
@@ -203,8 +210,8 @@ function revokePreview(): void {
 }
 
 /** 预览提示：Word / Excel 等格式在浏览器里通常不能内联预览，提前讲清楚 */
-const previewHint = computed(() =>
-  '在线预览对 PDF 效果最好；Word、Excel 等格式若预览空白，请直接下载原件。'
+const previewHint = computed(
+  () => '在线预览对 PDF 效果最好；Word、Excel 等格式若预览空白，请直接下载原件。'
 )
 
 onMounted(() => {
@@ -287,7 +294,9 @@ watch(
           <div v-if="doc.sourceUrl" class="span-2">
             <dt>原始出处</dt>
             <dd>
-              <a :href="doc.sourceUrl" target="_blank" rel="noopener noreferrer nofollow">{{ doc.sourceUrl }}</a>
+              <a :href="doc.sourceUrl" target="_blank" rel="noopener noreferrer nofollow">{{
+                doc.sourceUrl
+              }}</a>
             </dd>
           </div>
         </dl>
@@ -306,7 +315,9 @@ watch(
         </p>
 
         <div class="doc-actions">
-          <el-button type="primary" :loading="previewLoading" @click="onPreview">在线预览</el-button>
+          <el-button type="primary" :loading="previewLoading" @click="onPreview"
+            >在线预览</el-button
+          >
           <el-button type="primary" plain @click="onDownload">下载原件</el-button>
           <el-button text @click="onCopyLink">复制分享链接</el-button>
           <el-button text @click="openShare">分享二维码</el-button>
@@ -330,7 +341,9 @@ watch(
         <div v-if="previewVisible" class="preview-panel">
           <div class="preview-head">
             <span>在线预览</span>
-            <el-button text size="small" class="preview-close" @click="previewVisible = false">收起 ×</el-button>
+            <el-button text size="small" class="preview-close" @click="previewVisible = false"
+              >收起 ×</el-button
+            >
           </div>
           <iframe :src="previewUrl" class="pdf-frame" title="资料在线预览" />
         </div>
@@ -363,7 +376,9 @@ watch(
       <section v-if="relatedLoading || related.length" class="related">
         <h2 class="zw-h2">同主题资料</h2>
         <div v-if="relatedLoading" class="related-grid">
-          <div v-for="n in 3" :key="n" class="related-skeleton zw-card"><el-skeleton :rows="3" animated /></div>
+          <div v-for="n in 3" :key="n" class="related-skeleton zw-card">
+            <el-skeleton :rows="3" animated />
+          </div>
         </div>
         <div v-else class="related-grid">
           <DocCard v-for="item in related" :key="item.id" :doc="item" />

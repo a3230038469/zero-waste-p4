@@ -174,15 +174,7 @@ export type QaStyle = 'quick' | 'knowledge'
 
 /** 思考强度。引擎原生参数 reasoning_effort 的 8 个合法取值；'' = 跟随引擎默认 */
 export type ReasoningEffort =
-  | ''
-  | 'off'
-  | 'auto'
-  | 'minimal'
-  | 'low'
-  | 'medium'
-  | 'high'
-  | 'xhigh'
-  | 'max'
+  '' | 'off' | 'auto' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 /** 引擎侧的一个可选问答模型 */
 export interface QaModelOption {

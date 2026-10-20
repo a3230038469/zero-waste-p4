@@ -131,7 +131,13 @@ onMounted(() => {
 
       <div class="hot-terms">
         <span class="hot-label">常见检索：</span>
-        <button v-for="t in ['零废弃', '垃圾分类', '塑料', '无废城市', '化学品']" :key="t" class="hot-chip" type="button" @click="goShelf({ tag: t })">
+        <button
+          v-for="t in ['零废弃', '垃圾分类', '塑料', '无废城市', '化学品']"
+          :key="t"
+          class="hot-chip"
+          type="button"
+          @click="goShelf({ tag: t })"
+        >
           {{ t }}
         </button>
       </div>
@@ -240,7 +246,9 @@ onMounted(() => {
             {{ q }}
           </button>
         </div>
-        <el-button type="primary" class="ask-open" @click="widgetOpen = true">打开 AI 助手</el-button>
+        <el-button type="primary" class="ask-open" @click="widgetOpen = true"
+          >打开 AI 助手</el-button
+        >
       </div>
     </section>
 

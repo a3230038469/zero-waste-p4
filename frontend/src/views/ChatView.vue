@@ -113,11 +113,15 @@ async function selectConversation(id: string): Promise<void> {
 /** 删会话：确认弹窗 → 真删 → 刷新列表。删掉的是当前会话就自动落到相邻那个。 */
 async function removeConversation(id: string): Promise<void> {
   try {
-    await ElMessageBox.confirm('删除后这个对话及其全部问答都会消失，无法恢复。确定删除？', '删除对话', {
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
-      type: 'warning'
-    })
+    await ElMessageBox.confirm(
+      '删除后这个对话及其全部问答都会消失，无法恢复。确定删除？',
+      '删除对话',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
   } catch {
     return // 用户点了取消
   }
@@ -339,12 +343,7 @@ onMounted(async () => {
           <span class="empty-sub">在同一个对话里追问，AI 会记得你前面说过什么。</span>
         </p>
 
-        <div
-          v-for="(m, i) in messages"
-          :key="i"
-          class="msg"
-          :class="m.role"
-        >
+        <div v-for="(m, i) in messages" :key="i" class="msg" :class="m.role">
           <ChatBubble
             :message="m"
             :streaming="i === streamingIdx"
@@ -369,7 +368,12 @@ onMounted(async () => {
           :disabled="busy || !activeId"
           @keydown="onKeydown"
         />
-        <el-button type="primary" :loading="busy" :disabled="!draft.trim() || !activeId" @click="send(draft)">
+        <el-button
+          type="primary"
+          :loading="busy"
+          :disabled="!draft.trim() || !activeId"
+          @click="send(draft)"
+        >
           发送
         </el-button>
       </div>
@@ -486,7 +490,9 @@ onMounted(async () => {
   color: var(--zw-faint);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.16s ease, color 0.16s ease;
+  transition:
+    opacity 0.16s ease,
+    color 0.16s ease;
 }
 .conv:hover .conv-del,
 .conv-del:focus-visible {

@@ -83,7 +83,9 @@ function renderAnswer(text: string): string {
   // 表格外面套一层：border-radius 必须配 overflow 才会裁圆角，
   // 而 overflow 得在一个独立容器上（table 本身加了 display:block 已经是滚动容器，
   // 但它的圆角+边框会和单元格边框打架）。单独一层顺便承接 T5 的「表格淡入」。
-  const wrapped = html.replace(/<table>/g, '<div class="table-wrap"><table>').replace(/<\/table>/g, '</table></div>')
+  const wrapped = html
+    .replace(/<table>/g, '<div class="table-wrap"><table>')
+    .replace(/<\/table>/g, '</table></div>')
   return DOMPurify.sanitize(wrapped)
 }
 

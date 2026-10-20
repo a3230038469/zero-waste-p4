@@ -68,7 +68,10 @@ export interface RecordInput {
  * 把一条输入归一化成可落库的记录。
  * @returns [记录, null] 成功；[null, issue] 被拒（原因码给调用方拼响应体）
  */
-export function normalizeEvent(raw: unknown, index: number): [StoredEvent | null, TrackIssue | null] {
+export function normalizeEvent(
+  raw: unknown,
+  index: number
+): [StoredEvent | null, TrackIssue | null] {
   if (!isRecord(raw)) {
     return [null, { index, code: 'INVALID_ITEM', message: `第 ${index} 条不是对象` }]
   }
@@ -104,7 +107,9 @@ export function normalizeEvent(raw: unknown, index: number): [StoredEvent | null
   }
 
   const tsRaw = readString(raw, 'ts')
-  const ts = Number.isNaN(Date.parse(tsRaw)) ? new Date().toISOString() : new Date(tsRaw).toISOString()
+  const ts = Number.isNaN(Date.parse(tsRaw))
+    ? new Date().toISOString()
+    : new Date(tsRaw).toISOString()
 
   return [buildEvent({ event: name as TrackEvent, ts, payload, source: 'client', raw }), null]
 }
@@ -113,19 +118,22 @@ export function normalizeEvent(raw: unknown, index: number): [StoredEvent | null
 export function buildEvent(input: RecordInput & { raw?: Record<string, unknown> }): StoredEvent {
   const raw = input.raw ?? {}
   const payload = input.payload ?? {}
-  const userIdRaw =
-    input.userId !== undefined ? input.userId : readString(raw, 'userId') || null
+  const userIdRaw = input.userId !== undefined ? input.userId : readString(raw, 'userId') || null
 
   const termSource =
     readString(payload, 'term') || readString(payload, 'query') || readString(payload, 'keyword')
   const zeroResult = payload['zeroResult'] === true
-  const noAnswer = payload['noAnswer'] === true ? true : payload['noAnswer'] === false ? false : null
+  const noAnswer =
+    payload['noAnswer'] === true ? true : payload['noAnswer'] === false ? false : null
 
   return {
     ts: input.ts ?? new Date().toISOString(),
     event: input.event,
     userId: userIdRaw ? truncate(String(userIdRaw), TRACK_MAX_USER_ID_CHARS) : null,
-    sessionId: truncate(input.sessionId ?? readString(raw, 'sessionId'), TRACK_MAX_SESSION_ID_CHARS),
+    sessionId: truncate(
+      input.sessionId ?? readString(raw, 'sessionId'),
+      TRACK_MAX_SESSION_ID_CHARS
+    ),
     path: truncate(input.path ?? readString(raw, 'path'), TRACK_MAX_PATH_CHARS),
     payload,
     source: input.source ?? 'client',

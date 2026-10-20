@@ -160,9 +160,7 @@ export async function listConversations(): Promise<ConversationSummary[]> {
       _count: { select: { messages: true } }
     }
   })
-  return rows.map((row) =>
-    toSummary(row, row._count.messages, row.messages[0]?.content ?? null)
-  )
+  return rows.map((row) => toSummary(row, row._count.messages, row.messages[0]?.content ?? null))
 }
 
 /** 取一条会话（不存在抛 ConversationNotFoundError） */
@@ -240,7 +238,10 @@ export async function touchConversation(params: {
 }
 
 /** 记下引擎会话 id（懒建成功后回填）。仅在原来为空时写入，不覆盖已有的。 */
-export async function setEngineSessionId(conversationId: string, engineSessionId: string): Promise<void> {
+export async function setEngineSessionId(
+  conversationId: string,
+  engineSessionId: string
+): Promise<void> {
   await prisma.conversation.updateMany({
     where: { id: conversationId, engineSessionId: null },
     data: { engineSessionId }

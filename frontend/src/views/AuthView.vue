@@ -68,13 +68,23 @@ const registerForm = reactive({
 })
 
 /** 关注议题候选项（可多选，也允许手动输入自定义议题） */
-const TOPIC_OPTIONS = ['垃圾分类', '厨余处理', '循环再生', '源头减量', '政策倡导', '社区营造', '其他']
+const TOPIC_OPTIONS = [
+  '垃圾分类',
+  '厨余处理',
+  '循环再生',
+  '源头减量',
+  '政策倡导',
+  '社区营造',
+  '其他'
+]
 
 const registerRules: FormRules = {
   name: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
   org: [{ required: true, message: '请输入所在机构', trigger: 'blur' }],
   occupation: [{ required: true, message: '请输入职业', trigger: 'blur' }],
-  topics: [{ required: true, type: 'array', min: 1, message: '请至少选择一个关注议题', trigger: 'change' }],
+  topics: [
+    { required: true, type: 'array', min: 1, message: '请至少选择一个关注议题', trigger: 'change' }
+  ],
   phone: [
     { required: true, message: '请输入手机号', trigger: 'blur' },
     { pattern: /^1[3-9]\d{9}$/, message: '手机号格式不正确', trigger: 'blur' }
@@ -159,12 +169,7 @@ async function handleRegister(): Promise<void> {
                 @keyup.enter="handleLogin"
               />
             </el-form-item>
-            <el-button
-              type="primary"
-              class="submit"
-              :loading="loginLoading"
-              @click="handleLogin"
-            >
+            <el-button type="primary" class="submit" :loading="loginLoading" @click="handleLogin">
               登 录
             </el-button>
           </el-form>
@@ -202,7 +207,12 @@ async function handleRegister(): Promise<void> {
               </el-select>
             </el-form-item>
             <el-form-item label="手机号" prop="phone">
-              <el-input v-model="registerForm.phone" placeholder="用于登录，一个手机号只能注册一次" maxlength="11" clearable />
+              <el-input
+                v-model="registerForm.phone"
+                placeholder="用于登录，一个手机号只能注册一次"
+                maxlength="11"
+                clearable
+              />
             </el-form-item>
             <el-form-item label="密码" prop="password">
               <el-input

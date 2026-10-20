@@ -76,7 +76,11 @@ export function loadMeta(metaFile: string, warnings: string[]): RawMetaRow[] {
 
   let rows: unknown
   if (Array.isArray(parsed)) rows = parsed
-  else if (typeof parsed === 'object' && parsed !== null && Array.isArray((parsed as Record<string, unknown>).items)) {
+  else if (
+    typeof parsed === 'object' &&
+    parsed !== null &&
+    Array.isArray((parsed as Record<string, unknown>).items)
+  ) {
     const envelope = parsed as Record<string, unknown>
     rows = envelope.items
     warnings.push(`元数据顶层不是数组，已改用其 items 字段（${(rows as unknown[]).length} 行）`)
@@ -209,7 +213,9 @@ export function runImport(options: ImportOptions): ImportResult {
   const extraFiles = pdfFiles.filter((f) => !f.used).map((f) => f.name)
 
   if (items.length === 0) {
-    errors.push('一份都没匹配上——检查 pdfDir 是否指到了正确的目录（元数据里的 file_name 要与文件名一致）')
+    errors.push(
+      '一份都没匹配上——检查 pdfDir 是否指到了正确的目录（元数据里的 file_name 要与文件名一致）'
+    )
   }
 
   const duplicateTitles = findDuplicates(items.map((item) => item.title))
@@ -267,7 +273,9 @@ export function renderReport(report: ImportReport): string {
   lines.push(`索引输出 ：${report.outFile ?? '(未写)'}`)
   lines.push('')
   lines.push('— 数量 —')
-  lines.push(`元数据行数 ${c.meta} ｜ 目录里 PDF ${c.pdf} ｜ 匹配上 ${c.matched} ｜ 已写入 ${c.written}`)
+  lines.push(
+    `元数据行数 ${c.meta} ｜ 目录里 PDF ${c.pdf} ｜ 匹配上 ${c.matched} ｜ 已写入 ${c.written}`
+  )
   if (report.nameRestored > 0) {
     lines.push(`文件名还原：${report.nameRestored} 个（ZIP 解压出来的 GBK 乱码，已自动还原）`)
   }

@@ -104,14 +104,18 @@ export async function submitContribution(
     if (value) params.set(key, value)
   }
 
-  const res = await http.post<SubmitContributionResult>(`/contributions?${params.toString()}`, file, {
-    headers: {
-      'X-File-Name': encodeURIComponent(file.name),
-      'Content-Type': 'application/octet-stream'
-    },
-    silent: true,
-    timeout: 300_000
-  })
+  const res = await http.post<SubmitContributionResult>(
+    `/contributions?${params.toString()}`,
+    file,
+    {
+      headers: {
+        'X-File-Name': encodeURIComponent(file.name),
+        'Content-Type': 'application/octet-stream'
+      },
+      silent: true,
+      timeout: 300_000
+    }
+  )
   return res.data
 }
 
@@ -124,7 +128,12 @@ export async function fetchMyContributions(): Promise<MyContributionList> {
 /** 拉审核队列（管理视角） */
 export async function fetchAdminContributions(
   token: string,
-  options: { status?: ContributionStatus | ''; keyword?: string; page?: number; pageSize?: number } = {}
+  options: {
+    status?: ContributionStatus | ''
+    keyword?: string
+    page?: number
+    pageSize?: number
+  } = {}
 ): Promise<AdminContributionList> {
   const params = new URLSearchParams()
   if (options.status) params.set('status', options.status)

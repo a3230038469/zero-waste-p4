@@ -37,11 +37,61 @@ interface BlobConfig {
 
 /** 色斑配置：绿系为主，掺一点琥珀与青，避免整页只剩一种绿 */
 const BLOBS: BlobConfig[] = [
-  { size: 460, top: 4, left: 6, color: 'rgba(46, 125, 50, 0.16)', blur: 90, speed: 0.085, amp: 28, depth: 0.022, phase: 0 },
-  { size: 380, top: 62, left: 72, color: 'rgba(43, 122, 120, 0.14)', blur: 96, speed: 0.062, amp: 36, depth: -0.017, phase: 1.5 },
-  { size: 300, top: 26, left: 82, color: 'rgba(200, 135, 31, 0.11)', blur: 80, speed: 0.108, amp: 22, depth: 0.028, phase: 3.1 },
-  { size: 520, top: 78, left: 16, color: 'rgba(102, 187, 106, 0.13)', blur: 110, speed: 0.055, amp: 30, depth: -0.024, phase: 4.4 },
-  { size: 260, top: 10, left: 44, color: 'rgba(46, 125, 50, 0.09)', blur: 70, speed: 0.126, amp: 18, depth: 0.032, phase: 2.2 }
+  {
+    size: 460,
+    top: 4,
+    left: 6,
+    color: 'rgba(46, 125, 50, 0.16)',
+    blur: 90,
+    speed: 0.085,
+    amp: 28,
+    depth: 0.022,
+    phase: 0
+  },
+  {
+    size: 380,
+    top: 62,
+    left: 72,
+    color: 'rgba(43, 122, 120, 0.14)',
+    blur: 96,
+    speed: 0.062,
+    amp: 36,
+    depth: -0.017,
+    phase: 1.5
+  },
+  {
+    size: 300,
+    top: 26,
+    left: 82,
+    color: 'rgba(200, 135, 31, 0.11)',
+    blur: 80,
+    speed: 0.108,
+    amp: 22,
+    depth: 0.028,
+    phase: 3.1
+  },
+  {
+    size: 520,
+    top: 78,
+    left: 16,
+    color: 'rgba(102, 187, 106, 0.13)',
+    blur: 110,
+    speed: 0.055,
+    amp: 30,
+    depth: -0.024,
+    phase: 4.4
+  },
+  {
+    size: 260,
+    top: 10,
+    left: 44,
+    color: 'rgba(46, 125, 50, 0.09)',
+    blur: 70,
+    speed: 0.126,
+    amp: 18,
+    depth: 0.032,
+    phase: 2.2
+  }
 ]
 
 /** 光层顺序：0 大光晕 / 1 中层 / 2 光圈 / 3 拖尾光圈 */
@@ -148,9 +198,7 @@ function onPointerDown(event: PointerEvent): void {
     ],
     { duration: 760, easing: 'cubic-bezier(0.2, 0.7, 0.3, 1)' }
   )
-  void animation.finished
-    .catch(() => undefined)
-    .then(() => ripple.remove())
+  void animation.finished.catch(() => undefined).then(() => ripple.remove())
 }
 
 function onVisibilityChange(): void {

@@ -94,11 +94,16 @@ const SECTIONS = [
       <div class="use-grid">
         <div class="use-card zw-card zw-card--pad">
           <h3>① 按主题浏览</h3>
-          <p>从首页的主题入口进入，例如「塑料」「垃圾分类」「无废城市」，直接看这个议题下的全部资料。</p>
+          <p>
+            从首页的主题入口进入，例如「塑料」「垃圾分类」「无废城市」，直接看这个议题下的全部资料。
+          </p>
         </div>
         <div class="use-card zw-card zw-card--pad">
           <h3>② 四维筛选</h3>
-          <p>在资料库里按<strong>机构 / 年份 / 主题 / 类型</strong>组合筛选，下拉项会实时显示命中数量。</p>
+          <p>
+            在资料库里按<strong>机构 / 年份 / 主题 / 类型</strong
+            >组合筛选，下拉项会实时显示命中数量。
+          </p>
         </div>
         <div class="use-card zw-card zw-card--pad">
           <h3>③ 关键词检索</h3>
@@ -127,7 +132,9 @@ const SECTIONS = [
 
       <div class="table-wrap zw-card">
         <table>
-          <caption class="sr-only">数据字段与口径说明</caption>
+          <caption class="sr-only">
+            数据字段与口径说明
+          </caption>
           <thead>
             <tr>
               <th scope="col">字段</th>
@@ -191,10 +198,15 @@ const SECTIONS = [
           <strong>著作权归原作者与发布机构所有</strong>。本站做的是汇集、标注与索引，不做再授权。
         </p>
         <ul class="rules">
-          <li>引用本站收录的资料时，请注明<strong>原始发布机构与资料名称</strong>，而不是「引自零废弃知识库」。</li>
+          <li>
+            引用本站收录的资料时，请注明<strong>原始发布机构与资料名称</strong>，而不是「引自零废弃知识库」。
+          </li>
           <li>下载原件后用于研究、教学或公益传播，请遵循该资料自身的授权条款。</li>
           <li>如权利人认为某份资料不宜在本站收录，请联系我们，我们核实后会下架。</li>
-          <li>本站的检索结果与 AI 回答由系统依据库内资料生成，仅供检索参考，<strong>不构成任何形式的专业意见</strong>。</li>
+          <li>
+            本站的检索结果与 AI
+            回答由系统依据库内资料生成，仅供检索参考，<strong>不构成任何形式的专业意见</strong>。
+          </li>
         </ul>
       </div>
     </section>
@@ -205,7 +217,8 @@ const SECTIONS = [
       <div class="prose">
         <p>
           我们欢迎三类反馈：<strong>资料推荐</strong>（有值得收录的公开资料）、
-          <strong>纠错</strong>（条目信息与原件不符）、<strong>合作</strong>（教学、研究或公益项目协作）。
+          <strong>纠错</strong
+          >（条目信息与原件不符）、<strong>合作</strong>（教学、研究或公益项目协作）。
         </p>
       </div>
 

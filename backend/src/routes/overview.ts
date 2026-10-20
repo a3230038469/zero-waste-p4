@@ -16,7 +16,13 @@
  */
 import { Router, type Request, type Response } from 'express'
 
-import { EngineError, listFiles, type FacetItem, type KbDoc, type KbDocInternal } from '../weknora/index.js'
+import {
+  EngineError,
+  listFiles,
+  type FacetItem,
+  type KbDoc,
+  type KbDocInternal
+} from '../weknora/index.js'
 import { duplicateCopyCount, duplicateGroupCount, duplicateOf } from '../data/duplicates.js'
 
 const router = Router()
@@ -123,7 +129,8 @@ function buildOverview(docs: KbDocInternal[]): OverviewResponse {
   // 年份：0 表示「台账未填」，单列出来，不混进年份序列（否则图表上会出现一个 0 年的柱子）
   const dated = docs.filter((d) => d.year > 0)
   const years = [...new Set(dated.map((d) => d.year))].sort((a, b) => a - b)
-  const yearRange = years.length > 0 ? { min: years[0] as number, max: years[years.length - 1] as number } : null
+  const yearRange =
+    years.length > 0 ? { min: years[0] as number, max: years[years.length - 1] as number } : null
 
   // 年份桶：最近 RECENT_YEARS 年逐年 + 更早合并
   const buckets: YearBucket[] = []
@@ -179,7 +186,9 @@ function buildOverview(docs: KbDocInternal[]): OverviewResponse {
     types: countBy(docs, (d) => [d.type]).sort(byCountThenValue),
     topics: countBy(docs, (d) => d.tags).sort(byCountThenValue),
     years: countBy(docs, (d) => [String(d.year)]).sort(byYearDesc),
-    topOrgs: countBy(docs, (d) => [d.org]).sort(byCountThenValue).slice(0, 10),
+    topOrgs: countBy(docs, (d) => [d.org])
+      .sort(byCountThenValue)
+      .slice(0, 10),
     yearBuckets: buckets,
     latest: latest.map(toPublicDoc)
   }

@@ -75,7 +75,15 @@ export function parseSizeToBytes(value: unknown): number | null {
 
   const unit = (match[2] ?? 'B').toUpperCase()
   const factor =
-    unit === 'TB' ? 1024 ** 4 : unit === 'GB' ? 1024 ** 3 : unit === 'MB' ? 1024 ** 2 : unit === 'KB' ? 1024 : 1
+    unit === 'TB'
+      ? 1024 ** 4
+      : unit === 'GB'
+        ? 1024 ** 3
+        : unit === 'MB'
+          ? 1024 ** 2
+          : unit === 'KB'
+            ? 1024
+            : 1
   return Math.round(amount * factor)
 }
 

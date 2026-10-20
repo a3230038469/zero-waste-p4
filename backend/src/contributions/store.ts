@@ -85,7 +85,10 @@ export function newContributionId(): string {
 export function extensionOf(fileName: string): string {
   const dot = fileName.lastIndexOf('.')
   if (dot < 0) return ''
-  return fileName.slice(dot).toLowerCase().replace(/[^a-z0-9.]/g, '')
+  return fileName
+    .slice(dot)
+    .toLowerCase()
+    .replace(/[^a-z0-9.]/g, '')
 }
 
 /** 读全部投稿。文件不存在 / 内容坏掉一律当空库，不让存储问题把接口打成 500 */
@@ -126,9 +129,7 @@ export async function listContributions(): Promise<ContributionRecord[]> {
 /** 按投稿人过滤（投稿人侧的「我的投稿」） */
 export async function listByUser(userId: string): Promise<ContributionRecord[]> {
   const all = await listContributions()
-  return all
-    .filter((x) => x.userId === userId)
-    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+  return all.filter((x) => x.userId === userId).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
 }
 
 /** 取单条，没有返回 null */

@@ -38,7 +38,8 @@ onMounted(() => {
           提供分类浏览、关键词检索与 AI 问答。
         </p>
         <p class="foot-stat">
-          已收录 <strong class="zw-num">{{ total === null ? '—' : formatCount(total) }}</strong> 份资料
+          已收录
+          <strong class="zw-num">{{ total === null ? '—' : formatCount(total) }}</strong> 份资料
         </p>
       </div>
 
@@ -54,7 +55,9 @@ onMounted(() => {
         <h4>使用</h4>
         <RouterLink to="/about#data">数据来源与口径</RouterLink>
         <RouterLink to="/about#cite">引用与转载</RouterLink>
-        <button type="button" class="foot-link-btn" @click="feedbackVisible = true">意见反馈</button>
+        <button type="button" class="foot-link-btn" @click="feedbackVisible = true">
+          意见反馈
+        </button>
         <RouterLink to="/about#contact">联系与共建</RouterLink>
       </div>
 

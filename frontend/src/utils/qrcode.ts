@@ -62,7 +62,12 @@ function utf8Bytes(input: string): number[] {
       const next = input.charCodeAt(i + 1)
       code = 0x10000 + ((code - 0xd800) << 10) + (next - 0xdc00)
       i += 1
-      out.push(0xf0 | (code >> 18), 0x80 | ((code >> 12) & 0x3f), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f))
+      out.push(
+        0xf0 | (code >> 18),
+        0x80 | ((code >> 12) & 0x3f),
+        0x80 | ((code >> 6) & 0x3f),
+        0x80 | (code & 0x3f)
+      )
     } else {
       out.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f))
     }

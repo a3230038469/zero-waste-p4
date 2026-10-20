@@ -214,7 +214,10 @@ router.post(
     if (!apiKey || !kbId) {
       res.status(503).json({
         success: false,
-        error: { code: 'ENGINE_NOT_CONFIGURED', message: '还没配 WEKNORA_API_KEY / WEKNORA_KB_ID，传不了' }
+        error: {
+          code: 'ENGINE_NOT_CONFIGURED',
+          message: '还没配 WEKNORA_API_KEY / WEKNORA_KB_ID，传不了'
+        }
       })
       return
     }
@@ -576,7 +579,8 @@ router.post('/knowledge/:id/reupload', requireAdmin, async (req: Request, res: R
         success: false,
         error: {
           code: 'ENGINE_STILL_DELETING',
-          message: '引擎还在清理刚删掉的那份（没清理完之前传回去会被判成重复文件），请过十几秒再点一次「重新上传」'
+          message:
+            '引擎还在清理刚删掉的那份（没清理完之前传回去会被判成重复文件），请过十几秒再点一次「重新上传」'
         }
       })
       return

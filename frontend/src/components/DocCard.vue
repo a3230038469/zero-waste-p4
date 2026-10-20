@@ -52,7 +52,9 @@ const tone = computed(() => TYPE_TONE[props.doc.type] ?? 'default')
 
     <div class="card-foot">
       <span class="size zw-num">{{ formatBytes(doc.size) }}</span>
-      <span v-if="doc.duplicateOf" class="dup-flag" title="这份资料与库中另一份内容完全相同">另有相同副本</span>
+      <span v-if="doc.duplicateOf" class="dup-flag" title="这份资料与库中另一份内容完全相同"
+        >另有相同副本</span
+      >
     </div>
   </RouterLink>
 </template>

@@ -83,7 +83,9 @@ function env(name: string): string {
 function getJwtSecret(): string {
   const secret = process.env.JWT_SECRET
   if (!secret || secret.length < 16) {
-    throw new Error('JWT_SECRET 未配置或太短：请在 backend/.env 里设置一个随机长字符串（至少 16 位）')
+    throw new Error(
+      'JWT_SECRET 未配置或太短：请在 backend/.env 里设置一个随机长字符串（至少 16 位）'
+    )
   }
   return secret
 }
@@ -223,7 +225,8 @@ function extractCreatedId(payload: Record<string, unknown>): string {
   const idOf = (value: unknown): string =>
     typeof value === 'object' && value !== null ? String((value as { id?: unknown }).id ?? '') : ''
   const data = payload.data
-  const nested = typeof data === 'object' && data !== null ? (data as { data?: unknown }).data : undefined
+  const nested =
+    typeof data === 'object' && data !== null ? (data as { data?: unknown }).data : undefined
   return idOf(data) || idOf(nested) || idOf(payload) || ''
 }
 
@@ -256,7 +259,12 @@ contributionsRouter.post(
       return
     }
     if (!org || !year || !type || !tags) {
-      fail(res, 400, '机构 / 年份 / 类型 / 主题都要选（下拉里的选项来自现有资料库）', 'MISSING_META')
+      fail(
+        res,
+        400,
+        '机构 / 年份 / 类型 / 主题都要选（下拉里的选项来自现有资料库）',
+        'MISSING_META'
+      )
       return
     }
     if (!fileName) {
@@ -276,7 +284,12 @@ contributionsRouter.post(
       return
     }
     if (body.length > MAX_FILE_BYTES) {
-      fail(res, 413, `文件超过 ${Math.round(MAX_FILE_BYTES / 1024 / 1024)}MB，请压缩后再投稿`, 'FILE_TOO_LARGE')
+      fail(
+        res,
+        413,
+        `文件超过 ${Math.round(MAX_FILE_BYTES / 1024 / 1024)}MB，请压缩后再投稿`,
+        'FILE_TOO_LARGE'
+      )
       return
     }
 
@@ -368,8 +381,11 @@ adminContributionsRouter.get('/', async (req: Request, res: Response) => {
   const keyword = queryStr(req, 'keyword').toLowerCase()
   const filtered = keyword
     ? statusMatched.filter((x) =>
-        [x.title, x.org, x.fileName, x.userName, x.userOrg]
-          .some((field) => String(field ?? '').toLowerCase().includes(keyword))
+        [x.title, x.org, x.fileName, x.userName, x.userOrg].some((field) =>
+          String(field ?? '')
+            .toLowerCase()
+            .includes(keyword)
+        )
       )
     : statusMatched
 

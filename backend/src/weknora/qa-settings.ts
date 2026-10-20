@@ -26,14 +26,7 @@ export const QA_STYLES: readonly QaStyle[] = ['quick', 'knowledge']
 
 /** 思考强度。引擎原生参数 reasoning_effort 的合法取值（实测引擎 400 回显确认）。 */
 export type ReasoningEffort =
-  | 'off'
-  | 'auto'
-  | 'minimal'
-  | 'low'
-  | 'medium'
-  | 'high'
-  | 'xhigh'
-  | 'max'
+  'off' | 'auto' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 export const REASONING_EFFORTS: readonly ReasoningEffort[] = [
   'off',

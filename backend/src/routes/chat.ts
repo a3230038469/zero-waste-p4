@@ -91,21 +91,24 @@ router.get('/conversations', async (_req: Request, res: Response, next: NextFunc
 })
 
 // —— GET /conversations/:id/messages：会话全部消息（前端恢复画面）——
-router.get('/conversations/:id/messages', async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const id = String(req.params.id ?? '')
-    const conversation = await summarize(id)
-    const messages = await listMessages(id)
-    // TODO(交付前按用户隔离)：校验这条会话是不是当前用户的，不是就 403
-    res.json({ success: true, conversation, messages })
-  } catch (err) {
-    if (err instanceof ConversationNotFoundError) {
-      fail(res, 404, 'CONVERSATION_NOT_FOUND', '这个对话不存在或已被删除')
-      return
+router.get(
+  '/conversations/:id/messages',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const id = String(req.params.id ?? '')
+      const conversation = await summarize(id)
+      const messages = await listMessages(id)
+      // TODO(交付前按用户隔离)：校验这条会话是不是当前用户的，不是就 403
+      res.json({ success: true, conversation, messages })
+    } catch (err) {
+      if (err instanceof ConversationNotFoundError) {
+        fail(res, 404, 'CONVERSATION_NOT_FOUND', '这个对话不存在或已被删除')
+        return
+      }
+      next(err)
     }
-    next(err)
   }
-})
+)
 
 // —— DELETE /conversations/:id：删会话（连带删消息）——
 router.delete('/conversations/:id', async (req: Request, res: Response, next: NextFunction) => {

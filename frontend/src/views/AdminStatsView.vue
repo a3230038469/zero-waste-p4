@@ -93,11 +93,15 @@ async function load(): Promise<void> {
     errorText.value = ''
     localStorage.setItem(TOKEN_KEY, token.value)
   } catch (err) {
-    const response = (err as { response?: { status?: number; data?: { error?: { code?: string; message?: string } } } })
-      .response
+    const response = (
+      err as {
+        response?: { status?: number; data?: { error?: { code?: string; message?: string } } }
+      }
+    ).response
     const code = response?.data?.error?.code
     if (code === 'ADMIN_NOT_CONFIGURED') {
-      errorText.value = '服务端还没配 ADMIN_STATS_TOKEN（看板已关闭）。请在 backend/.env 里配好再重启后端。'
+      errorText.value =
+        '服务端还没配 ADMIN_STATS_TOKEN（看板已关闭）。请在 backend/.env 里配好再重启后端。'
     } else if (code === 'ADMIN_FORBIDDEN' || response?.status === 403) {
       errorText.value = '口令不正确。'
     } else {
@@ -232,9 +236,16 @@ onUnmounted(() => {
 
         <!-- 近 14 天趋势 -->
         <el-card shadow="never" class="panel">
-          <template #header><span class="panel-title">近 {{ stats.daily.length }} 天事件量</span></template>
+          <template #header
+            ><span class="panel-title">近 {{ stats.daily.length }} 天事件量</span></template
+          >
           <div class="trend">
-            <div v-for="point in stats.daily" :key="point.date" class="trend-col" :title="`${point.date}：${point.events} 条`">
+            <div
+              v-for="point in stats.daily"
+              :key="point.date"
+              class="trend-col"
+              :title="`${point.date}：${point.events} 条`"
+            >
               <div class="trend-bar" :style="{ height: barWidth(point.events, dailyMax) }" />
               <span class="trend-date">{{ shortDate(point.date) }}</span>
             </div>
@@ -286,10 +297,18 @@ onUnmounted(() => {
         <el-card shadow="never" class="panel">
           <template #header><span class="panel-title">问答质量</span></template>
           <ul class="facts">
-            <li><span>提问总数</span><strong>{{ stats.asks.total }}</strong></li>
-            <li><span>可判定条数</span><strong>{{ stats.asks.judged }}</strong></li>
-            <li><span>答不上来</span><strong>{{ stats.asks.noAnswer }}</strong></li>
-            <li><span>未判定（中途断开等）</span><strong>{{ stats.asks.unjudged }}</strong></li>
+            <li>
+              <span>提问总数</span><strong>{{ stats.asks.total }}</strong>
+            </li>
+            <li>
+              <span>可判定条数</span><strong>{{ stats.asks.judged }}</strong>
+            </li>
+            <li>
+              <span>答不上来</span><strong>{{ stats.asks.noAnswer }}</strong>
+            </li>
+            <li>
+              <span>未判定（中途断开等）</span><strong>{{ stats.asks.unjudged }}</strong>
+            </li>
           </ul>
           <div class="rate">
             <span>无答案率</span>
