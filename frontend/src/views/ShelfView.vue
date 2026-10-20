@@ -319,8 +319,10 @@ watch(
       </div>
 
       <div class="pager">
+        <!-- pager-count 收到 5：375 宽下 9 个页码 + 总数会撑出横向滚动 -->
         <el-pagination
           background
+          :pager-count="5"
           layout="total, prev, pager, next"
           :total="total"
           :page-size="PAGE_SIZE"
@@ -549,6 +551,16 @@ watch(
 
   .page-head h1 {
     font-size: var(--zw-fs-h2);
+  }
+
+  /* 窄屏藏掉「共 N 条」，否则分页条连同总数会撑出横向滚动 */
+  .pager :deep(.el-pagination__total) {
+    display: none;
+  }
+
+  .pager {
+    overflow-x: auto;
+    padding-bottom: var(--zw-space-1);
   }
 }
 </style>

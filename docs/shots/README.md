@@ -20,6 +20,8 @@
 | `08-state-hover.png` | 首页类型卡片悬停 | `/` | 悬停 |
 | `09-state-focus.png` | 资料库类型标签键盘焦点 | `/shelf` | 键盘焦点 |
 | `10-state-empty.png` | 资料库搜索无结果 | `/shelf?q=zzzzzznotfound` | 空态 |
+| `11-mobile-home.png` | 移动端首页（375×812） | `/` | 正常 · 响应式 |
+| `12-mobile-shelf.png` | 移动端资料库（375×812） | `/shelf` | 正常 · 响应式 |
 
 未覆盖（需后端制造故障才能拍，留待 QA 批次）：接口失败的错误态、表单校验失败态、加载骨架屏的定格。
 
