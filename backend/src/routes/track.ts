@@ -2,7 +2,7 @@
  * 埋点与统计接口 —— 负责人：韶茹
  *
  *   POST /api/track        上报行为事件（匿名可传，允许部分成功）
- *   GET  /api/track/stats  看板统计摘要（需 X-Admin-Token）
+ *   GET  /api/track/stats  看板统计摘要（需管理员账号登录态，见 src/admin/guard.ts）
  *
  * 契约见 docs/接口约定.md 第二节「行为埋点与统计」。
  * 设计与 /api/docs、/api/auth、/api/embed、/api/ask 全不重叠，路由挂载在最后即可。
@@ -11,7 +11,7 @@
  *  - 埋点是「尽力而为」的旁路：单条非法不影响同批合法条（逐条校验、部分成功）；
  *    只有信封不可用（不是对象/数组、空数组、超 100 条）或整批全非法才 400。
  *  - accepted 严格等于实际落库行数。
- *  - 看板守卫 fail closed：没配 ADMIN_STATS_TOKEN 一律 403，不因为缺配置就放行。
+ *  - 看板守卫 fail closed：不是管理员一律 403（2026-10-19 从共用口令改成管理员账号）。
  *
  * 🔴 T11（2026-10-14）追加：游客权限 `feedback` 关闭时，**未登录**请求里的
  *    `feedback_submit` 一律拒收（其他事件一律照常落库，完全不受影响）。
@@ -20,6 +20,7 @@
  *    不去污染 track/types.ts 里的联合类型。
  */
 import { Router, type Request, type Response } from 'express'
+import { requireAdminGuard } from '../admin/guard.js'
 
 import { buildStatsSummary } from '../track/stats.js'
 import { appendEvents, normalizeEvent, readEvents, trackFilePath } from '../track/store.js'
@@ -186,37 +187,8 @@ router.post('/', (req: Request, res: Response) => {
  * GET /api/track/stats（看板）
  * ------------------------------------------------------------------ */
 
-/** 看板口令：只从环境变量读，不写进代码 */
-function adminToken(): string {
-  return (process.env.ADMIN_STATS_TOKEN ?? '').trim()
-}
-
-function requireAdmin(req: Request, res: Response): boolean {
-  const expected = adminToken()
-  if (!expected) {
-    // fail closed：没配口令就不放行，避免「忘了配 = 全世界可看」
-    res.status(403).json({
-      success: false,
-      error: {
-        code: 'ADMIN_NOT_CONFIGURED',
-        message: '服务端未配置 ADMIN_STATS_TOKEN，看板已关闭。请在 backend/.env 配置后重启。'
-      }
-    })
-    return false
-  }
-  const provided = String(req.headers['x-admin-token'] ?? '')
-  if (provided !== expected) {
-    res.status(403).json({
-      success: false,
-      error: { code: 'ADMIN_FORBIDDEN', message: '看板口令不正确' }
-    })
-    return false
-  }
-  return true
-}
-
-router.get('/stats', (req: Request, res: Response) => {
-  if (!requireAdmin(req, res)) return
+router.get('/stats', async (req: Request, res: Response) => {
+  if (!(await requireAdminGuard(req, res))) return
   try {
     const summary: StatsSummaryResponse = buildStatsSummary(readEvents())
     res.status(200).json(summary)

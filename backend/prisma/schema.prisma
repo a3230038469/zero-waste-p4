@@ -20,6 +20,14 @@ datasource db {
 /// 注册用户（B02：五个注册字段 + 密码哈希）
 /// 密码只存 bcrypt 哈希（passwordHash），绝不存明文。
 /// topics 为关注议题：SQLite 无数组类型，存 JSON 数组字符串，接口层还原为数组。
+///
+/// role（2026-10-19 新增）：身份。取值只有两个 ——
+///   "user"  普通用户（默认，所有人注册都是这个）
+///   "admin" 管理员（能进 /admin 管理台；用 `npm run admin:role -- grant 手机号` 授予）
+/// 为什么加它：管理接口原来靠 backend/.env 里的一把共用口令（ADMIN_STATS_TOKEN）挡门，
+/// 换电脑/换浏览器就要重贴，也查不到是谁改的。改成账号身份后：
+/// 一次登录、按身份放行、谁改的有据可查。**默认值必须是 "user"**，
+/// 绝不能让「注册即管理员」这种口子存在。
 model User {
   id           String   @id @default(cuid())
   name         String // 姓名
@@ -28,7 +36,22 @@ model User {
   topics       String // 关注议题（JSON 数组字符串）
   phone        String   @unique // 电话（唯一）
   passwordHash String // 密码哈希（bcrypt）
+  role         String   @default("user") // 身份：user | admin
   createdAt    DateTime @default(now())
+}
+
+/// 站点信息（2026-10-19 新增）—— 交给基金会自己填的对外口径
+///
+/// 为什么用 key-value 而不是一堆列：这些字段会变（今天要联系方式/邮箱/地址，
+/// 明天可能要加「合作说明」「页脚版权」），key-value 加字段不用再改表结构。
+/// 已知 key 见 backend/src/site/info.ts 的 SITE_INFO_FIELDS：
+///   contact / email / address / cooperation / copyright
+/// 约定：**空值就是不填**，接口照实返回空串，前端继续显示「待补充」占位——
+/// 未由基金会确认的对外口径一个字都不许编（见根 AGENTS.md）。
+model SiteSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
 }
 
 /// 对话会话（T5 · 乙方案：会话存数据库，刷新页面能恢复画面）

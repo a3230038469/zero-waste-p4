@@ -118,7 +118,7 @@ async function agentFetch(path: string, init: RequestInit = {}): Promise<Respons
  * 对外的字段契约（白名单 —— 其余字段一律「原样透传，绝不展示也绝不提交」）
  * ------------------------------------------------------------------ */
 
-/** 可读可改的 6 个字段（前端控件见 docs/接口约定.md 第二节） */
+/** 可读可改的 7 个字段（前端控件见 docs/接口约定.md 第二节） */
 export interface AgentEditableConfig {
   system_prompt: string
   model_id: string
@@ -126,6 +126,13 @@ export interface AgentEditableConfig {
   max_completion_tokens: number
   fallback_strategy: string
   fallback_response: string
+  /**
+   * 思考模式开关（引擎原生字段 `thinking`）。
+   *   true  = 思考模式：模型先想再答，慢一些但更稳；
+   *   false = 快速模式：直接作答。
+   * 引擎只在「支持扩展思考的模型」上才真正生效，不支持的模型忽略该值（不会报错）。
+   */
+  thinking: boolean
 }
 
 /** 只读展示的 4 组字段 */
@@ -166,6 +173,8 @@ export interface AgentConfigPatch {
   max_completion_tokens?: number
   fallback_strategy?: string
   fallback_response?: string
+  /** true = 思考模式，false = 快速模式（布尔值，没有「不改」这一说） */
+  thinking?: boolean
 }
 
 /** 回读校验的一项（老师要看得见「到底哪一项没过」） */
@@ -279,7 +288,9 @@ export function toAgentView(
       temperature: num(cfg['temperature']),
       max_completion_tokens: num(cfg['max_completion_tokens']),
       fallback_strategy: str(cfg['fallback_strategy']),
-      fallback_response: str(cfg['fallback_response'])
+      fallback_response: str(cfg['fallback_response']),
+      // 引擎里没有这个键 / 不是 true 一律当「快速模式」，页面不会出现第三种状态
+      thinking: cfg['thinking'] === true
     },
     readonly: {
       knowledge_bases: kbs,
@@ -346,7 +357,7 @@ function assertKbSelectionMode(mode: string): void {
  *   2. patch 里**非空**的字段覆盖上去（未传的保持原值；空串视为「不改」）
  *   3. 硬闸检查 kb_selection_mode
  *   4. PUT 完整 config（body 是 {name, description, avatar, config}，见下方实测注释）
- *   5. 回读 GET 一次，校验四项（+ 第五项 kb_selection_mode 红线）
+ *   5. 回读 GET 一次，校验六项（四项值 + 回答模式 thinking + 最后一项 kb_selection_mode 红线）
  *   6. 任一不过 → 抛错并说明是哪一项
  *
  * ⚠️ 为什么「空串 = 不改」：整体替换下，传空串等于**主动清空**老师的 777 字提示词。
@@ -391,6 +402,14 @@ export async function updateAgentConfig(
     if (value !== next[key]) changed.push(key)
     next[key] = value
   }
+  const applyBoolean = (key: keyof AgentEditableConfig, value: unknown): void => {
+    if (value === undefined || value === null) return
+    if (typeof value !== 'boolean') {
+      throw new EngineError('INVALID_AGENT_FIELD', `${key} 得是布尔值`, 400)
+    }
+    if (value !== next[key]) changed.push(key)
+    next[key] = value
+  }
 
   applyString('system_prompt', patch.system_prompt)
   applyString('model_id', patch.model_id)
@@ -398,6 +417,7 @@ export async function updateAgentConfig(
   applyNumber('max_completion_tokens', patch.max_completion_tokens)
   applyString('fallback_strategy', patch.fallback_strategy)
   applyString('fallback_response', patch.fallback_response)
+  applyBoolean('thinking', patch.thinking)
 
   /* 步骤 3：kb_selection_mode 硬闸 ---------------------------------------- */
   assertKbSelectionMode(str(before.config['kb_selection_mode']))
@@ -424,7 +444,7 @@ export async function updateAgentConfig(
     )
   }
 
-  /* 步骤 5：回读 + 四项校验 ----------------------------------------------- */
+  /* 步骤 5：回读 + 逐项校验 ----------------------------------------------- */
   const after = await fetchRawAgent()
   const checks = buildChecks(next, after.config)
 
@@ -446,8 +466,8 @@ export async function updateAgentConfig(
     success: true,
     message:
       changed.length === 0
-        ? '已原样写回（一个字没改），四项回读校验全过'
-        : `已保存并生效（改了 ${changed.length} 项：${changed.join('、')}），四项回读校验全过`,
+        ? '已原样写回（一个字没改），回读校验全过'
+        : `已保存并生效（改了 ${changed.length} 项：${changed.join('、')}），回读校验全过`,
     changed,
     ignored,
     before: toAgentView(before, models),
@@ -457,14 +477,16 @@ export async function updateAgentConfig(
 }
 
 /**
- * 四项回读校验（+ 第五项红线），**目标字段名写死**，期望值来自本次要写的那份 config。
+ * 回读校验（五项 + 最后一项红线），**目标字段名写死**，期望值来自本次要写的那份 config。
  *
  * 前四项就是任务单 3.3 点名的：
  *   1. max_completion_tokens = 8192（漏传会回落到 1024，长回答被截断）
  *   2. system_prompt 长度 = 777（或与改前一致）
  *   3. temperature = 0.3（漏传变 0，输出完全确定）
  *   4. fallback_strategy = "fixed"（漏传被补成 model，兜底文案失效）
- * 第五项是本文件自己的硬闸：kb_selection_mode 必须是 selected。
+ * 第五项是 2026-10-20 新增的「思考模式 / 快速模式」开关（thinking）：整体替换下漏传会被引擎补回默认值，
+ * 老师选了思考模式却悄悄变回快速模式 —— 必须回读确认。
+ * 最后一项是本文件自己的硬闸：kb_selection_mode 必须是 selected。
  */
 function buildChecks(expected: Record<string, unknown>, actual: Record<string, unknown>): AgentCheck[] {
   const expectTokens = num(expected['max_completion_tokens'])
@@ -475,6 +497,8 @@ function buildChecks(expected: Record<string, unknown>, actual: Record<string, u
   const actualTemp = num(actual['temperature'])
   const expectFallback = str(expected['fallback_strategy'])
   const actualFallback = str(actual['fallback_strategy'])
+  const expectThinking = expected['thinking'] === true
+  const actualThinking = actual['thinking'] === true
   const expectMode = REQUIRED_KB_SELECTION_MODE
   const actualMode = str(actual['kb_selection_mode'])
 
@@ -506,6 +530,13 @@ function buildChecks(expected: Record<string, unknown>, actual: Record<string, u
       expected: expectFallback,
       actual: actualFallback,
       ok: expectFallback === actualFallback
+    },
+    {
+      key: 'thinking',
+      label: '回答模式',
+      expected: expectThinking ? '思考模式' : '快速模式',
+      actual: actualThinking ? '思考模式' : '快速模式',
+      ok: expectThinking === actualThinking
     },
     {
       key: 'kb_selection_mode',

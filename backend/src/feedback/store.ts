@@ -33,6 +33,47 @@ export const FEEDBACK_KIND_LABELS: Record<FeedbackKind, string> = {
   other: '其他'
 }
 
+/**
+ * 细分原因白名单（2026-10-19 新增）。
+ *
+ * 为什么要有它：前台反馈是**按场景**让用户选的 ——
+ *   资料页给的是「文件打不开 / 内容有误 / 内容重复 / 希望补充相关内容」，
+ *   站点页给的是「功能建议 / 内容建议 / 使用问题 / 其他」。
+ * 上面那 4 个 kind 是给后台做粗分组用的，颗粒度不够；
+ * 老师要判断「这条要不要动手改」，看的是用户当初点的那个选项，所以原样存下来。
+ * 取值必须与 `frontend/src/constants/feedback.ts` 的 DOC_REASONS / SITE_KINDS 一致。
+ */
+export const FEEDBACK_REASONS = [
+  'broken',
+  'wrong',
+  'duplicate',
+  'missing',
+  'feature',
+  'content',
+  'usage',
+  'other'
+] as const
+
+export type FeedbackReason = (typeof FEEDBACK_REASONS)[number]
+
+/** 细分原因的中文名（后台列表与导出共用；前端不再各写一份） */
+export const FEEDBACK_REASON_LABELS: Record<string, string> = {
+  broken: '文件打不开 / 无法预览下载',
+  wrong: '内容有误（标题、机构、年份等）',
+  duplicate: '内容重复收录',
+  missing: '希望补充相关内容',
+  feature: '功能建议',
+  content: '内容建议',
+  usage: '使用问题',
+  other: '其他'
+}
+
+/** 反馈提交的场景（资料级 / 站点级） */
+export const FEEDBACK_SCOPES = ['doc', 'site'] as const
+
+export type FeedbackScope = (typeof FEEDBACK_SCOPES)[number]
+
+
 /** 各字段长度上限（超出按**拒绝**处理，不静默截断 —— 反馈是工单，不能悄悄丢内容） */
 export const FEEDBACK_MAX_MESSAGE_CHARS = 2000
 export const FEEDBACK_MAX_CONTACT_CHARS = 120
@@ -45,6 +86,10 @@ export interface StoredFeedback {
   /** 提交时刻，ISO 8601 */
   ts: string
   kind: FeedbackKind
+  /** 细分原因（FEEDBACK_REASONS 取值；老数据可能为空串） */
+  reason: string
+  /** 提交场景：doc = 针对某份资料，site = 针对站点 */
+  scope: FeedbackScope
   /** 反馈正文 */
   message: string
   /** 联系方式（选填）。⚠️ 属个人信息，只给管理者看，不出现在任何对外页面 */
@@ -120,6 +165,8 @@ export function readFeedback(): StoredFeedback[] {
 
 export interface FeedbackInput {
   kind: FeedbackKind
+  reason: string
+  scope: FeedbackScope
   message: string
   contact: string
   docId: string
@@ -134,6 +181,10 @@ function readString(source: Record<string, unknown>, key: string): string {
 
 function isKind(value: string): value is FeedbackKind {
   return (FEEDBACK_KINDS as readonly string[]).includes(value)
+}
+
+function isReason(value: string): value is FeedbackReason {
+  return (FEEDBACK_REASONS as readonly string[]).includes(value)
 }
 
 /**
@@ -169,12 +220,23 @@ export function parseFeedback(raw: unknown): [FeedbackInput | null, string | nul
     return [null, `资料标题最多 ${FEEDBACK_MAX_DOC_TITLE_CHARS} 字`]
   }
 
+  // 细分原因与场景都是**选填**：老调用方（只传 kind/message）照旧能用，
+  // 传了不认识的取值就退回空串，不因为一个附加字段把整条反馈拒掉。
+  const reasonRaw = readString(raw, 'reason')
+  const reason = isReason(reasonRaw) ? reasonRaw : ''
+  const scopeRaw = readString(raw, 'scope')
+  const docId = readString(raw, 'docId')
+  const scope: FeedbackScope =
+    scopeRaw === 'doc' || scopeRaw === 'site' ? scopeRaw : docId ? 'doc' : 'site'
+
   return [
     {
       kind,
+      reason,
+      scope,
       message,
       contact,
-      docId: readString(raw, 'docId'),
+      docId,
       docTitle,
       path: readString(raw, 'path')
     },
@@ -188,6 +250,8 @@ export function buildFeedback(input: FeedbackInput): StoredFeedback {
     id: randomUUID(),
     ts: new Date().toISOString(),
     kind: input.kind,
+    reason: input.reason,
+    scope: input.scope,
     message: input.message,
     contact: input.contact,
     docId: input.docId,

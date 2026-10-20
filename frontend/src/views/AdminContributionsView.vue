@@ -3,7 +3,7 @@
  * 老师后台 · 投稿审核 —— B09 公众上传（2026-10-13 新增）
  *
  * 路由：/admin/contributions
- * 数据源：GET /api/admin/contributions（需请求头 X-Admin-Token，与老师后台其余页面同一套口令）
+ * 数据源：GET /api/admin/contributions（需管理员账号登录态，与老师后台其余页面同一套）
  *
  * 这里管的是「访客投稿进来之后」：审核队列 → 通过（真进知识库）/ 退回（必填理由）。
  *   - 通过：后端把原件转发给已有的 /api/admin/knowledge/upload 入库，**成功才改状态**；
@@ -13,11 +13,12 @@
  *
  * ⚠️ 引擎入库后有几秒到几分钟延迟（解析进度在「资料管理」页看得到），
  *    通过后别立刻说「书架没有」。
+ *
+ * 2026-10-19：管理台鉴权从共用口令改成管理员账号，本页口令输入框与口令状态一并删除。
  */
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { ADMIN_TOKEN_KEY } from '../api/admin'
 import {
   approveContribution,
   fetchAdminContributions,
@@ -29,7 +30,6 @@ import {
 } from '../api/contributions'
 import { formatBytes } from '../utils/format'
 
-const token = ref('')
 const items = ref<AdminContribution[]>([])
 const counts = ref<AdminContributionCounts>({ pending: 0, approved: 0, rejected: 0 })
 const loading = ref(false)
@@ -52,18 +52,14 @@ const hasItems = computed(() => items.value.length > 0)
 function errorMessage(err: unknown, fallback: string): string {
   const response = (err as { response?: { status?: number; data?: { error?: { message?: string } } } })
     .response
-  if (response?.status === 403) return '口令不正确。'
+  if (response?.status === 403) return '当前账号不是管理员。'
   return response?.data?.error?.message ?? fallback
 }
 
-async function load(keepToken = true): Promise<void> {
-  if (!token.value) {
-    errorText.value = '请输入管理口令'
-    return
-  }
+async function load(): Promise<void> {
   loading.value = true
   try {
-    const data = await fetchAdminContributions(token.value, {
+    const data = await fetchAdminContributions({
       status: statusFilter.value,
       keyword: keyword.value.trim(),
       pageSize: 100
@@ -71,17 +67,12 @@ async function load(keepToken = true): Promise<void> {
     items.value = data.items ?? []
     counts.value = data.counts ?? { pending: 0, approved: 0, rejected: 0 }
     errorText.value = ''
-    if (keepToken) localStorage.setItem(ADMIN_TOKEN_KEY, token.value)
   } catch (err) {
     errorText.value = errorMessage(err, '拉取失败，看看后端（:4000）在不在。')
     items.value = []
   } finally {
     loading.value = false
   }
-}
-
-function enterAdmin(): void {
-  void load()
 }
 
 function switchFilter(value: ContributionStatus | ''): void {
@@ -107,7 +98,7 @@ function onFilterChange(value: string | number | boolean | undefined): void {
 /** 查看 / 下载原件（要带头，所以走后端取的 blob，见 api/contributions.ts） */
 async function viewFile(row: AdminContribution): Promise<void> {
   try {
-    await openContributionFile(token.value, row.id)
+    await openContributionFile(row.id)
   } catch (err) {
     ElMessage.error(errorMessage(err, '原件打不开（可能已被清理）'))
   }
@@ -127,7 +118,7 @@ async function approve(row: AdminContribution): Promise<void> {
 
   actingId.value = row.id
   try {
-    const res = await approveContribution(token.value, row.id)
+    const res = await approveContribution(row.id)
     ElMessage.success(res.message || '已通过')
     await load()
   } catch (err) {
@@ -160,7 +151,7 @@ async function reject(row: AdminContribution): Promise<void> {
 
   actingId.value = row.id
   try {
-    const res = await rejectContribution(token.value, row.id, reason)
+    const res = await rejectContribution(row.id, reason)
     ElMessage.success(res.message || '已退回')
     await load()
   } catch (err) {
@@ -182,12 +173,7 @@ function fmtTime(value: string): string {
 }
 
 onMounted(() => {
-  // 口令与老师后台其余页面共用同一个 localStorage 键，进过任何一个页面都不用重输
-  const saved = localStorage.getItem(ADMIN_TOKEN_KEY) ?? ''
-  if (saved) {
-    token.value = saved
-    void load()
-  }
+  void load()
 })
 </script>
 
@@ -202,28 +188,7 @@ onMounted(() => {
       </div>
     </header>
 
-    <nav class="admin-nav">
-      <router-link to="/admin/knowledge">资料管理</router-link>
-      <router-link to="/admin/contributions">投稿审核</router-link>
-      <router-link to="/admin/users">注册用户</router-link>
-      <router-link to="/admin/feedback">访客反馈</router-link>
-      <router-link to="/admin/stats">数据看板</router-link>
-      <router-link to="/admin/settings">设置</router-link>
-    </nav>
-
-    <el-card shadow="never" class="token-card">
-      <div class="token-row">
-        <el-input
-          v-model="token"
-          type="password"
-          show-password
-          placeholder="管理口令（backend/.env 里的 ADMIN_STATS_TOKEN）"
-          @keyup.enter="enterAdmin"
-        />
-        <el-button type="primary" :loading="loading" @click="enterAdmin">进入</el-button>
-      </div>
-      <p v-if="errorText" class="err">{{ errorText }}</p>
-    </el-card>
+    <p v-if="errorText" class="err">{{ errorText }}</p>
 
     <template v-if="!errorText">
       <div class="stat-row">
@@ -345,41 +310,6 @@ onMounted(() => {
   font-size: 13px;
   line-height: 1.8;
   color: var(--zw-muted);
-}
-
-.admin-nav {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin: 18px 0;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--zw-line);
-}
-
-.admin-nav a {
-  font-size: 13px;
-  color: var(--zw-muted);
-  text-decoration: none;
-}
-
-.admin-nav a:hover,
-.admin-nav a.router-link-active {
-  color: var(--zw-green-deep);
-}
-
-.admin-nav a.router-link-active {
-  font-weight: 600;
-}
-
-.token-card {
-  margin-bottom: 18px;
-  border: 1px solid var(--zw-line);
-  border-radius: var(--zw-radius);
-}
-
-.token-row {
-  display: flex;
-  gap: 10px;
 }
 
 .err {

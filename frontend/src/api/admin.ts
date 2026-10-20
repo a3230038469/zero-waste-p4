@@ -1,14 +1,14 @@
 /**
  * 管理接口客户端（老师后台用）—— 2026-10-08 本地演示版新增
  *
- * 鉴权：口令走 X-Admin-Token 请求头；口令只存在浏览器本地，不写进代码、不进 git。
+ * 鉴权（2026-10-19 改造）：**管理员账号**。这里一个口令头都不带 ——
+ * 登录凭证由 api/http.ts 的请求拦截器统一附上（`Authorization: Bearer <token>`），
+ * 后端查这个账号的 `role` 是不是 admin（见 backend/src/admin/guard.ts）。
+ * 原来的共用口令 `X-Admin-Token` 已从这一层彻底移除。
  */
 import http from './http'
 import { describeBlobError, saveBlob } from '../utils/download'
 import type { GuestPermissionsPayload } from './guest'
-
-/** 口令在 localStorage 的键名（与统计看板共用同一个） */
-export const ADMIN_TOKEN_KEY = 'zwp.adminToken'
 
 /** 管理视角的一条资料 */
 export interface AdminKnowledgeItem {
@@ -35,9 +35,8 @@ export interface AdminKnowledgeList {
 }
 
 /** 拉知识库资料列表（管理视角） */
-export async function fetchKnowledgeList(token: string): Promise<AdminKnowledgeList> {
+export async function fetchKnowledgeList(): Promise<AdminKnowledgeList> {
   const res = await http.get<AdminKnowledgeList>('/admin/knowledge', {
-    headers: { 'X-Admin-Token': token },
     silent: true
   })
   return res.data
@@ -60,6 +59,8 @@ export interface UploadResult {
   message: string
   metaSaved: boolean
   metaNote: string
+  /** 本次走的解析引擎：`default` = 引擎按知识库默认规则（MinerU 云），`builtin` = 本地引擎兜底 */
+  engine?: 'default' | 'builtin'
 }
 
 /**
@@ -69,11 +70,14 @@ export interface UploadResult {
  * 文件名走 X-File-Name 头（URL 编码，避免中文名乱码）——
  * 这样既不用在前端转 base64（体积会涨三成），后端也不用新增上传中间件。
  * 元数据走查询参数（org / year / type / tags），由后端在文件落库后补写。
+ *
+ * 2026-10-19（互通角信-31）：`localEngine = true` 时改打 `/admin/knowledge/upload-large`，
+ * 后端对**这一份**指定本地引擎 —— MinerU 云对 >200MB / >200 页是硬拒（实测官方回显）。
  */
 export async function uploadKnowledge(
-  token: string,
   file: File,
-  meta: UploadMeta = {}
+  meta: UploadMeta = {},
+  options: { localEngine?: boolean } = {}
 ): Promise<UploadResult> {
   const params = new URLSearchParams()
   for (const key of ['org', 'year', 'type', 'tags'] as const) {
@@ -81,13 +85,13 @@ export async function uploadKnowledge(
     if (value) params.set(key, value)
   }
   const query = params.toString()
+  const path = options.localEngine ? '/admin/knowledge/upload-large' : '/admin/knowledge/upload'
 
   const res = await http.post<UploadResult>(
-    `/admin/knowledge/upload${query ? `?${query}` : ''}`,
+    `${path}${query ? `?${query}` : ''}`,
     file,
     {
       headers: {
-        'X-Admin-Token': token,
         'X-File-Name': encodeURIComponent(file.name),
         'Content-Type': 'application/octet-stream'
       },
@@ -104,9 +108,8 @@ export async function uploadKnowledge(
  * ⚠️ 引擎删除后有**几秒延迟**（列表接口会短暂仍返回它），
  * 调用方删完最好延迟约 3 秒再刷新，否则老师会以为没删掉。
  */
-export async function deleteKnowledge(token: string, id: string): Promise<void> {
+export async function deleteKnowledge(id: string): Promise<void> {
   await http.delete(`/admin/knowledge/${encodeURIComponent(id)}`, {
-    headers: { 'X-Admin-Token': token },
     silent: true
   })
 }
@@ -126,13 +129,19 @@ export interface ReuploadResult {
  * `data.id` 拿（**一定换成了新 id**，别再用旧 id 去查详情）。
  *
  * ⚠️ 传的是大文件（几十兆 PDF 常见），默认 20s 超时不够，这里放到 5 分钟。
+ *
+ * `localEngine = true` 时带 `?engine=local`：重传同样会撞 MinerU 云的 200MB / 200 页硬限，
+ * 超限文件重传必须走本地引擎（信-31 第 84 行明确要求）。
  */
-export async function reuploadKnowledge(token: string, id: string): Promise<ReuploadResult> {
+export async function reuploadKnowledge(
+  id: string,
+  options: { localEngine?: boolean } = {}
+): Promise<ReuploadResult> {
+  const query = options.localEngine ? '?engine=local' : ''
   const res = await http.post<ReuploadResult>(
-    `/admin/knowledge/${encodeURIComponent(id)}/reupload`,
+    `/admin/knowledge/${encodeURIComponent(id)}/reupload${query}`,
     null,
     {
-      headers: { 'X-Admin-Token': token },
       silent: true,
       timeout: 300_000
     }
@@ -173,9 +182,8 @@ export interface ParserConfigPayload {
 }
 
 /** 读解析引擎设置 */
-export async function fetchParserConfig(token: string): Promise<ParserConfigPayload> {
+export async function fetchParserConfig(): Promise<ParserConfigPayload> {
   const res = await http.get<ParserConfigPayload>('/admin/parser-config', {
-    headers: { 'X-Admin-Token': token },
     silent: true
   })
   return res.data
@@ -211,32 +219,9 @@ export interface ParserSaveResult {
 }
 
 export async function saveParserConfig(
-  token: string,
   patch: ParserConfigPatch
 ): Promise<ParserSaveResult> {
   const res = await http.put<ParserSaveResult>('/admin/parser-config', patch, {
-    headers: { 'X-Admin-Token': token },
-    silent: true,
-    timeout: 60_000
-  })
-  return res.data
-}
-
-/** 测试连接（只测不存）：把待测配置丢给引擎的 parser-engines/check */
-export interface ParserCheckResult {
-  success: boolean
-  message: string
-  engines: ParserEngineInfo[]
-  /** 本次是否带了新密钥去测（false = 用引擎里已保存的那把测） */
-  usedPendingSecret: boolean
-}
-
-export async function checkParserConfig(
-  token: string,
-  patch: ParserConfigPatch
-): Promise<ParserCheckResult> {
-  const res = await http.post<ParserCheckResult>('/admin/parser-config/check', patch, {
-    headers: { 'X-Admin-Token': token },
     silent: true,
     timeout: 60_000
   })
@@ -263,9 +248,8 @@ export interface SelfcheckPayload {
   items: SelfcheckItem[]
 }
 
-export async function runSelfcheck(token: string): Promise<SelfcheckPayload> {
+export async function runSelfcheck(): Promise<SelfcheckPayload> {
   const res = await http.post<SelfcheckPayload>('/admin/selfcheck', null, {
-    headers: { 'X-Admin-Token': token },
     silent: true,
     timeout: 30_000
   })
@@ -291,120 +275,47 @@ export interface AdminUserList {
 }
 
 /** 拉注册用户列表（管理视角；手机号由后端脱敏，前端拿到就是打码后的） */
-export async function fetchUserList(token: string): Promise<AdminUserList> {
+export async function fetchUserList(): Promise<AdminUserList> {
   const res = await http.get<AdminUserList>('/admin/users', {
-    headers: { 'X-Admin-Token': token },
     silent: true
   })
   return res.data
 }
 
 /* ------------------------------------------------------------------ *
- * 问答设置（模型 / 回答方式 / 思考强度）
- * ------------------------------------------------------------------ */
-
-/** 回答方式。取值与后端契约一致，**别自创别名** */
-export type QaStyle = 'quick' | 'knowledge'
-
-/** 思考强度。引擎原生参数 reasoning_effort 的 8 个合法取值；'' = 跟随引擎默认 */
-export type ReasoningEffort =
-  | ''
-  | 'off'
-  | 'auto'
-  | 'minimal'
-  | 'low'
-  | 'medium'
-  | 'high'
-  | 'xhigh'
-  | 'max'
-
-/** 引擎侧的一个可选问答模型 */
-export interface QaModelOption {
-  id: string
-  name: string
-  type: string
-  status: string
-}
-
-export interface QaStyleOption {
-  value: QaStyle
-  label: string
-  hint: string
-}
-
-export interface QaEffortOption {
-  value: ReasoningEffort
-  label: string
-}
-
-/**
- * 问答设置的读取结果。
+ * 访客反馈（2026-10-14 新增，2026-10-19 改为「收件箱」口径）
  *
- * ⚠️ `modelsError` 非空说明引擎没连上、`models` 是空的（接口本身仍是 200，
- * 已保存的设置照常返回）。这时要把原因显示出来，别给老师一个空白下拉框。
- */
-export interface QaSettingsPayload {
-  success: boolean
-  currentModelId: string
-  /** 在 models 里查不到时为空串 —— 此时 currentModelId 可能指向一个已被删掉的模型 */
-  currentModelName: string
-  models: QaModelOption[]
-  style: QaStyle
-  styles: QaStyleOption[]
-  reasoningEffort: ReasoningEffort
-  efforts: QaEffortOption[]
-  modelsError: string
-  updatedAt: string
-}
-
-/** 读问答设置（管理视角） */
-export async function fetchQaSettings(token: string): Promise<QaSettingsPayload> {
-  const res = await http.get<QaSettingsPayload>('/admin/qa-settings', {
-    headers: { 'X-Admin-Token': token },
-    silent: true
-  })
-  return res.data
-}
-
-/** 保存问答设置。三个字段都可选，只传要改的；传空串 = 清掉该项、跟随引擎默认 */
-export interface QaSettingsPatch {
-  modelId?: string
-  style?: QaStyle
-  reasoningEffort?: ReasoningEffort
-}
-
-export async function saveQaSettings(
-  token: string,
-  patch: QaSettingsPatch
-): Promise<QaSettingsPayload> {
-  const res = await http.put<QaSettingsPayload>('/admin/qa-settings', patch, {
-    headers: { 'X-Admin-Token': token },
-    silent: true
-  })
-  return res.data
-}
-
-/* ------------------------------------------------------------------ *
- * 访客反馈（2026-10-14 新增）
- *
- * GET /api/admin/feedback → 反馈列表（需 X-Admin-Token）
+ * GET /api/admin/feedback → 反馈列表（需管理员账号登录态）
+ * ⚠️ 2026-10-19 起后端把**两个来源**合并返回：
+ *    source='form'  = 正规落库（POST /api/feedback，现行唯一正路）
+ *    source='event' = 历史上只记了埋点的旧反馈（弹窗时代），不合并就会漏掉
  * ⚠️ 反馈里带提交者自愿填写的联系方式，属个人信息 —— 只给管理者看，
  *    不出现在任何对外页面上。
  * ------------------------------------------------------------------ */
 
-/** 一条访客反馈（与后端 StoredFeedback 对应；kindLabel 由后端补好） */
+/** 一条访客反馈（与后端 feedback/inbox.ts 的 InboxItem 对应；中文名由后端补好） */
 export interface AdminFeedbackItem {
   id: string
   ts: string
+  /** form = 进了反馈表；event = 只有历史埋点 */
+  source: 'form' | 'event'
   kind: string
   /** 后端补的中文类型名，前端不再维护第二张映射表 */
   kindLabel: string
+  /** 细分原因（用户当初点的那个选项，如 broken / feature），可能为空 */
+  reason: string
+  /** 细分原因的中文名，可能为空 */
+  reasonLabel: string
   message: string
   /** 提交者自愿留的联系方式，可能为空 */
   contact: string
   docId: string
   docTitle: string
   path: string
+  /** 提交账号 id（仅埋点来源有），匿名为空串 */
+  userId: string
+  /** 提交账号姓名（后端查库补的），匿名为空串 */
+  userName: string
 }
 
 export interface AdminFeedbackList {
@@ -414,9 +325,8 @@ export interface AdminFeedbackList {
 }
 
 /** 拉访客反馈列表（已按提交时间倒序） */
-export async function fetchFeedbackList(token: string): Promise<AdminFeedbackList> {
+export async function fetchFeedbackList(): Promise<AdminFeedbackList> {
   const res = await http.get<AdminFeedbackList>('/admin/feedback', {
-    headers: { 'X-Admin-Token': token },
     silent: true
   })
   return res.data
@@ -437,6 +347,8 @@ export interface AgentEditableConfig {
   fallback_strategy: string
   /** 「库内暂未收录…」那段固定文案原文 */
   fallback_response: string
+  /** true = 思考模式（先想再答），false = 快速模式（直接答） */
+  thinking: boolean
 }
 
 /** 只读展示的 4 组字段 */
@@ -465,9 +377,8 @@ export interface AgentConfigPayload {
 }
 
 /** 读智能体设置（管理视角） */
-export async function fetchAgentConfig(token: string): Promise<AgentConfigPayload> {
+export async function fetchAgentConfig(): Promise<AgentConfigPayload> {
   const res = await http.get<AgentConfigPayload>('/admin/agent', {
-    headers: { 'X-Admin-Token': token },
     silent: true
   })
   return res.data
@@ -477,7 +388,7 @@ export async function fetchAgentConfig(token: string): Promise<AgentConfigPayloa
  * 数据导出（2026-10-14 新增）
  *
  * GET /api/admin/export/{knowledge|users|stats|feedback} → CSV 附件
- * 四个接口都需 X-Admin-Token，与其余管理接口同一套口令。
+ * 四个接口都需管理员账号登录态（与其余管理接口同一套身份）。
  * ------------------------------------------------------------------ */
 
 /** 可导出的四种报表 */
@@ -511,10 +422,9 @@ function exportFileName(kind: ExportKind): string {
  * 失败时抛 `Error`，message 是可直接展示给用户的中文；
  * `silent: true` 是为了不让统一拦截器再补一条英文的 axios 原文。
  */
-export async function exportCsv(token: string, kind: ExportKind): Promise<void> {
+export async function exportCsv(kind: ExportKind): Promise<void> {
   try {
     const res = await http.get<Blob>(`/admin/export/${kind}`, {
-      headers: { 'X-Admin-Token': token },
       responseType: 'blob',
       silent: true
     })
@@ -538,6 +448,8 @@ export interface AgentConfigPatch {
   max_completion_tokens?: number
   fallback_strategy?: string
   fallback_response?: string
+  /** true = 思考模式，false = 快速模式（布尔值，没有「空串 = 不改」这一说） */
+  thinking?: boolean
 }
 
 /** 回读校验的一项（老师要看得见「到底哪一项没过」） */
@@ -558,7 +470,7 @@ export interface AgentSaveResult {
   ignored: string[]
   before: AgentConfigPayload
   after: AgentConfigPayload
-  /** 四项回读校验 + 第五项知识库范围红线 */
+  /** 回读校验六项：四项值 + 回答模式 thinking + 知识库范围红线 */
   checks: AgentCheck[]
   models: Array<{ id: string; name: string; status: string }>
   modelsError: string
@@ -566,11 +478,9 @@ export interface AgentSaveResult {
 
 /** 保存智能体设置。后端会走「GET 全量 → 合并 → PUT 完整 config → 回读校验」 */
 export async function saveAgentConfig(
-  token: string,
   patch: AgentConfigPatch
 ): Promise<AgentSaveResult> {
   const res = await http.put<AgentSaveResult>('/admin/agent', patch, {
-    headers: { 'X-Admin-Token': token },
     silent: true,
     timeout: 60_000
   })
@@ -585,10 +495,9 @@ export async function saveAgentConfig(
  * 两边各写一份类型，早晚会漂 —— 开关清单与顺序由后端下发，前端不自己抄。
  */
 
-/** 读游客权限（开关清单 + 当前值）。需要 X-Admin-Token */
-export async function fetchGuestPermissions(token: string): Promise<GuestPermissionsPayload> {
+/** 读游客权限（开关清单 + 当前值）。需要管理员账号登录态 */
+export async function fetchGuestPermissions(): Promise<GuestPermissionsPayload> {
   const res = await http.get<GuestPermissionsPayload>('/admin/guest-permissions', {
-    headers: { 'X-Admin-Token': token },
     silent: true
   })
   return res.data
@@ -628,11 +537,9 @@ export interface GuestPermissionSaveResult {
 
 /** 保存游客权限。后端会「写盘 → 重新读一遍 → 逐项校验」 */
 export async function saveGuestPermissions(
-  token: string,
   patch: GuestPermissionPatch
 ): Promise<GuestPermissionSaveResult> {
   const res = await http.put<GuestPermissionSaveResult>('/admin/guest-permissions', patch, {
-    headers: { 'X-Admin-Token': token },
     silent: true,
     timeout: 30_000
   })
@@ -666,9 +573,8 @@ export interface UsageDetailPayload {
  * 读某一天的使用明细（省略 date = 今天）。
  * 🔴 与 /track/stats 一样是独立接口：本看板的既有统计口径一个字都没动。
  */
-export async function fetchUsageDetail(token: string, date = ''): Promise<UsageDetailPayload> {
+export async function fetchUsageDetail(date = ''): Promise<UsageDetailPayload> {
   const res = await http.get<UsageDetailPayload>('/admin/usage-detail', {
-    headers: { 'X-Admin-Token': token },
     params: date ? { date } : {},
     silent: true
   })

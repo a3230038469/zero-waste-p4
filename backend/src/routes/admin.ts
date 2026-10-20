@@ -6,8 +6,8 @@
  *   GET|PUT /api/admin/agent   智能体设置（T7：网站问答的「大脑」就是引擎里那个智能体）
  *   POST /api/admin/knowledge/:id/reupload   解析失败 → 删旧重传（T6）
  *
- * 鉴权：请求头 X-Admin-Token，值 = backend/.env 的 ADMIN_STATS_TOKEN（fail closed，
- *       与统计看板 GET /api/track/stats 同一套口径）。
+ * 鉴权（2026-10-19 改）：认登录凭证 + 查这个用户的 role 是不是 admin（见 src/admin/guard.ts）；
+ *       旧口令 X-Admin-Token 保留但默认停用：把 ADMIN_LEGACY_TOKEN_ENABLED=1 写进 .env 才认（救急用）。
  * 口径：所有操作都由后端代理 WeKnora 引擎，前端永不直连引擎（铁律 2）；
  *       本文件不改 docs.ts / auth.ts / track.ts 的任何既有行为。
  *
@@ -16,11 +16,14 @@
  *         解析失败一键重新上传（T6，2026-10-12）、
  *         智能体设置 GET/PUT /agent（T7，2026-10-13）、
  *         游客权限 GET/PUT /guest-permissions + 使用明细 GET /usage-detail（T11，2026-10-14）、
- *         数据导出 GET /export/{knowledge,users,stats,feedback}（2026-10-14）、
- *         访客反馈 GET /feedback（2026-10-14）。
+ *         数据导出 GET /export/{knowledge,users,stats,feedback}（2026-10-14；
+ *           /export/users 的手机号自 2026-10-19 起给完整号码）、
+ *         访客反馈 GET /feedback（2026-10-14）、
+ *         行为分析 GET /analytics + 单账号明细 GET /user-activity（2026-10-19）。
  */
 import { PrismaClient } from '@prisma/client'
-import express, { Router, type NextFunction, type Request, type Response } from 'express'
+import express, { Router, type Request, type Response } from 'express'
+import { requireAdmin, requireAdminGuard } from '../admin/guard.js'
 
 import {
   contentDisposition,
@@ -31,10 +34,11 @@ import {
   type QaModelOption
 } from '../weknora/index.js'
 import { duplicateOf } from '../data/duplicates.js'
-import { FEEDBACK_KIND_LABELS, readFeedback } from '../feedback/store.js'
+import { readFeedbackInbox, type InboxItem } from '../feedback/inbox.js'
+import { FEEDBACK_REASON_LABELS } from '../feedback/store.js'
 import { buildStatsSummary } from '../track/stats.js'
 import { readEvents } from '../track/store.js'
-import { TRACK_EVENTS, type DailyPoint, type TrackEvent } from '../track/types.js'
+import { TRACK_EVENTS, type DailyPoint, type StoredEvent } from '../track/types.js'
 import { toCsv } from '../csv.js'
 import {
   FALLBACK_STRATEGIES,
@@ -45,7 +49,6 @@ import {
 } from '../weknora/agent-config.js'
 import {
   SELFCHECK_ENGINE_TIMEOUT_MS,
-  checkParserConfig,
   getParserConfigView,
   listParserEngines,
   updateParserConfig,
@@ -65,6 +68,19 @@ import {
   isValidDateKey,
   type UserDirectory
 } from '../guest/usage-detail.js'
+import { buildAnalytics, collectActiveUserIds } from '../analytics/dashboard.js'
+import { buildUserActivity } from '../analytics/activity.js'
+import {
+  ACTIVITY_DEFAULT_DAYS,
+  ACTIVITY_DEFAULT_PAGE_SIZE,
+  ACTIVITY_MAX_PAGE_SIZE,
+  ANALYTICS_DEFAULT_DAYS,
+  ANALYTICS_GUEST_ID,
+  ANALYTICS_MAX_DAYS,
+  EVENT_LABELS,
+  isActivityEventFilter,
+  type UserProfileDirectory
+} from '../analytics/types.js'
 import {
   QA_STYLES,
   REASONING_EFFORTS,
@@ -88,29 +104,6 @@ function env(name: string): string {
   const value = (process.env[name] ?? '').trim()
   if (!value || /^(your_|please_|change_?me|xxx|todo)/i.test(value)) return ''
   return value
-}
-
-/** 管理口令校验：与统计看板同款 fail closed */
-function assertAdmin(req: Request, res: Response): boolean {
-  const configured = env('ADMIN_STATS_TOKEN')
-  if (!configured) {
-    res.status(403).json({
-      success: false,
-      error: {
-        code: 'ADMIN_NOT_CONFIGURED',
-        message: '服务端未配置 ADMIN_STATS_TOKEN，管理接口已关闭'
-      }
-    })
-    return false
-  }
-  if (String(req.header('X-Admin-Token') ?? '').trim() !== configured) {
-    res.status(403).json({
-      success: false,
-      error: { code: 'ADMIN_FORBIDDEN', message: '口令不正确' }
-    })
-    return false
-  }
-  return true
 }
 
 interface EngineKnowledge {
@@ -168,7 +161,7 @@ function extractCreatedId(payload: unknown): string {
 
 /** GET /api/admin/knowledge —— 列知识库资料（管理视角） */
 router.get('/knowledge', async (req: Request, res: Response) => {
-  if (!assertAdmin(req, res)) return
+  if (!(await requireAdminGuard(req, res))) return
 
   const base = (env('WEKNORA_BASE_URL') || 'http://localhost:8080').replace(/\/+$/, '')
   const apiKey = env('WEKNORA_API_KEY')
@@ -234,26 +227,29 @@ router.get('/knowledge', async (req: Request, res: Response) => {
 })
 
 /**
- * 上传前的鉴权中间件。
- * ⚠️ 必须排在 express.raw 之前：否则未带口令的匿名请求会先把整个请求体
- * 缓冲进内存（上限 300MB），拿不到数据也能白占内存和带宽。
- */
-function requireAdmin(req: Request, res: Response, next: NextFunction): void {
-  if (assertAdmin(req, res)) next()
-}
-
-/**
  * POST /api/admin/knowledge/upload —— 上传一份资料到知识库
  *
  * 传输方式：前端把文件原始二进制放在请求体（Content-Type: application/octet-stream），
  * 文件名走 X-File-Name 头（已 URL 编码）。后端再拼成引擎要的 multipart 转发过去。
  * 这样不用在前端做 base64（体积不变大），也不用给项目新增 multer 依赖。
  */
-router.post(
-  '/knowledge/upload',
-  requireAdmin,
-  express.raw({ type: () => true, limit: '300mb' }),
-  async (req: Request, res: Response) => {
+/**
+ * 上传正文 —— **两个上传接口共用**（2026-10-19，按互通角信-31）。
+ *
+ * 为什么分成两个接口而不是一个接口加隐藏开关：主人拍板「一个是普通接口，一个是超限用的接口」，
+ * 让两条路在接口层就看得见，前端也就不用在一个请求里塞开关。
+ *
+ * `localEngine = true` 时唯一的差别：给引擎多带一个 `process_config`，
+ * 让**这一份**走本地引擎（MinerU 云对 >200MB / >200 页是硬拒，实测两条官方错误）。
+ * 🔴 绝不动知识库的默认解析规则 —— 改了默认会让整个库的 PDF 一起降级。
+ */
+async function handleKnowledgeUpload(
+  req: Request,
+  res: Response,
+  localEngine: boolean
+): Promise<void> {
+  // 这一层花括号只是保留原正文的缩进，避免为抽函数产生两百行纯缩进 diff
+  {
     const base = (env('WEKNORA_BASE_URL') || 'http://localhost:8080').replace(/\/+$/, '')
     const apiKey = env('WEKNORA_API_KEY')
     const kbId = env('WEKNORA_KB_ID')
@@ -285,6 +281,16 @@ router.post(
       const form = new FormData()
       form.append('file', new Blob([new Uint8Array(body)]), fileName)
       form.append('fileName', fileName)
+
+      if (localEngine) {
+        // 超大文件兜底：只对**这一份**指定本地引擎。
+        // ⚠️ file_types 必须是数组（引擎逐项比对，字符串会被忽略）；
+        //    也绝不能改成知识库的默认规则，否则整个库的 PDF 一起降级。
+        form.append(
+          'process_config',
+          JSON.stringify({ parser_engine_rules: [{ file_types: ['pdf'], engine: 'builtin' }] })
+        )
+      }
 
       const upstream = await fetch(
         `${base}/api/v1/knowledge-bases/${encodeURIComponent(kbId)}/knowledge/file`,
@@ -342,6 +348,8 @@ router.post(
         message: metaSaved ? '已上传，标签也写好了；引擎正在后台解析' : '已上传，引擎正在后台解析',
         metaSaved,
         metaNote,
+        // 本次用的哪个引擎（信-31 问 2）：老师在页面上看得见，排查「慢 / 质量差异」时有据可查
+        engine: localEngine ? 'builtin' : 'default',
         data: payload
       })
     } catch (err) {
@@ -351,6 +359,25 @@ router.post(
         error: { code: 'ENGINE_UNREACHABLE', message: `上传失败：${message}` }
       })
     }
+  }
+}
+
+/* 两个上传接口 —— 普通 / 超限（本地引擎兜底）。别的行为完全一致，前端才好复用。 */
+router.post(
+  '/knowledge/upload',
+  requireAdmin,
+  express.raw({ type: () => true, limit: '300mb' }),
+  (req: Request, res: Response) => {
+    void handleKnowledgeUpload(req, res, false)
+  }
+)
+
+router.post(
+  '/knowledge/upload-large',
+  requireAdmin,
+  express.raw({ type: () => true, limit: '300mb' }),
+  (req: Request, res: Response) => {
+    void handleKnowledgeUpload(req, res, true)
   }
 )
 
@@ -482,8 +509,11 @@ function sanitizeCustomMeta(raw: unknown): Record<string, string | number | bool
  * 老师本地不需要留原件 —— 原件全程只在引擎与本进程内存里过一遍。
  *
  * ⚠️ 本接口**没有请求体**，鉴权用 requireAdmin 中间件排在最前（与上传同一考量）。
+ *    2026-10-19：支持查询参数 `?engine=local` —— 与 `upload-large` 同一口径，
+ *    让超限文件重传时也走本地引擎（默认仍是库默认引擎，行为不变）。
  */
 router.post('/knowledge/:id/reupload', requireAdmin, async (req: Request, res: Response) => {
+  const useLocalEngine = String(req.query.engine ?? '').toLowerCase() === 'local'
   const base = (env('WEKNORA_BASE_URL') || 'http://localhost:8080').replace(/\/+$/, '')
   const apiKey = env('WEKNORA_API_KEY')
   const kbId = env('WEKNORA_KB_ID')
@@ -642,6 +672,15 @@ router.post('/knowledge/:id/reupload', requireAdmin, async (req: Request, res: R
       form.append('file', new Blob([new Uint8Array(original.data)]), fileName)
       form.append('fileName', fileName)
 
+      // 超限文件的重传同样会撞 MinerU 云的硬限，所以这条路也支持本地引擎
+      // （信-31 明确要求）：`?engine=local` 时只对这一份生效。
+      if (useLocalEngine) {
+        form.append(
+          'process_config',
+          JSON.stringify({ parser_engine_rules: [{ file_types: ['pdf'], engine: 'builtin' }] })
+        )
+      }
+
       const res = await engineCall(uploadUrl, { method: 'POST', headers: authed, body: form })
       upStatus = res.status
       upText = await res.text()
@@ -721,14 +760,6 @@ router.post('/knowledge/:id/reupload', requireAdmin, async (req: Request, res: R
   }
 })
 
-/** 手机号脱敏：中间四位打码（138 0000 8888 → 138****8888） */
-function maskPhone(phone: string): string {
-  const digits = String(phone ?? '').replace(/\D/g, '')
-  if (!digits) return ''
-  if (digits.length < 7) return `${digits.slice(0, 2)}****`
-  return `${digits.slice(0, 3)}****${digits.slice(-4)}`
-}
-
 /** topics 在库里存的是 JSON 数组字符串（SQLite 无数组类型），这里还原成数组 */
 function parseTopics(raw: string): string[] {
   try {
@@ -747,7 +778,7 @@ function parseTopics(raw: string): string[] {
  * ⚠️ 本接口**没有请求体**，不要加 express.raw。
  */
 router.delete('/knowledge/:id', async (req: Request, res: Response) => {
-  if (!assertAdmin(req, res)) return
+  if (!(await requireAdminGuard(req, res))) return
 
   const base = (env('WEKNORA_BASE_URL') || 'http://localhost:8080').replace(/\/+$/, '')
   const apiKey = env('WEKNORA_API_KEY')
@@ -808,10 +839,13 @@ router.delete('/knowledge/:id', async (req: Request, res: Response) => {
 /**
  * GET /api/admin/users —— 看注册用户（管理视角）
  *
- * ⚠️ 手机号**必须脱敏**：这是给机构看的能力，避免完整手机号外泄。
+ * 手机号**在本页显示完整号码**（2026-10-19 用户口述：「注册用户界面这个手机号是全显示的」）。
+ * 机构要能直接联系到注册用户，打码之后这页就没法用了；换取办法是这个接口本身
+ * 受管理员守卫保护（未登录 403 / 非管理员 403），且页面上要写明号码不外传。
+ * CSV 导出（/export/users）自 2026-10-19 起同样给完整号码，口径与这页一致。
  */
 router.get('/users', async (req: Request, res: Response) => {
-  if (!assertAdmin(req, res)) return
+  if (!(await requireAdminGuard(req, res))) return
 
   try {
     const users = await prisma.user.findMany({ orderBy: { createdAt: 'desc' } })
@@ -821,7 +855,7 @@ router.get('/users', async (req: Request, res: Response) => {
       org: user.org,
       occupation: user.occupation,
       topics: parseTopics(user.topics),
-      phone: maskPhone(user.phone),
+      phone: user.phone,
       createdAt: user.createdAt.toISOString()
     }))
     res.json({ success: true, total: items.length, items })
@@ -873,7 +907,7 @@ function qaSettingsPayload(settings: QaSettings, models: QaModelOption[], models
 
 /** GET /api/admin/qa-settings —— 读当前设置 + 引擎可用模型 */
 router.get('/qa-settings', async (req: Request, res: Response) => {
-  if (!assertAdmin(req, res)) return
+  if (!(await requireAdminGuard(req, res))) return
 
   if (!env('WEKNORA_API_KEY')) {
     res.status(503).json({
@@ -1020,13 +1054,13 @@ router.put('/qa-settings', requireAdmin, async (req: Request, res: Response) => 
  * 数据导出（2026-10-14 新增）
  *
  *   GET /api/admin/export/knowledge  资料台账（CSV）
- *   GET /api/admin/export/users      注册用户（CSV，手机号保持脱敏）
+ *   GET /api/admin/export/users      注册用户（CSV；手机号 2026-10-19 起给完整号码）
  *   GET /api/admin/export/stats      看板统计（CSV，长表）
  *
  * 为什么放在本文件而不是新开一个路由文件：
- *   导出是「管理能力」的延伸，鉴权（assertAdmin）、Prisma 实例、用户字段处理
- *   （maskPhone / parseTopics）都已在本文件里。另开文件就得把这些**再抄一份** ——
- *   尤其 maskPhone 是安全函数，出现两份实现迟早会漂移（本项目已吃过这个亏）。
+ *   导出是「管理能力」的延伸，鉴权（requireAdminGuard）、Prisma 实例、用户字段处理
+ *   （parseTopics 等）都已在本文件里。另开文件就得把这些**再抄一份** ——
+ *   同一套字段处理出现两份实现迟早会漂移（本项目已吃过这个亏）。
  *   所以这里只**追加**一节，既有路由一行未动；要回退就删掉本节。
  *
  * 口径：
@@ -1052,21 +1086,10 @@ const KNOWLEDGE_CSV_HEADERS = [
 ]
 
 /** 注册用户表头 */
-const USER_CSV_HEADERS = ['编号', '姓名', '机构', '职业', '关注议题', '手机号(脱敏)', '注册时间']
+const USER_CSV_HEADERS = ['编号', '姓名', '机构', '职业', '关注议题', '手机号', '注册时间']
 
 /** 统计报表表头（长表：一行一个指标，方便在 Excel 里直接做透视） */
 const STATS_CSV_HEADERS = ['分组', '名称', '日期', '数值']
-
-/** 事件名 -> 中文（与看板页面 AdminStatsView.vue 的 EVENT_LABELS 同一套叫法） */
-const EVENT_CSV_LABELS: Record<TrackEvent, string> = {
-  page_view: '页面访问',
-  search: '搜索',
-  preview: '在线预览',
-  download: '下载',
-  ai_ask: 'AI 提问',
-  register: '注册',
-  feedback_submit: '反馈提交'
-}
 
 /** 按日趋势里要逐日导出的指标（date 本身不作为指标） */
 const DAILY_CSV_METRICS: ReadonlyArray<{ key: Exclude<keyof DailyPoint, 'date'>; label: string }> = [
@@ -1135,7 +1158,7 @@ function sendAdminError(res: Response, err: unknown, what: string): void {
  * 排序与资料库默认一致（年份新的在前，同年按编号升序），便于和页面逐行对照。
  */
 router.get('/export/knowledge', async (req: Request, res: Response) => {
-  if (!assertAdmin(req, res)) return
+  if (!(await requireAdminGuard(req, res))) return
   try {
     const docs = await listFiles()
     const sorted = [...docs].sort((a, b) => b.year - a.year || idOrderOf(a) - idOrderOf(b))
@@ -1202,7 +1225,7 @@ function sendEngineFailure(res: Response, err: unknown, prefix: string): void {
 
 /** GET /api/admin/agent —— 读智能体关键配置（6 个可改 + 4 组只读） */
 router.get('/agent', async (req: Request, res: Response) => {
-  if (!assertAdmin(req, res)) return
+  if (!(await requireAdminGuard(req, res))) return
 
   const { models, modelsError } = await agentModels()
   try {
@@ -1253,12 +1276,26 @@ function parseAgentPatch(raw: unknown): AgentConfigPatch {
     }
   }
 
+  const boolField = (key: 'thinking') => {
+    if (!(key in obj)) return
+    const value = obj[key]
+    if (value === null || value === undefined) {
+      // 「这一项没传」
+      delete obj[key]
+      return
+    }
+    if (typeof value !== 'boolean') {
+      throw new EngineError('INVALID_AGENT_FIELD', `${key} 得是布尔值（true = 思考模式，false = 快速模式）`, 400)
+    }
+  }
+
   strField('system_prompt')
   strField('model_id')
   strField('fallback_strategy')
   strField('fallback_response')
   numField('temperature')
   numField('max_completion_tokens')
+  boolField('thinking')
 
   if ('temperature' in obj) {
     const t = obj['temperature'] as number
@@ -1287,14 +1324,16 @@ function parseAgentPatch(raw: unknown): AgentConfigPatch {
     }
   }
   // 🔴 白名单之外的一律丢掉：kb_selection_mode / knowledge_bases / agent_mode /
-  //    intent_prompts / agent_mode 等**绝不接受前端提交**（它们只能原样透传）
+  //    intent_prompts 等**绝不接受前端提交**（它们只能原样透传）。
+  //    thinking 是 2026-10-20 明确放进白名单的：页面上的「快速模式 / 思考模式」就是它。
   const allowed = new Set([
     'system_prompt',
     'model_id',
     'temperature',
     'max_completion_tokens',
     'fallback_strategy',
-    'fallback_response'
+    'fallback_response',
+    'thinking'
   ])
   const patch: AgentConfigPatch = {}
   for (const key of allowed) {
@@ -1315,6 +1354,9 @@ function parseAgentPatch(raw: unknown): AgentConfigPatch {
           break
         case 'temperature':
           patch.temperature = obj['temperature'] as number
+          break
+        case 'thinking':
+          patch.thinking = obj['thinking'] as boolean
           break
         default:
           patch.max_completion_tokens = obj['max_completion_tokens'] as number
@@ -1372,7 +1414,6 @@ router.put('/agent', requireAdmin, async (req: Request, res: Response) => {
  * ------------------------------------------------------------------ *
  *
  *   GET  /api/admin/parser-config        读解析引擎配置（密钥只回「已配置 / 未配置」）
- *   POST /api/admin/parser-config/check  测试连接（只测不存）
  *   PUT  /api/admin/parser-config        保存（读全量 → 合并 → 整份写回 → 回读校验）
  *   POST /api/admin/selfcheck            一键自检（引擎 / 数据库 / 向量 / MinerU 四项）
  *
@@ -1406,7 +1447,7 @@ function parserPatchBody(body: unknown): ParserConfigPatch {
 
 /** GET /api/admin/parser-config —— 读配置 + 各解析引擎可用性（密钥不回显真值） */
 router.get('/parser-config', async (req: Request, res: Response) => {
-  if (!assertAdmin(req, res)) return
+  if (!(await requireAdminGuard(req, res))) return
 
   try {
     res.json(await getParserConfigView())
@@ -1418,12 +1459,11 @@ router.get('/parser-config', async (req: Request, res: Response) => {
 /**
  * GET /api/admin/export/users —— 导出注册用户名单
  *
- * ⚠️ 手机号**一律脱敏**，与后台页面同一口径。导出也不给全号 ——
- * 这是「给机构看的能力」，不是「把用户手机号发出去的能力」。
- * 机构要联系用户，走页面上的既有流程，不靠这份文件。
+ * 手机号**给完整号码**（2026-10-19 起），与后台页面同一口径：打码的号码连回访都用不了，
+ * 而本接口本来就只对管理员开放（未登录 / 非管理员一律 403），文件名与页面都写明号码不得外传。
  */
 router.get('/export/users', async (req: Request, res: Response) => {
-  if (!assertAdmin(req, res)) return
+  if (!(await requireAdminGuard(req, res))) return
   try {
     const users = await prisma.user.findMany({ orderBy: { createdAt: 'desc' } })
     const rows = users.map((user) => [
@@ -1432,26 +1472,12 @@ router.get('/export/users', async (req: Request, res: Response) => {
       user.org,
       user.occupation,
       parseTopics(user.topics).join('、'),
-      maskPhone(user.phone),
+      user.phone,
       localDateTime(user.createdAt)
     ])
     sendCsv(res, `零废弃知识库-注册用户-${stamp()}.csv`, USER_CSV_HEADERS, rows)
   } catch (err) {
     sendAdminError(res, err, '导出')
-  }
-})
-
-/**
- * POST /api/admin/parser-config/check —— 测试连接，**不保存**。
- *
- * ⚠️ 鉴权用 requireAdmin 中间件排在读请求体之前（与上传/qa-settings 同一考量）。
- */
-router.post('/parser-config/check', requireAdmin, async (req: Request, res: Response) => {
-  try {
-    const patch = parserPatchBody(req.body)
-    res.json(await checkParserConfig(patch))
-  } catch (err) {
-    sendEngineFailure(res, err, '测试连接失败')
   }
 })
 
@@ -1462,8 +1488,8 @@ router.post('/parser-config/check', requireAdmin, async (req: Request, res: Resp
  * 这里统一压成**长表**（分组 / 名称 / 日期 / 数值）：每种榜单、每一天的每个指标都是一行，
  * 在 Excel 里直接拖透视表就能还原成任意视图，比硬凑一张宽表更灵活。
  */
-router.get('/export/stats', (req: Request, res: Response) => {
-  if (!assertAdmin(req, res)) return
+router.get('/export/stats', async (req: Request, res: Response) => {
+  if (!(await requireAdminGuard(req, res))) return
   try {
     const summary = buildStatsSummary(readEvents())
     const rows: unknown[][] = []
@@ -1477,7 +1503,7 @@ router.get('/export/stats', (req: Request, res: Response) => {
     // 报表要能自证「这是哪一刻的数」，否则事后无法判断新鲜度
     add('概览', '数据生成于(UTC)', summary.generatedAt)
 
-    for (const evt of TRACK_EVENTS) add('事件分布', EVENT_CSV_LABELS[evt], summary.events[evt])
+    for (const evt of TRACK_EVENTS) add('事件分布', EVENT_LABELS[evt], summary.events[evt])
 
     // 两个下载口径都留着：不等说明有绕过前端的直连调用，是信息不是错误
     add('下载口径', '服务端（权威）', summary.downloads.server)
@@ -1506,10 +1532,16 @@ router.get('/export/stats', (req: Request, res: Response) => {
 })
 
 /* ================================================================== *
- * 访客反馈（2026-10-14 新增）
+ * 访客反馈（2026-10-14 新增，2026-10-19 改为「收件箱」口径）
  *
- *   GET /api/admin/feedback          反馈列表（需 X-Admin-Token）
+ *   GET /api/admin/feedback          反馈列表（需管理员账号）
  *   GET /api/admin/export/feedback   反馈导出（CSV）
+ *
+ * ⚠️ 2026-10-19 起列表**合并两个来源**（见 feedback/inbox.ts 的说明）：
+ *    ① 正规落库 `backend/data/feedback.jsonl`（前端现在统一走 POST /api/feedback）；
+ *    ② 历史埋点里 `path !== '/api/feedback'` 的 `feedback_submit` 事件 ——
+ *       那是弹窗时代只记了埋点、没进反馈表的旧反馈，不读出来老师就漏了。
+ *    `path === '/api/feedback'` 的事件是①的镜像，跳过（否则同一条出现两次）。
  *
  * ⚠️ 反馈里带提交者**自愿填写**的联系方式，属个人信息：
  *    这两个接口都只给管理者，且不出现在任何对外页面上。
@@ -1519,23 +1551,48 @@ router.get('/export/stats', (req: Request, res: Response) => {
 const FEEDBACK_CSV_HEADERS = [
   '编号',
   '提交时间',
+  '来源',
   '类型',
+  '细分原因',
   '反馈内容',
   '联系方式',
   '关联资料',
   '资料编号',
-  '来源页面'
+  '来源页面',
+  '提交账号'
 ]
 
+/**
+ * 把收件箱里带账号 id 的条目补上姓名（只有埋点来源才有 id）。
+ * 查不到就留空 —— 「匿名」是这张表里的正常状态，不是错误。
+ */
+async function withUserNames(items: InboxItem[]): Promise<InboxItem[]> {
+  const ids = [...new Set(items.map((item) => item.userId).filter(Boolean))]
+  if (ids.length === 0) return items
+
+  const users = await prisma.user.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, name: true }
+  })
+  const names = new Map(users.map((user) => [user.id, user.name]))
+  return items.map((item) => ({ ...item, userName: names.get(item.userId) ?? '' }))
+}
+
+/** 来源一列的中文名 */
+function sourceLabel(item: InboxItem): string {
+  return item.source === 'form' ? '反馈表' : '历史埋点'
+}
+
+/** 类型一列：粗分组 + 细分原因（用户当初点的那个选项） */
+function kindCell(item: InboxItem): string {
+  return item.reasonLabel ? `${item.kindLabel} · ${item.reasonLabel}` : item.kindLabel
+}
+
 /** GET /api/admin/feedback —— 反馈列表（已按提交时间倒序） */
-router.get('/feedback', (req: Request, res: Response) => {
-  if (!assertAdmin(req, res)) return
+router.get('/feedback', async (req: Request, res: Response) => {
+  if (!(await requireAdminGuard(req, res))) return
   try {
-    const items = readFeedback().map((item) => ({
-      ...item,
-      // 中文类型名在服务端补好，前端与导出共用同一套叫法，免得两处各写一张映射表
-      kindLabel: FEEDBACK_KIND_LABELS[item.kind] ?? item.kind
-    }))
+    const items = await withUserNames(readFeedbackInbox())
     res.json({ success: true, total: items.length, items })
   } catch (err) {
     sendAdminError(res, err, '读取反馈')
@@ -1543,18 +1600,22 @@ router.get('/feedback', (req: Request, res: Response) => {
 })
 
 /** GET /api/admin/export/feedback —— 导出反馈（CSV） */
-router.get('/export/feedback', (req: Request, res: Response) => {
-  if (!assertAdmin(req, res)) return
+router.get('/export/feedback', async (req: Request, res: Response) => {
+  if (!(await requireAdminGuard(req, res))) return
   try {
-    const rows = readFeedback().map((item) => [
+    const items = await withUserNames(readFeedbackInbox())
+    const rows = items.map((item) => [
       item.id,
       localDateTime(new Date(item.ts)),
-      FEEDBACK_KIND_LABELS[item.kind] ?? item.kind,
+      sourceLabel(item),
+      kindCell(item),
+      FEEDBACK_REASON_LABELS[item.reason] ?? '',
       item.message,
       item.contact,
       item.docTitle,
       item.docId,
-      item.path
+      item.path,
+      item.userName || (item.userId ? item.userId : '匿名')
     ])
     sendCsv(res, `零废弃知识库-访客反馈-${stamp()}.csv`, FEEDBACK_CSV_HEADERS, rows)
   } catch (err) {
@@ -1777,7 +1838,7 @@ router.post('/selfcheck', requireAdmin, async (_req: Request, res: Response) => 
  *    `browse` 是只读项：提交了也忽略（最低门槛入口，不能关）。
  */
 router.get('/guest-permissions', async (req: Request, res: Response) => {
-  if (!assertAdmin(req, res)) return
+  if (!(await requireAdminGuard(req, res))) return
   try {
     res.json(guestPermissionsPayload())
   } catch (err) {
@@ -1837,7 +1898,7 @@ router.put('/guest-permissions', requireAdmin, async (req: Request, res: Respons
  * 🔴 本接口不改 /api/track/stats 的任何口径：韶茹那块统计逻辑一个字都没动。
  */
 router.get('/usage-detail', async (req: Request, res: Response) => {
-  if (!assertAdmin(req, res)) return
+  if (!(await requireAdminGuard(req, res))) return
 
   const rawDate = typeof req.query.date === 'string' ? req.query.date.trim() : ''
   const date = rawDate || localDateKey()
@@ -1880,6 +1941,141 @@ router.get('/usage-detail', async (req: Request, res: Response) => {
     console.error(`[admin] 读使用明细失败（已忽略，返回空表）：${message}`)
     res.json({ success: true, date, rows: [], totals: { ai_ask: 0, preview: 0, download: 0 } })
   }
+})
+
+/* ================================================================== *
+ * 行为分析（2026-10-19 新增）
+ * ------------------------------------------------------------------ *
+ *
+ *   GET /api/admin/analytics?days=30     区间聚合看板（总量/按日/按时/按周/漏斗/榜单/账号榜/游客）
+ *   GET /api/admin/user-activity         单账号逐条记录（分页 + 事件筛选）
+ *
+ * 数据源只有本地埋点文件（track/store.ts 的 readEvents），**不打引擎、不查引擎库**。
+ * 算法全部落在 src/analytics/（纯函数），本文件只做三件事：取参校验、读埋点、补姓名机构。
+ *
+ * 🔴 看板口径与 /api/track/stats 同一套（同一个 asks 聚合函数），不改它一行。
+ * 🔴 文件不存在 / 为空 / 坏行 → 按全 0 空结构返回，**绝不能 500**（看板是用来看的）。
+ * 🔴 用户表读不出来 → 姓名/机构留空，计数照常返回（与 /usage-detail 同一处理）。
+ * ================================================================== */
+
+/** 读埋点；读不出来就当没有数据（聚合函数会给出全 0 结构，别让看板整页报错） */
+function readTrackEvents(): StoredEvent[] {
+  try {
+    return readEvents()
+  } catch (err) {
+    const message = err instanceof Error ? err.message : '未知错误'
+    console.error(`[admin] 读埋点失败（按空数据处理）：${message}`)
+    return []
+  }
+}
+
+/** 解析「整数且在 [min, max]」的查询参数；缺省/空串给默认值，其它一律 null（调用方回 400） */
+function parseIntParam(raw: unknown, fallback: number, min: number, max: number): number | null {
+  if (raw === undefined) return fallback
+  if (typeof raw !== 'string') return null
+  const text = raw.trim()
+  if (!text) return fallback
+  if (!/^\d+$/.test(text)) return null
+  const value = Number.parseInt(text, 10)
+  return value >= min && value <= max ? value : null
+}
+
+/** 参数错误信封（与 admin 其它接口同形） */
+function sendBadParam(res: Response, code: string, message: string): void {
+  res.status(400).json({ success: false, error: { code, message } })
+}
+
+/** 账号档案：只查传进来的 id；查不到 / 读库失败都只是留空，不影响计数 */
+async function loadUserProfiles(ids: string[]): Promise<UserProfileDirectory> {
+  const directory: UserProfileDirectory = new Map()
+  if (ids.length === 0) return directory
+  try {
+    const users = await prisma.user.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, name: true, org: true }
+    })
+    for (const user of users) directory.set(user.id, { name: user.name, org: user.org })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : '未知错误'
+    console.warn(`[admin] 读用户档案失败（姓名/机构留空，不影响统计）：${message}`)
+  }
+  return directory
+}
+
+/** GET /api/admin/analytics —— 区间聚合看板 */
+router.get('/analytics', async (req: Request, res: Response) => {
+  if (!(await requireAdminGuard(req, res))) return
+
+  const days = parseIntParam(req.query.days, ANALYTICS_DEFAULT_DAYS, 1, ANALYTICS_MAX_DAYS)
+  if (days === null) {
+    sendBadParam(
+      res,
+      'INVALID_RANGE',
+      `days 只能是 1..${ANALYTICS_MAX_DAYS} 的整数，收到：${String(req.query.days ?? '')}`
+    )
+    return
+  }
+
+  // 同一刻读一次埋点、算一次区间：三处结构（总量/榜单/账号榜）不会因为跨秒读两次而不一致
+  const now = new Date()
+  const events = readTrackEvents()
+  const directory = await loadUserProfiles(collectActiveUserIds(events, days, now))
+  res.json(buildAnalytics(events, days, now, directory))
+})
+
+/** GET /api/admin/user-activity —— 单账号逐条记录 */
+router.get('/user-activity', async (req: Request, res: Response) => {
+  if (!(await requireAdminGuard(req, res))) return
+
+  const userId = typeof req.query.userId === 'string' ? req.query.userId.trim() : ''
+  if (!userId) {
+    sendBadParam(res, 'BAD_REQUEST', '缺 userId（要看匿名事件请传 __guest__）')
+    return
+  }
+
+  const rawEvent = typeof req.query.event === 'string' ? req.query.event.trim() : ''
+  const event = rawEvent || 'all'
+  if (!isActivityEventFilter(event)) {
+    sendBadParam(
+      res,
+      'INVALID_EVENT',
+      `event 只能是 all / page_view / search / preview / download / ai_ask，收到：${rawEvent}`
+    )
+    return
+  }
+
+  const page = parseIntParam(req.query.page, 1, 1, 1_000_000)
+  if (page === null) {
+    sendBadParam(res, 'BAD_REQUEST', `page 只能是正整数，收到：${String(req.query.page ?? '')}`)
+    return
+  }
+
+  const rawPageSize = parseIntParam(req.query.pageSize, ACTIVITY_DEFAULT_PAGE_SIZE, 1, 1_000_000)
+  if (rawPageSize === null) {
+    sendBadParam(
+      res,
+      'BAD_REQUEST',
+      `pageSize 只能是正整数，收到：${String(req.query.pageSize ?? '')}`
+    )
+    return
+  }
+  const pageSize = Math.min(rawPageSize, ACTIVITY_MAX_PAGE_SIZE)
+
+  const days = parseIntParam(req.query.days, ACTIVITY_DEFAULT_DAYS, 1, ANALYTICS_MAX_DAYS)
+  if (days === null) {
+    sendBadParam(
+      res,
+      'INVALID_RANGE',
+      `days 只能是 1..${ANALYTICS_MAX_DAYS} 的整数，收到：${String(req.query.days ?? '')}`
+    )
+    return
+  }
+
+  const now = new Date()
+  const events = readTrackEvents()
+  // 匿名组不需要查库（也没有 id 可查）
+  const directory = await loadUserProfiles(userId === ANALYTICS_GUEST_ID ? [] : [userId])
+  res.json(buildUserActivity(events, { userId, event, page, pageSize, days }, now, directory))
 })
 
 export default router

@@ -33,6 +33,13 @@ export const FEEDBACK_MAX_CONTACT_CHARS = 120
 export interface FeedbackSubmit {
   kind: FeedbackKind
   message: string
+  /**
+   * 细分原因（`constants/feedback.ts` 的 DOC_REASONS / SITE_KINDS 的 value，2026-10-19 新增）。
+   * 后台按它给老师分类，粗分组 kind 只是索引。
+   */
+  reason?: string
+  /** 提交场景：doc = 针对某份资料，site = 针对站点 */
+  scope?: 'doc' | 'site'
   /** 选填。提交者自愿留下的联系方式 */
   contact?: string
   /** 选填。针对哪份资料（纠错时由详情页带过来） */

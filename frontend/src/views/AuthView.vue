@@ -129,7 +129,7 @@ async function handleRegister(): Promise<void> {
 <template>
   <section class="auth-page">
     <el-card class="auth-card" shadow="hover">
-      <h2 class="title">零废弃知识库 · 用户中心</h2>
+      <h1 class="title">零废弃知识库 · 用户中心</h1>
       <p class="subtitle">提问无需注册；下载资料等操作需要登录</p>
 
       <el-tabs v-model="activeTab" class="auth-tabs">

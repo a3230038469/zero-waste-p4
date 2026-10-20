@@ -256,9 +256,12 @@ function buildFacets(docs: KbDocInternal[], query: DocsQuery): KbFacets {
   }
 }
 
-/** 只把契约七字段交给前端，内部字段（fileName / filePath / sourceUrl…）不外泄 */
+/** 只把契约字段交给前端，内部字段（fileName / filePath / sourceUrl / srcTable…）不外泄 */
 function toPublicDoc(doc: KbDocInternal): KbDoc {
   const keepId = duplicateOf(doc.id)
+  // T12：方向只吐**中文显示名**（`零废弃` / `化学品与健康`）；原始 srcTable 值仍只在内部用
+  //（筛选参数传的还是原值，前端别拿 direction 去筛）。
+  const direction = srcTableLabel(doc.srcTable)
   return {
     id: doc.id,
     title: doc.title,
@@ -267,6 +270,8 @@ function toPublicDoc(doc: KbDocInternal): KbDoc {
     type: doc.type,
     tags: doc.tags,
     size: doc.size,
+    // 方向：数据源没这一项时不挂字段（同 duplicateOf 的写法，不给全库挂空值）
+    ...(direction ? { direction } : {}),
     // 副本标记：只有确实是副本时才出现该字段（避免给 605 份正常资料都挂一个 undefined 字段）
     ...(keepId ? { duplicateOf: keepId } : {})
   }
