@@ -262,13 +262,13 @@ async function handleRegister(): Promise<void> {
   margin: 4px 0 6px;
   font-size: var(--zw-fs-h3);
   text-align: center;
-  color: var(--zw-green, #2e7d4f);
+  color: var(--zw-green);
 }
 .subtitle {
   margin: 0 0 8px;
   font-size: var(--zw-fs-sm);
   text-align: center;
-  color: #888;
+  color: var(--zw-muted);
 }
 .auth-tabs {
   margin-top: 8px;
