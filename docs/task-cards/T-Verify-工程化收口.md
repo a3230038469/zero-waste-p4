@@ -17,10 +17,17 @@
 | `format:check` | `prettier --check`，只检查不改 |
 | `typecheck:frontend` | 只跑前端 `vue-tsc` |
 | `build:frontend` | 只构建前端（`vue-tsc --noEmit && vite build`） |
-| `verify` | **日常用**：`lint(--workspaces) + typecheck:frontend + build:frontend + format:check` |
-| `verify:all` | **完整体检**：含 backend typecheck 与全量 build（当前会在 backend 撞 Prisma 旧账，见下） |
+| `prisma:generate` | 生成 Prisma client（`backend typecheck` 的前置） |
+| `verify` | **日常用**：`lint(--workspaces) + typecheck(前后端) + build:frontend + format:check` |
+| `verify:all` | **完整体检**：再加全量 build |
 
-`verify` 默认跳过 backend typecheck 的原因：`backend/src/chat/store.ts` 用了 `prisma.conversation` / `prisma.message`，但 Prisma schema 缺这两个 model。这是**先前就存在的旧账**，与本卡无关，已另记待办。
+> **2026-10-20 更正**：本卡最初写「verify 跳过 backend typecheck，因为 schema 缺
+> `conversation` / `message` model」——**这个判断是错的**。
+> `backend/prisma/schema.prisma` 里 `Conversation`(L41) 与 `Message`(L52) 一直都在，
+> 真实原因是本机 `prisma generate` 在删除旧 client 时被安全软件拦截，
+> 生成的 client 是空壳，于是 `@prisma/client` 导不出 `PrismaClient`。
+> 手动清掉 `node_modules/.prisma` 后重跑 `npm run prisma:generate` 即恢复，
+> `verify:all` 已能全绿。所以 `verify` 现在**包含** backend typecheck，不再跳过。
 
 ## 三、实现落点
 
