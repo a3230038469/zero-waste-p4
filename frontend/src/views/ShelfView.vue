@@ -39,6 +39,12 @@ const facets = ref<FacetsResponse>({ types: [], orgs: [], years: [], tags: [] })
 
 const items = computed(() => list.value?.items ?? [])
 const total = computed(() => list.value?.total ?? 0)
+/**
+ * 首屏还没拿到任何数据 —— 此时数字要显示「—」，不能显示 0。
+ * 0 的含义是「查过了，确实没有」；加载中显示 0 等于把「还没查」说成「没有」，是误导。
+ * 已有旧数据时（翻页、改筛选）保留旧数字，用户看到的是连续统计，不会闪。
+ */
+const firstLoadPending = computed(() => !list.value && !loadError.value)
 
 /**
  * 类型标签：库里实际存在的类型全列（不写死）。
@@ -194,8 +200,9 @@ watch(
       <p class="zw-eyebrow">资料库</p>
       <h1>全部资料</h1>
       <p class="zw-sub">
-        共收录 <strong class="zw-num">{{ loadError ? '—' : total }}</strong> 份资料，可按类型切换，
-        或按机构、年份、主题组合筛选；每项下拉都标出了可命中的数量。
+        共收录
+        <strong class="zw-num">{{ loadError || firstLoadPending ? '—' : total }}</strong>
+        份资料，可按类型切换， 或按机构、年份、主题组合筛选；每项下拉都标出了可命中的数量。
       </p>
     </header>
 
@@ -213,7 +220,7 @@ watch(
         @click="selectType(t.value)"
       >
         {{ t.label }}
-        <span class="tab-count zw-num">{{ t.count }}</span>
+        <span class="tab-count zw-num">{{ firstLoadPending ? '—' : t.count }}</span>
       </button>
     </div>
 

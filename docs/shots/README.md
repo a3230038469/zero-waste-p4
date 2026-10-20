@@ -24,11 +24,17 @@
 | `12-mobile-shelf.png` | 移动端资料库（375×812） | `/shelf` | 正常 · 响应式 |
 | `13-state-error-shelf.png` | 资料库接口失败 | `/shelf`（掐断 /api/） | 错误态 + 重试 |
 | `14-state-error-insights.png` | 数据概览接口失败 | `/insights`（掐断 /api/） | 错误态 + 重试 |
+| `15-state-loading-shelf.png` | 资料库加载中 | `/shelf`（接口延迟 2s） | 加载态 · 骨架屏 |
+| `16-state-loading-insights.png` | 数据概览加载中 | `/insights`（接口延迟 2s） | 加载态 · 骨架屏 |
+| `17-state-loading-doc.png` | 资料详情加载中 | `/doc/k-16`（接口延迟 2s） | 加载态 · 骨架屏 |
 
 另有 `e2e-report.json`（端到端 9 项明细）与 `stat-snapshot.json`（令牌覆盖基线）。
 
-未覆盖：表单校验失败态、加载骨架屏的定格。骨架屏出现时间太短（本地接口毫秒级返回），
-要稳定拍摄得给接口加延迟，属测试专用改造，暂时不做。
+未覆盖：表单校验失败态（需要人为填错字段，尚未脚本化）。
+
+> 加载态怎么拍到的：本地接口毫秒级返回，骨架屏一闪而过。**不用改后端代码** ——
+> 跑 `npm run qa:skeleton`，脚本在浏览器侧把 `/api/` 请求延迟 2 秒再放行，
+> 加载态就被定格了。可重复跑，不进产物，不影响任何业务逻辑。
 
 ## 怎么复现
 
@@ -37,7 +43,8 @@
 ```bash
 npm run dev:backend    # 必须先起，否则页面全是错误态
 npm run dev:frontend   # 默认 http://localhost:5173
-npm run qa:shots       # 一次拍完 12 张
+npm run qa:shots       # 拍页面与交互态
+npm run qa:skeleton    # 拍加载态骨架屏（接口人为延迟 2s）
 ```
 
 `puppeteer-core` 已在根 `devDependencies`，不用另装；
@@ -57,6 +64,8 @@ Vue 的页面过渡会卡在 `fade-slide-enter-from`（`opacity: 0`），拍出�
 - 错误态用请求拦截 `req.abort()`，只掐 `pathname.startsWith('/api/')`；
   **别用 `url.includes('/api/')`** —— Vite 的模块路径 `/src/api/auth.ts` 也含 `/api/`，
   掐了它整个应用起不来，拍出来是纯白（这个坑已经踩过）
+- 加载态反过来：`req.continue()` 之前先 `setTimeout` 2 秒，把接口拖慢。
+  同理只认 `pathname`，别误伤模块请求
 
 ## 目录结构
 

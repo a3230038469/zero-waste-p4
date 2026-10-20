@@ -302,6 +302,26 @@ h4 {
   }
 }
 
+/*
+ * Element 的 el-skeleton 走同一套底色。
+ * 页面里用的是组件库骨架屏（rows 布局现成），但默认底色是它自己的浅灰，
+ * 跟自建 .zw-skeleton 不是一个色，同一个站里会出现两种「加载灰」。
+ * 只覆盖视觉、不动结构；选择器带上 .is-animated 才压得住组件库自带的动画声明。
+ */
+.el-skeleton .el-skeleton__item,
+.el-skeleton.is-animated .el-skeleton__item {
+  border-radius: var(--zw-radius-sm);
+  background: linear-gradient(90deg, var(--zw-line) 25%, var(--zw-mint) 37%, var(--zw-line) 63%);
+  background-size: 400% 100%;
+  animation: zw-skeleton-wave 1.4s ease infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .el-skeleton.is-animated .el-skeleton__item {
+    animation: none;
+  }
+}
+
 /* —— 6. 空态：图标 + 一句人话 + 一个出口 —— */
 
 .zw-empty {

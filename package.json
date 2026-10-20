@@ -23,6 +23,7 @@
     "audit:interaction": "python scripts/audit-interaction-states.py",
     "audit:tokens": "python scripts/analyze-style-coverage.py",
     "qa:shots": "node scripts/qa-shots.js",
+    "qa:skeleton": "node scripts/qa-skeleton.js",
     "qa:e2e": "node scripts/qa-e2e.js",
     "qa:overflow": "node scripts/diag-overflow.js",
     "qa:responsive": "node scripts/qa-responsive.js"
