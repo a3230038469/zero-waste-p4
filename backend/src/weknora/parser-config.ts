@@ -540,53 +540,6 @@ export async function updateParserConfig(patch: ParserConfigPatch): Promise<Pars
 }
 
 /* ------------------------------------------------------------------ *
- * 测试连接（不保存）
- * ------------------------------------------------------------------ */
-
-/** POST /api/admin/parser-config/check 的响应体 */
-export interface ParserCheckResult {
-  success: true
-  message: string
-  /** 各解析引擎按「本次填的内容」实测出来的可用性 */
-  engines: ParserEngineInfo[]
-  /** 本次是否带了新密钥去测（false = 用引擎里已保存的密钥测） */
-  usedPendingSecret: boolean
-}
-
-/**
- * 测试连接：**只测不存**。
- *
- * 引擎的 `/system/parser-engines/check` 会按**传入的配置**实测（实测：传一个假 key
- * 回去，它会说「MinerU Cloud API Key 无效」；传空/不传，则沿用引擎里已保存的那份）。
- * 所以这里传「当前全量 + 你这次填的字段」，密钥没填就不带这个字段 ——
- * 这样老师不重敲密钥也能测出「已保存的那把还能不能用」。
- */
-export async function checkParserConfig(patch: ParserConfigPatch): Promise<ParserCheckResult> {
-  const current = await fetchParserConfigMap()
-  const cleanPatch = parseParserPatch(current, patch)
-  const { body, keptSecrets } = buildSubmitBody(current, cleanPatch)
-
-  const res = await parserFetch('/api/v1/system/parser-engines/check', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  })
-  if (!res.ok) {
-    throw new EngineError('ENGINE_REJECTED_CHECK', `引擎测不了（HTTP ${res.status}）`, 502)
-  }
-  const payload: unknown = await res.json().catch(() => null)
-  const engines = toEngineList(isRecord(payload) ? payload['data'] : null)
-  const usable = engines.filter((e) => e.available).length
-
-  return {
-    success: true,
-    message: `实测完成：${engines.length} 个解析引擎里有 ${usable} 个可用`,
-    engines,
-    usedPendingSecret: keptSecrets.length === 0
-  }
-}
-
-/* ------------------------------------------------------------------ *
  * 读视图
  * ------------------------------------------------------------------ */
 

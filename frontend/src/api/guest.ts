@@ -1,11 +1,11 @@
 /**
  * 游客权限 · 前端读口径（T11 新增）
  *
- *   GET /api/guest/permissions   公开只读，**不需要管理口令**
+ *   GET /api/guest/permissions   公开只读，**不需要登录、也不需要管理员身份**
  *
- * 为什么是单独一个 api 文件：设置页走 `/admin/guest-permissions`（要 X-Admin-Token，
+ * 为什么是单独一个 api 文件：设置页走 `/admin/guest-permissions`（管理员身份，
  * 见 api/admin.ts），公众页面（资料详情页 / 页脚）只能用这条公开口径 ——
- * 前端不可能拿管理口令。
+ * 公众页面本来就不该带任何管理凭证。
  *
  * 🔴 这里的「置灰」只是体验，真正的拦截在后端
  *    （routes/ask.ts / routes/docs.ts / routes/track.ts）。

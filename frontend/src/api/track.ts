@@ -143,12 +143,11 @@ async function send(body: unknown): Promise<void> {
 }
 
 /**
- * 拉看板数据。需要口令（X-Admin-Token）。
- * 与埋点不同，这个**会抛错**——看板页要据此显示「口令不对 / 未配置」。
+ * 拉看板数据。需要管理员账号登录态。
+ * 与埋点不同，这个**会抛错**——看板页要据此显示「未登录 / 不是管理员」。
  */
-export async function fetchStats(token: string): Promise<StatsSummary> {
+export async function fetchStats(): Promise<StatsSummary> {
   const res = await http.get<StatsSummary>('/track/stats', {
-    headers: { 'X-Admin-Token': token },
     silent: true
   })
   return res.data

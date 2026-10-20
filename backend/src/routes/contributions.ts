@@ -7,7 +7,7 @@
  *     POST /api/contributions            提交投稿（octet-stream + X-File-Name，元数据走查询参数）
  *     GET  /api/contributions/mine       我的投稿（按登录用户过滤，含状态与退回理由）
  *
- *   管理侧（挂在 /api/admin/contributions，需请求头 X-Admin-Token）
+ *   管理侧（挂在 /api/admin/contributions，需**管理员账号**登录态，见 src/admin/guard.ts）
  *     GET  /api/admin/contributions              审核队列（?status=&page=&pageSize=）
  *     GET  /api/admin/contributions/:id/file     查看/下载待审原件
  *     POST /api/admin/contributions/:id/approve  通过 → 真进知识库
@@ -18,7 +18,7 @@
  *
  * 「通过」为什么不直接调引擎：知识库入库的口径、标签写入、缓存失效三步都在
  * admin.ts 的 POST /api/admin/knowledge/upload 里已经写好了，这里**转发给那个接口**
- * （带 X-Admin-Token）是唯一不重复实现、也不改动别人文件的做法。
+ * （带管理员登录凭证）是唯一不重复实现、也不改动别人文件的做法。
  * 转发失败时状态**停在 pending**，把失败原因原样回给管理员 —— 绝不能假装通过。
  *
  * ⚠️ 本文件不改 docs.ts / auth.ts / admin.ts / track.ts 的任何既有行为。
@@ -29,6 +29,7 @@
 import { createReadStream } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import express, { Router, type NextFunction, type Request, type Response } from 'express'
+import { requireAdminGuard } from '../admin/guard.js'
 import jwt from 'jsonwebtoken'
 import { PrismaClient } from '@prisma/client'
 
@@ -71,13 +72,6 @@ const BODY_LIMIT = '60mb'
  */
 function fail(res: Response, status: number, message: string, code?: string): void {
   res.status(status).json({ success: false, error: { message, ...(code ? { code } : {}) } })
-}
-
-/** 读环境变量；占位符视为未配置（与 admin.ts 同一口径） */
-function env(name: string): string {
-  const value = (process.env[name] ?? '').trim()
-  if (!value || /^(your_|please_|change_?me|xxx|todo)/i.test(value)) return ''
-  return value
 }
 
 function getJwtSecret(): string {
@@ -133,20 +127,6 @@ function requireUser(req: Request, res: Response, next: NextFunction): void {
   }
   res.locals.userId = userId
   next()
-}
-
-/** 管理口令校验：与 admin.ts 的 assertAdmin 同款 fail closed */
-function assertAdmin(req: Request, res: Response): boolean {
-  const configured = env('ADMIN_STATS_TOKEN')
-  if (!configured) {
-    fail(res, 403, '服务端未配置 ADMIN_STATS_TOKEN，管理接口已关闭', 'ADMIN_NOT_CONFIGURED')
-    return false
-  }
-  if (String(req.header('X-Admin-Token') ?? '').trim() !== configured) {
-    fail(res, 403, '口令不正确', 'ADMIN_FORBIDDEN')
-    return false
-  }
-  return true
 }
 
 /** 取查询参数里的字符串（空串视为没填） */
@@ -351,7 +331,7 @@ contributionsRouter.get('/mine', requireUser, async (_req: Request, res: Respons
 
 /** GET /api/admin/contributions —— 审核队列 */
 adminContributionsRouter.get('/', async (req: Request, res: Response) => {
-  if (!assertAdmin(req, res)) return
+  if (!(await requireAdminGuard(req, res))) return
 
   const all = await listContributions()
   const counts = {
@@ -389,7 +369,7 @@ adminContributionsRouter.get('/', async (req: Request, res: Response) => {
 
 /** GET /api/admin/contributions/:id/file —— 查看 / 下载待审原件（PDF 内联推流） */
 adminContributionsRouter.get('/:id/file', async (req: Request, res: Response) => {
-  if (!assertAdmin(req, res)) return
+  if (!(await requireAdminGuard(req, res))) return
   const record = await getContribution(req.params.id)
   if (!record) {
     fail(res, 404, '找不到这条投稿', 'NOT_FOUND')
@@ -407,11 +387,11 @@ adminContributionsRouter.get('/:id/file', async (req: Request, res: Response) =>
 /**
  * POST /api/admin/contributions/:id/approve —— 通过
  *
- * 真入库：把原件转发给已有的 POST /api/admin/knowledge/upload（带 X-Admin-Token），
+ * 真入库：把原件转发给已有的 POST /api/admin/knowledge/upload（转发调用方的登录凭证），
  * 成功才改状态；失败保持 pending 并把引擎的原因回给管理员。
  */
 adminContributionsRouter.post('/:id/approve', async (req: Request, res: Response) => {
-  if (!assertAdmin(req, res)) return
+  if (!(await requireAdminGuard(req, res))) return
 
   const record = await getContribution(req.params.id)
   if (!record) {
@@ -424,12 +404,6 @@ adminContributionsRouter.post('/:id/approve', async (req: Request, res: Response
   }
   if (!contributionFileExists(record.storedName)) {
     fail(res, 410, '这份投稿的原件已不在服务器上，无法入库', 'FILE_GONE')
-    return
-  }
-
-  const adminToken = env('ADMIN_STATS_TOKEN')
-  if (!adminToken) {
-    fail(res, 503, '服务端未配置 ADMIN_STATS_TOKEN，无法入库', 'ADMIN_NOT_CONFIGURED')
     return
   }
 
@@ -449,7 +423,8 @@ adminContributionsRouter.post('/:id/approve', async (req: Request, res: Response
     const upstream = await fetch(target, {
       method: 'POST',
       headers: {
-        'X-Admin-Token': adminToken,
+        // 转发调用方的登录凭证：入库接口现在认「管理员账号」而不是口令
+        ...(req.headers.authorization ? { Authorization: req.headers.authorization } : {}),
         'X-File-Name': encodeURIComponent(record.fileName),
         'Content-Type': 'application/octet-stream'
       },
@@ -505,7 +480,7 @@ adminContributionsRouter.post('/:id/approve', async (req: Request, res: Response
 
 /** POST /api/admin/contributions/:id/reject —— 退回（必填理由） */
 adminContributionsRouter.post('/:id/reject', async (req: Request, res: Response) => {
-  if (!assertAdmin(req, res)) return
+  if (!(await requireAdminGuard(req, res))) return
 
   const record = await getContribution(req.params.id)
   if (!record) {

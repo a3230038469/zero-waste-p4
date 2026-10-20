@@ -113,6 +113,10 @@ async function onSubmit(): Promise<void> {
     ElMessage.success(isDoc.value ? '已收到，感谢你帮我们发现问题' : '反馈已提交，感谢你的建议')
     emit('submitted')
     visible.value = false
+  } catch (err) {
+    // 提交失败必须让用户知道，并把弹窗留着（内容不能白填）——
+    // 旧版走埋点、失败被吞掉，用户会以为提了其实丢了
+    ElMessage.error(err instanceof Error ? err.message : '提交失败，请稍后再试')
   } finally {
     submitting.value = false
   }

@@ -2,9 +2,12 @@
  * 用户接口 —— 负责人：月月（B02 用户板块）
  *
  * 提供的接口（字段名照 docs/接口约定.md）：
- *   POST /api/auth/register   注册（五字段：姓名/机构/职业/关注议题/电话 + 密码）
- *   POST /api/auth/login      登录，返回 { token }
- *   GET  /api/auth/me         当前用户（需带 Authorization: Bearer <token>）
+ *   POST  /api/auth/register   注册（五字段：姓名/机构/职业/关注议题/电话 + 密码）
+ *   POST  /api/auth/login      登录，返回 { token }
+ *   GET   /api/auth/me         当前用户（需带 Authorization: Bearer <token>）
+ *   PATCH /api/auth/me         修改当前用户的资料（2026-10-19 新增，配合导航栏账号菜单）
+ *                              —— 只接受请求里出现的字段：姓名/机构/职业/关注议题/电话；
+ *                              手机号是登录凭证，改了就用新号登录（要求格式合法且没被别人占用）。
  *
  * 实现：
  *   - 数据库：SQLite + Prisma（User 模型见 backend/prisma/schema.prisma）
@@ -37,6 +40,15 @@ const PHONE_RE = /^1[3-9]\d{9}$/
 /** 密码长度按《接口约定》：8–72 位（bcrypt 上限 72 字节） */
 const PASSWORD_MIN = 8
 const PASSWORD_MAX = 72
+
+/** 资料字段长度上限（PATCH /me 用）：防止把超长字符串塞进库里
+ *  —— 发布机构那一栏最长见过 118 个字，所以机构上限给得比姓名宽。 */
+const NAME_MAX = 40
+const ORG_MAX = 120
+const OCCUPATION_MAX = 40
+/** 关注议题：最多 20 项、每项最多 20 字（注册页允许手动输入自定义议题） */
+const TOPICS_MAX = 20
+const TOPIC_ITEM_MAX = 20
 
 /** JWT 密钥：只从环境变量读，未配置或过短直接给出明确错误（铁律：密钥不进代码） */
 function getJwtSecret(): string {
@@ -107,17 +119,96 @@ function validateRegister(body: unknown): { data: RegisterInput | null; errors: 
   return { data: { name, org, occupation, topics, phone, password }, errors: [] }
 }
 
-/** 数据库行 → 返回给前端的用户对象（剔除 passwordHash；topics 还原为数组） */
-interface UserRow {
+/** 修改资料的入参：**只包含请求里真正出现的字段**（部分更新） */
+interface ProfilePatch {
+  name?: string
+  org?: string
+  occupation?: string
+  topics?: string[]
+  phone?: string
+}
+
+/**
+ * 校验「修改资料」入参（PATCH /me）。
+ * 与注册不同：这里允许只提交要改的那几项，所以判空只在字段**出现**时做；
+ * 一个字段都没出现 = 空更新，直接拒（避免误发一个空 body 也返回 200）。
+ */
+function validateProfilePatch(body: unknown): { data: ProfilePatch | null; errors: string[] } {
+  const errors: string[] = []
+  const b = (body ?? {}) as Record<string, unknown>
+  const data: ProfilePatch = {}
+
+  if ('name' in b) {
+    const name = typeof b.name === 'string' ? b.name.trim() : ''
+    if (!name) errors.push('姓名不能为空')
+    else if (name.length > NAME_MAX) errors.push(`姓名最多 ${NAME_MAX} 个字`)
+    else data.name = name
+  }
+
+  if ('org' in b) {
+    const org = typeof b.org === 'string' ? b.org.trim() : ''
+    if (!org) errors.push('机构不能为空')
+    else if (org.length > ORG_MAX) errors.push(`机构最多 ${ORG_MAX} 个字`)
+    else data.org = org
+  }
+
+  if ('occupation' in b) {
+    const occupation = typeof b.occupation === 'string' ? b.occupation.trim() : ''
+    if (!occupation) errors.push('职业不能为空')
+    else if (occupation.length > OCCUPATION_MAX) errors.push(`职业最多 ${OCCUPATION_MAX} 个字`)
+    else data.occupation = occupation
+  }
+
+  if ('phone' in b) {
+    const phone = typeof b.phone === 'string' ? b.phone.trim() : ''
+    if (!phone) errors.push('电话不能为空')
+    else if (!PHONE_RE.test(phone)) errors.push('手机号格式不正确（应为 1 开头的 11 位数字）')
+    else data.phone = phone
+  }
+
+  if ('topics' in b) {
+    // 与注册同款容错：契约要求数组，单个字符串也接受
+    let topics: string[] = []
+    if (Array.isArray(b.topics)) {
+      topics = b.topics
+        .filter((t): t is string => typeof t === 'string')
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0)
+    } else if (typeof b.topics === 'string' && b.topics.trim().length > 0) {
+      topics = [b.topics.trim()]
+    }
+    if (topics.length === 0) errors.push('关注议题至少选择一项')
+    else if (topics.length > TOPICS_MAX) errors.push(`关注议题最多 ${TOPICS_MAX} 项`)
+    else if (topics.some((t) => t.length > TOPIC_ITEM_MAX)) {
+      errors.push(`单个议题最多 ${TOPIC_ITEM_MAX} 个字`)
+    } else data.topics = topics
+  }
+
+  if (errors.length === 0 && Object.keys(data).length === 0) {
+    errors.push('没有需要修改的内容')
+  }
+
+  if (errors.length > 0) return { data: null, errors }
+  return { data, errors: [] }
+}
+
+/** 数据库行 → 返回给前端的用户对象（剔除 passwordHash；topics 还原为数组） */interface UserRow {
   id: string
   name: string
   org: string
   occupation: string
   topics: string
   phone: string
+  /** 身份：user | admin（2026-10-19 管理台改造加）。老查询没 select 它时按 user 处理 */
+  role?: string
 }
 
-function publicUser(u: UserRow): { id: string; name: string; org: string; occupation: string; topics: string[]; phone: string } {
+/**
+ * 前端公共用户对象。
+ * 2026-10-19：补 `role` —— 前端据此决定要不要显示「管理台」入口
+ * （真正的拦截在后端，前端这个字段只影响菜单显不显示，不构成权限）。
+ */
+function publicUser(u: UserRow): { id: string; name: string; org: string; occupation: string; topics: string[]; phone: string; role: string } {
   let topics: string[] = []
   try {
     const parsed: unknown = JSON.parse(u.topics)
@@ -127,7 +218,15 @@ function publicUser(u: UserRow): { id: string; name: string; org: string; occupa
   } catch {
     topics = []
   }
-  return { id: u.id, name: u.name, org: u.org, occupation: u.occupation, topics, phone: u.phone }
+  return {
+    id: u.id,
+    name: u.name,
+    org: u.org,
+    occupation: u.occupation,
+    topics,
+    phone: u.phone,
+    role: u.role === 'admin' ? 'admin' : 'user'
+  }
 }
 
 /** 取凭证的结果：拿到字符串 / 没拿到（区分两种失败原因） */
@@ -292,6 +391,51 @@ router.get('/me', async (req: Request, res: Response, next: NextFunction) => {
     }
     res.json(publicUser(user))
   } catch (err) {
+    next(err)
+  }
+})
+
+// —— PATCH /api/auth/me：修改当前用户的资料（2026-10-19）——
+// 只改请求里出现的字段；手机号改动要做唯一性检查（它是登录凭证）。
+// 响应体与 GET /me 同形（publicUser），前端拿到后直接覆盖本地登录态。
+router.patch('/me', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const auth = userIdFromRequest(req)
+    if (!auth.ok) {
+      fail(res, 401, '未登录或登录已过期', auth.code)
+      return
+    }
+
+    const { data, errors } = validateProfilePatch(req.body)
+    if (!data) {
+      fail(res, 400, `资料有误：${errors.join('；')}`)
+      return
+    }
+
+    // 换手机号前先查有没有被别的账号占用（数据库唯一约束是第二道保险）
+    if (data.phone) {
+      const taken = await prisma.user.findUnique({ where: { phone: data.phone } })
+      if (taken && taken.id !== auth.userId) {
+        fail(res, 409, '该手机号已被其他账号使用')
+        return
+      }
+    }
+
+    const patch: { name?: string; org?: string; occupation?: string; topics?: string; phone?: string } = {}
+    if (data.name !== undefined) patch.name = data.name
+    if (data.org !== undefined) patch.org = data.org
+    if (data.occupation !== undefined) patch.occupation = data.occupation
+    if (data.phone !== undefined) patch.phone = data.phone
+    // topics 在 SQLite 里存 JSON 字符串（与注册一致）
+    if (data.topics !== undefined) patch.topics = JSON.stringify(data.topics)
+
+    const user = await prisma.user.update({ where: { id: auth.userId }, data: patch })
+    res.json(publicUser(user))
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      fail(res, 409, '该手机号已被其他账号使用')
+      return
+    }
     next(err)
   }
 })

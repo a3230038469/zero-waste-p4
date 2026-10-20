@@ -24,8 +24,19 @@
  * 追加记录（T11 游客权限，2026-10-14）：新增一条挂载 —— /api/guest（公开只读，
  * 游客开关的当前值，供公众页面决定要不要把按钮置灰）。只新增，未触碰任何已有路由。
  * 要回退就删掉带「T11」注释的 import 与 app.use 两行。
+ *
+ * 追加记录（管理台改造，2026-10-19）：管理侧鉴权从「共用口令 X-Admin-Token」换成
+ * **管理员账号**（User.role === 'admin'，见 src/admin/guard.ts）；新增两条挂载 ——
+ * /api/site-info（公开只读，站点对外口径）与 /api/admin/site-info（管理员写）。
+ * 挂载顺序：`/api/admin/site-info` 必须在 `/api/admin` **之前**，否则会被老师后台
+ * 那个 catch-all 风格的路由器先接走。要回退就删掉带「管理台改造」注释的 import
+ * 与 app.use，并把 guard.ts 里的 requireAdminGuard 换回旧口令实现。
+ *
+ * 追加记录（管理台自测加固，2026-10-19）：`express.json()` 显式限 1MB，并在其后补一个
+ * 只认「body 解析失败 / 体积超限」的错误中间件（400 / 413 + 中文），避免坏 body 变成
+ * 500 INTERNAL_ERROR 并漏出英文解析原文。要回退就删掉那段 `app.use((err …))` 与 limit 参数。
  */
-import express from 'express'
+import express, { type NextFunction, type Request, type Response } from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
 import { existsSync } from 'node:fs'
@@ -44,6 +55,7 @@ import { adminContributionsRouter, contributionsRouter } from './routes/contribu
 import guestRouter from './routes/guest.js' // T11：游客权限的公开只读口径（GET /api/guest/permissions）
 import overviewRouter from './routes/overview.js' // 对外展示站：整库数据概览
 import feedbackRouter from './routes/feedback.js' // 对外展示站：访客反馈（2026-10-14）
+import { adminSiteInfoRouter, siteInfoRouter } from './routes/site.js' // 管理台改造：站点信息（机构对外口径）
 import { errorHandler, notFound } from './middleware/error.js' // 地基自带（2026-10-10 起真正挂上）
 import { renderSpaHtml, siteOrigin } from './share/meta.js' // B09：分享卡片 meta 注入
 
@@ -54,7 +66,38 @@ const app = express()
 const PORT = Number(process.env.PORT ?? 4000)
 
 app.use(cors({ origin: true, credentials: true }))
-app.use(express.json())
+// 请求体上限显式写成 1MB：默认只有 100KB，而 POST /api/track 一次最多收 100 条事件、
+// 每条 payload 上限 4000 字符 —— 一批大事件就会顶到默认上限被 413 掉（属于合法请求）。
+app.use(express.json({ limit: '1mb' }))
+
+/**
+ * 请求体不是合法 JSON 时，`express.json()` 会抛 SyntaxError（type=entity.parse.failed）
+ * 交给错误中间件；不拦的话它会一路走到末尾的 errorHandler，变成 **500 INTERNAL_ERROR**，
+ * 还把英文解析原文（`Unterminated string in JSON at position 31`）漏给调用方。
+ *
+ * 对公开写入点（/api/feedback、/api/track）来说这是「客户端把 body 发坏了」，应当是 400 + 中文。
+ * 只认 body 解析与体积这两类错误，其余错误一律 `next(err)` 交回末尾兜底 —— 不吞别的错。
+ *
+ * 2026-10-19（管理台改造期间自测发现）：`curl` 发一个转义坏掉的 JSON 就复现过。
+ */
+app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
+  const type = (err as { type?: string } | null)?.type
+  if (err instanceof SyntaxError && type === 'entity.parse.failed') {
+    res.status(400).json({
+      success: false,
+      error: { code: 'VALIDATION_FAILED', message: '请求体不是合法的 JSON' }
+    })
+    return
+  }
+  if (type === 'entity.too.large') {
+    res.status(413).json({
+      success: false,
+      error: { code: 'PAYLOAD_TOO_LARGE', message: '一次提交的内容太多了，请分几次发' }
+    })
+    return
+  }
+  next(err)
+})
 
 // —— 健康检查
 app.use('/health', healthRouter)
@@ -66,12 +109,15 @@ app.use('/api/embed', embedRouter) // 韶茹
 app.use('/api/ask', askRouter) // 韶茹（B07 问答窗口用）
 app.use('/api/chat', chatRouter) // 韶茹（T5：/chat 页的会话增删查 + 带 conversationId 的接着聊）
 app.use('/api/track', trackRouter) // 韶茹（埋点 + 看板）
-// B09 公众上传（2026-10-13）：投稿人侧（登录态）与审核队列（X-Admin-Token）分两条挂。
+// B09 公众上传（2026-10-13）：投稿人侧（登录态）与审核队列（管理员账号）分两条挂。
 // 管理侧必须挂在 /api/admin 之前，避免与老师后台的其他 /api/admin/* 路由互相踩到。
+// 管理台改造（2026-10-19）：/api/admin/site-info 同理，也必须排在 /api/admin 之前。
 app.use('/api/admin/contributions', adminContributionsRouter) // B09：审核队列
+app.use('/api/admin/site-info', adminSiteInfoRouter) // 管理台改造：机构信息（管理员写）
 app.use('/api/contributions', contributionsRouter) // B09：投稿（提交 / 我的投稿）
 app.use('/api/admin', adminRouter) // 本地演示：老师后台（管理资料）
 app.use('/api/guest', guestRouter) // T11：游客权限（公开只读，给公众页面决定要不要置灰按钮）
+app.use('/api/site-info', siteInfoRouter) // 管理台改造：站点对外口径（公开只读）
 app.use('/api/overview', overviewRouter) // 对外展示站：整库数据概览（GET /api/overview）
 app.use('/api/feedback', feedbackRouter) // 对外展示站：访客反馈（POST /api/feedback）
 

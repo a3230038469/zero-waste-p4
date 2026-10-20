@@ -5,16 +5,21 @@
  * 反馈弹窗（components/FeedbackDialog.vue）与「我要投稿」页的反馈 Tab（views/ContributeView.vue）
  * 共用本文件 —— 两处各抄一份常量，早晚会漂。
  *
- * 落库口径：**不新增接口、不新增事件名**，走已有的 POST /api/track，用白名单里现成的
- * `feedback_submit`（真相来源：backend/src/track/types.ts）。payload 形状：
- *   doc  → { kind: 'doc', docId, docTitle, reason, text, contact }
- *   site → { kind: 'site', path, reason, text, contact }
+ * 落库口径（2026-10-19 改）：**走正规接口 `POST /api/feedback`**。
+ *   此前弹窗只往 `POST /api/track` 记一条 `feedback_submit` 埋点、不写反馈表，
+ *   结果后台「访客反馈」页永远读不到（它只读 feedback.jsonl）——
+ *   收得进来、看得见、能导出，三者缺一不可，所以这里改走正路；
+ *   埋点由后端在落库成功后自己补记（不会再出现「只有埋点、没有工单」的情况）。
+ *   payload 形状：
+ *   doc  → { kind, reason: 'broken'|'wrong'|'duplicate'|'missing', scope: 'doc', message, contact, docId, docTitle, path }
+ *   site → { kind, reason: 'feature'|'content'|'usage'|'other',  scope: 'site', message, contact, path }
+ *   `reason` 原样存进反馈表（后台按它分类），`kind` 只是粗分组，映射见下面 KIND_BY_*。
  *
- * ⚠️ 改下面的取值等于改数据口径（看板按 payload.reason 分类），要同步 docs/接口约定.md。
+ * ⚠️ 改下面的取值等于改数据口径，要同步 docs/接口约定.md。
  */
-import { trackEvent } from '../api/track'
+import { submitFeedback as postFeedback } from '../api/feedback'
 
-/** 资料级反馈的四个原因（对外是单选，对内是 payload.reason 的取值） */
+/** 资料级反馈的四个原因（对外是单选，对内是 reason 的取值） */
 export const DOC_REASONS = [
   { value: 'broken', label: '文件打不开 / 无法预览下载' },
   { value: 'wrong', label: '内容有误（标题、机构、年份等）' },
@@ -30,7 +35,25 @@ export const SITE_KINDS = [
   { value: 'other', label: '其他' }
 ] as const
 
-/** 留言上限（payload 整体限 4000 字符，这里留足余量） */
+/**
+ * 细分原因 → 后台粗分组（要和 backend/src/feedback/store.ts 的 FEEDBACK_KINDS 对齐）。
+ * 资料级：打不开/有误/重复 都是「需要改」，归 correction；希望补充 = 推荐资料。
+ * 站点级：内容建议本质是「希望有这类资料」，归 recommend；其余都归 other。
+ */
+const KIND_BY_DOC_REASON: Record<string, 'correction' | 'recommend'> = {
+  broken: 'correction',
+  wrong: 'correction',
+  duplicate: 'correction',
+  missing: 'recommend'
+}
+const KIND_BY_SITE_REASON: Record<string, 'recommend' | 'other'> = {
+  feature: 'other',
+  content: 'recommend',
+  usage: 'other',
+  other: 'other'
+}
+
+/** 留言上限（后端正文上限 2000 字，这里先拦一道，省一次往返） */
 export const FEEDBACK_TEXT_MAX = 300
 
 /** 站点级反馈的必填提示语（弹窗与页面共用同一句，避免两处口径不一致） */
@@ -48,30 +71,31 @@ export interface FeedbackInput {
   docTitle?: string
   /** 页面来源（路由 fullPath），便于按页面定位问题 */
   path?: string
-  /** 登录用户 id；匿名传 null */
+  /** 登录用户 id；匿名传 null。⚠️ 反馈表本身不记身份，只用于埋点归类 */
   userId?: string | null
 }
 
-/** 提交一条反馈。埋点本身是尽力而为的旁路（见 api/track.ts），失败不抛错、不影响页面 */
+/**
+ * 提交一条反馈。
+ *
+ * ⚠️ 与旧版最大的区别：**失败会抛错**（`Error`，message 可直接展示）。
+ *   反馈是工单，提交失败必须让用户知道，不能像埋点那样悄悄咽掉 ——
+ *   旧版吞掉异常再报「已提交」，用户以为提了、其实丢了。
+ */
 export async function submitFeedback(input: FeedbackInput): Promise<void> {
   const isDoc = input.scope === 'doc'
-  const payload: Record<string, unknown> = {
-    kind: isDoc ? 'doc' : 'site',
-    reason: input.reason,
-    text: input.text.trim().slice(0, FEEDBACK_TEXT_MAX),
-    contact: input.contact.trim()
-  }
-  if (isDoc) {
-    payload.docId = input.docId ?? ''
-    payload.docTitle = input.docTitle ?? ''
-  } else {
-    payload.path = input.path ?? ''
-  }
+  const kind = isDoc
+    ? (KIND_BY_DOC_REASON[input.reason] ?? 'other')
+    : (KIND_BY_SITE_REASON[input.reason] ?? 'other')
 
-  await trackEvent({
-    event: 'feedback_submit',
-    userId: input.userId ?? null,
-    path: input.path ?? '',
-    payload
+  await postFeedback({
+    kind,
+    message: input.text.trim().slice(0, FEEDBACK_TEXT_MAX),
+    contact: input.contact.trim(),
+    reason: input.reason,
+    scope: input.scope,
+    docId: isDoc ? (input.docId ?? '') : '',
+    docTitle: isDoc ? (input.docTitle ?? '') : '',
+    path: input.path ?? ''
   })
 }

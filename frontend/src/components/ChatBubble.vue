@@ -26,12 +26,18 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 
 import type { AskSource } from '../api/ask'
+import { NO_ANSWER_LABEL, NO_SOURCE_NOTE } from '../utils/askCopy'
 
 export interface BubbleMessage {
   role: 'user' | 'assistant'
   text: string
   /** 出错的气泡（额度/网络/引擎不可用），文案用警示色 */
   failed?: boolean
+  /**
+   * 库内没有可用资料（后端 noAnswer 口径：正常收尾但正文为空）。
+   * 与 failed 分开：**它不是故障**，是「知识库里确实没有」，不该用警示色吓用户。
+   */
+  noAnswer?: boolean
   /** 回答引用的资料卡片。同一份资料后端已去重 */
   sources?: AskSource[]
 }
@@ -44,11 +50,26 @@ const props = defineProps<{
   waitingText?: string
   /** 正在等第一个字（assistant 且还没有正文） */
   waiting?: boolean
+  /**
+   * 平铺模式（T14，2026-10-19）：去掉气泡底色/内边距/最大宽度，让宿主（/chat 对话流）
+   * 自己排「头像 + 正文 + 引用条 + 操作行」。首页右下角挂件不传，保持原气泡观感。
+   */
+  flat?: boolean
+  /**
+   * 正文里引用标记的形态（T14）：
+   *   - 'chip'（默认）：渲染成文件胶囊，点一下跳资料详情页 —— 首页挂件用它
+   *   - 'sup'：渲染成上标小方块数字（¹²³），点一下打开宿主的「引用来源」侧栏
+   */
+  citeStyle?: 'chip' | 'sup'
+  /** 是否渲染底部来源卡片（'sup' 模式下宿主自己渲染侧栏，不再需要这排卡片） */
+  showSources?: boolean
 }>()
 
 const emit = defineEmits<{
   /** 点来源卡片：交回给宿主决定怎么跳（首页与独立页都可能不是同一个路由上下文） */
   (e: 'open-source', url: string): void
+  /** 点正文里的上标角标（citeStyle='sup'）：参数是该引用在 sources 里的下标 */
+  (e: 'open-cite', index: number): void
 }>()
 
 /**
@@ -120,17 +141,40 @@ function findSourceUrl(doc: string, sources: AskSource[]): string {
 }
 
 /**
+ * 同一个匹配规则，但要的是**下标**（T14 上标标号用）。
+ * 匹配不到返回 -1 —— 调用方据此降级成弱化小字，绝不留一个点了没反应的号。
+ */
+function findSourceIndex(doc: string, sources: AskSource[]): number {
+  const raw = doc.trim()
+  if (!raw) return -1
+  const stem = stripExt(raw)
+  return sources.findIndex(
+    (s) =>
+      s.name === raw ||
+      stripExt(s.name) === stem ||
+      s.name.includes(stem) ||
+      stem.includes(stripExt(s.name))
+  )
+}
+
+/**
  * 回答正文 -> 可 v-html 的 HTML。
  *
  * ⚠️ 渲染的是**模型输出**，必须过 DOMPurify —— v-html 直接吃未净化的字符串
  *    等于给站点开一个 XSS 口子。
  */
-function renderAnswer(text: string, sources: AskSource[]): string {
+function renderAnswer(text: string, sources: AskSource[], citeStyle: 'chip' | 'sup'): string {
   const cleaned = text
     .replace(SOURCE_TAG, (_all, doc: string) => {
       const raw = String(doc).trim()
       const url = findSourceUrl(raw, sources)
       const label = escapeHtml(cleanDisplayName(raw))
+      // T14：上标角标形态（对话页）—— 号 = 该引用在 sources 里的下标 + 1
+      if (citeStyle === 'sup') {
+        const idx = findSourceIndex(raw, sources)
+        if (idx >= 0) return `<sup class="cit" data-cite="${idx}">${idx + 1}</sup>`
+        return `<span class="cite">${label}</span>`
+      }
       // 匹配不到资料 → 降级成原来的弱化小字（绝不留"点了没反应"的死链）
       if (!url) return `<span class="cite">${label}</span>`
       // T9b：做成「文件胶囊」——底色 + 边框 + 文件图标 + 洗过的短名。
@@ -138,6 +182,13 @@ function renderAnswer(text: string, sources: AskSource[]): string {
       return `<a class="kb-link" href="${escapeHtml(url)}" title="${escapeHtml(raw)}">${FILE_ICON}<span class="kb-tx">${label}</span></a>`
     })
     .replace(INLINE_CITE, (_all, name: string) => `<span class="cite">${escapeHtml(name)}</span>`)
+    /**
+     * 模型爱写「**50.3%**依靠填埋处理」这种紧贴汉字的加粗。
+     * 按 CommonMark 规则，关闭定界符 `**` 前面是标点（%）、后面是汉字时**不算强调**，
+     * 结果星号原样漏进正文（2026-10-19 对话页截图里就是这么现形的）。
+     * 先把这种行内加粗直接落成 <strong>，交给 DOMPurify 放行；代码块里的 ** 不管。
+     */
+    .replace(/\*\*([^*\n]{1,60}?)\*\*/g, '<strong>$1</strong>')
     .replace(/[ \t]+$/gm, '')
     .replace(/\n{3,}/g, '\n\n')
   const html = marked.parse(cleaned, { async: false }) as string
@@ -153,7 +204,17 @@ function renderAnswer(text: string, sources: AskSource[]): string {
  * v-html 里的元素绑不了 Vue 事件，所以在正文容器上做事件委托。
  */
 function onBodyClick(e: MouseEvent): void {
-  const el = (e.target as HTMLElement | null)?.closest?.('a.kb-link') as HTMLAnchorElement | null
+  const target = e.target as HTMLElement | null
+  // T14：上标角标 → 交给宿主打开「引用来源」侧栏并定位到这一条
+  const cit = target?.closest?.('sup.cit') as HTMLElement | null
+  if (cit) {
+    const idx = Number(cit.dataset.cite)
+    if (Number.isInteger(idx) && idx >= 0) {
+      emit('open-cite', idx)
+      return
+    }
+  }
+  const el = target?.closest?.('a.kb-link') as HTMLAnchorElement | null
   if (!el) return
   e.preventDefault()
   const url = el.getAttribute('href') ?? ''
@@ -163,12 +224,35 @@ function onBodyClick(e: MouseEvent): void {
 /** 只给 assistant 的正文算（user 走纯文本分支） */
 const answerHtml = computed(() =>
   props.message.role === 'assistant'
-    ? renderAnswer(props.message.text, props.message.sources ?? [])
+    ? renderAnswer(props.message.text, props.message.sources ?? [], props.citeStyle ?? 'chip')
     : ''
 )
 
+/** 来源卡片是否渲染（'sup' 模式由宿主画侧栏，这里关掉） */
+const withSources = computed(() => props.showSources !== false)
+
 /** 等待文案（非空才渲染，避免空 transition） */
 const waitingText = computed(() => (props.waitingText ?? '').trim())
+
+/**
+ * 要不要显示「本条没有关联到库内资料」的提示。
+ *
+ * 只在**流真正结束**（streaming=false）且满足全部条件时显示，否则会在等待期间闪出来：
+ *   - assistant、有正文、不是错误、不是拒答
+ *   - 没有来源卡片（sources 为空 = 后端 resolveCitationSources 没解析出引用）
+ *
+ * ⚠️ 只提示、**不改写正文**：解析层兼容多种引用形态，但仍可能遇到模型没写引用标记的
+ *    情况。这种情况下把模型的话篡改成「没资料」比不提示更糟，所以只补一句实话。
+ */
+const showNoSourceNote = computed(
+  () =>
+    props.message.role === 'assistant' &&
+    !props.streaming &&
+    !props.message.failed &&
+    !props.message.noAnswer &&
+    props.message.text.trim() !== '' &&
+    (!props.message.sources || props.message.sources.length === 0)
+)
 
 /**
  * 来源卡片副行：`机构 · 年份`（T8）。
@@ -191,7 +275,7 @@ function sourceTitle(source: AskSource): string {
 </script>
 
 <template>
-  <div class="bubble" :class="[message.role, { failed: message.failed }]">
+  <div class="bubble" :class="[message.role, { failed: message.failed, 'no-answer': message.noAnswer, flat: flat }]">
     <!-- 等待期：轮换文案；出第一个字就换成正文，不闪。fade + out-in = 淡出后淡入，不叠影 -->
     <transition v-if="waiting && waitingText" name="fade" mode="out-in">
       <span :key="waitingText" class="typing">{{ waitingText }}</span>
@@ -214,11 +298,17 @@ function sourceTitle(source: AskSource): string {
     ></div>
     <!-- eslint-enable vue/no-v-html -->
 
+    <!-- 拒答标签：明确告诉用户这是「库里没有」，而不是 AI 坏了 -->
+    <p v-if="message.noAnswer" class="no-answer-label">{{ NO_ANSWER_LABEL }}</p>
+
+    <!-- 有正文但没解析到引用：如实补一句，不篡改模型输出 -->
+    <p v-if="showNoSourceNote" class="no-source">{{ NO_SOURCE_NOTE }}</p>
+
     <!-- 来源卡片：点一下跳资料详情页（预览 / 下载在那页）。
          appear + stagger 索引 = 流结束时逐个弹入
          T8：卡片上补「机构 · 年份」（后端从引用自带的元数据里读，读不到就不显示这两行） -->
     <transition-group
-      v-if="message.role === 'assistant' && message.sources && message.sources.length > 0"
+      v-if="withSources && message.role === 'assistant' && message.sources && message.sources.length > 0"
       tag="div"
       class="sources"
       name="chip"
@@ -260,6 +350,30 @@ function sourceTitle(source: AskSource): string {
 .bubble.failed {
   background: #fff7e6;
   color: #b26a00;
+}
+/* 拒答气泡：不是故障，用中性色 + 虚线边（与 failed 的警示橙区分开） */
+.bubble.no-answer {
+  background: #f7faf7;
+  border: 1px dashed #cfdccf;
+  color: #3f5245;
+}
+.no-answer-label {
+  margin: 8px 0 0;
+  padding-top: 6px;
+  border-top: 1px dashed #dfe9df;
+  font-size: 11px;
+  color: #8aa08c;
+  white-space: normal;
+}
+/* 无来源提示：一行小字，位置与来源卡片一致（虚线分隔），但不可点 */
+.no-source {
+  margin: 8px 0 0;
+  padding-top: 6px;
+  border-top: 1px dashed #dfe9df;
+  font-size: 11px;
+  line-height: 1.7;
+  color: #8aa08c;
+  white-space: normal;
 }
 .plain {
   white-space: pre-wrap;
@@ -541,6 +655,49 @@ function sourceTitle(source: AskSource): string {
 }
 
 /* ---- 无障碍：系统开启「减弱动态效果」时，上面所有动画全关 ---- */
+/* ---- T14 平铺模式（/chat 对话流）：气泡退成普通容器，头像与操作行由宿主排 ---- */
+.bubble.flat {
+  max-width: none;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  font-size: inherit;
+  line-height: inherit;
+}
+/* 用户提问：独立页不要大绿块，浅底深字更像对话框（首页挂件不受影响，它不传 flat） */
+.bubble.flat.user {
+  padding: 11px 16px;
+  border-radius: 14px;
+  background: var(--zw-mint-2);
+  color: var(--zw-ink);
+}
+.bubble.flat.no-answer {
+  padding: 12px 14px;
+  border: 1px dashed var(--zw-line-strong);
+  border-radius: 12px;
+}
+/* 上标角标：方块数字，点一下打开引用侧栏 */
+.md :deep(sup.cit) {
+  display: inline-block;
+  min-width: 15px;
+  height: 15px;
+  margin: 0 1px 0 2px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--zw-mint);
+  color: var(--zw-green-deep);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  text-align: center;
+  vertical-align: super;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.md :deep(sup.cit:hover) {
+  background: var(--zw-green);
+  color: #fff;
+}
 @media (prefers-reduced-motion: reduce) {
   .fade-enter-active,
   .fade-leave-active,

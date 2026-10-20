@@ -65,6 +65,19 @@ const selectedTags = ref<string[]>([])
 const selectedSrcTables = ref<string[]>([])
 const keyword = ref('')
 const sort = ref<'year_desc' | 'newest'>('year_desc')
+
+/**
+ * 「更多筛选」是否展开（装的是机构 / 年份 / 排序这三样）。
+ *
+ * 【2026-10-18】默认收起。原来七八个控件一次全铺开，390px 下光筛选区就占掉一屏多，
+ * 首屏看不见任何一份资料 —— 而资料库页的第一件事应该是让人看见资料。
+ *
+ * 收起来不等于藏起来：
+ *   1. 里面只要有条件生效，按钮上就挂一个数字角标（见 moreActiveCount）；
+ *   2. 生效的条件照样出现在下面的「当前筛选」那一行，可以单独点掉。
+ * 从地址栏带 year / orgLike / sort 进来的（分享链接）会自动展开，见 applyRouteQuery。
+ */
+const moreOpen = ref(false)
 const page = ref(1)
 const loading = ref(false)
 const list = ref<DocListResponse | null>(null)
@@ -140,6 +153,34 @@ const activeChips = computed<ActiveChip[]>(() => {
   const q = keyword.value.trim()
   if (q) chips.push({ dim: 'q', label: '关键词', value: q })
   return chips
+})
+
+/**
+ * 「更多筛选」折叠区里当前生效的项数（机构关键词 / 年份 / 非默认排序）。
+ *
+ * 折叠态必须能看出「里面还有东西」，否则用户会以为刚设的条件丢了。
+ * 排序不是筛选，但它同样藏在这个折叠区里、改了就不是默认状态，所以一并计入 ——
+ * 角标表达的是「这个折叠区里有几项不是默认值」。
+ */
+const moreActiveCount = computed(() => {
+  let n = 0
+  if (orgLike.value.trim()) n += 1
+  if (selectedYears.value.length > 0) n += 1
+  if (sort.value !== 'year_desc') n += 1
+  return n
+})
+
+/** 有没有任何条件生效（含顶部的方向）。决定页头那句说「共 N 份」还是「当前条件下找到 N 份」。 */
+const hasFilter = computed(() => activeChips.value.length > 0 || selectedSrcTables.value.length > 0)
+
+/**
+ * 页头大标题跟着方向走。
+ * 选着「零废弃」时标题还写「全部资料」是自相矛盾的，会让人以为方向没生效。
+ * 方向名一律用后端 label（见 directionTabs），前端不写死中文名。
+ */
+const pageTitle = computed(() => {
+  if (!activeDirection.value) return '全部资料'
+  return directionTabs.value.find((d) => d.value === activeDirection.value)?.label ?? '全部资料'
 })
 
 /** 按「维度 + 值」删条件：用索引删会在多选里错位（下拉顺序与 chip 顺序不一定一致） */
@@ -255,9 +296,10 @@ function resetAll(): void {
   onFilterChange()
 }
 
-/** 零结果时引导去首页问 AI（首页有问答入口） */
+/** 零结果时引导去 AI 问答页，并把当前关键词带过去（ChatView 预填进输入框，不自动发送） */
 function goAskAi(): void {
-  void router.push('/')
+  const q = keyword.value.trim()
+  void router.push(q ? { path: '/chat', query: { q } } : { path: '/chat' })
 }
 
 /** 把地址栏参数灌进筛选状态。首页的主题/类型入口就是靠这一步生效的。 */
@@ -278,6 +320,13 @@ function applyRouteQuery(): void {
   selectedSrcTables.value = toList(srcTable)
   sort.value = sortQuery === 'newest' ? 'newest' : 'year_desc'
   page.value = 1
+
+  // 分享链接里带了收在折叠区里的条件（年份 / 机构 / 排序）时自动展开 ——
+  // 否则「地址栏明明有年份，界面上却找不到它在哪设的」。
+  // 只在「有」的时候展开，不主动收起：用户自己点开的折叠区不该被路由变化关掉。
+  if (orgLike.value.trim() !== '' || selectedYears.value.length > 0 || sort.value !== 'year_desc') {
+    moreOpen.value = true
+  }
 
   onFilterChange()
 }
@@ -322,11 +371,17 @@ watch(
   <div class="shelf">
     <header class="page-head">
       <p class="zw-eyebrow">资料库</p>
-      <h1>全部资料</h1>
+      <h1>{{ pageTitle }}</h1>
+      <!-- 这里的数字是**当前筛选命中的份数**（接口返回的 total），不是全库总数 ——
+           全库总数只在首页「资料分布」那一块出现，不在本页再说一遍。
+           没筛任何条件时它就是全库总数，所以措辞跟着换一下，别写死「共收录」。 -->
       <p class="zw-sub">
-        共收录 <strong class="zw-num">{{ total }}</strong> 份资料，可按方向浏览，
-        或按机构、年份、主题、类型组合筛选；除机构外的每一项下拉都标出了可命中的数量，
-        机构可以输入关键字（输完按回车），会列出<b>机构名里含这个词</b>的所有资料。
+        <template v-if="hasFilter">
+          当前条件下找到 <strong class="zw-num">{{ total }}</strong> 份资料。
+        </template>
+        <template v-else>
+          共 <strong class="zw-num">{{ total }}</strong> 份资料。可按方向浏览，或用下方筛选缩小范围。
+        </template>
       </p>
     </header>
 
@@ -349,14 +404,17 @@ watch(
       </button>
     </div>
 
-    <!-- 筛选区：两行（第一行常用、第二行辅助），窄屏自动换行 -->
+    <!-- 筛选区：默认只露最常用的三项（关键词 / 主题领域 / 知识类型）。
+         机构、年份、排序收进「更多筛选」—— 七八个控件一次全铺开，
+         窄屏下光筛选区就占掉一屏，资料本身一份都看不见。
+         收起状态不骗人：里面只要有条件生效，按钮上挂数字角标，
+         那些条件也照样出现在下面的「当前筛选」行里，可以单独点掉。 -->
     <div class="toolbar">
-      <!-- 第一行（常用） -->
       <el-input
-        v-model="orgLike"
-        placeholder="发布机构（输完按回车筛选）"
+        v-model="keyword"
+        placeholder="搜索资料名称、机构……"
         clearable
-        class="filter-org"
+        class="search-input"
         @keyup.enter="onFilterChange"
         @clear="onFilterChange"
       />
@@ -393,9 +451,31 @@ watch(
         </el-option>
       </el-select>
 
-      <span class="filter-break" aria-hidden="true"></span>
+      <button
+        type="button"
+        class="more-toggle"
+        :class="{ 'is-open': moreOpen }"
+        :aria-expanded="moreOpen"
+        aria-controls="shelf-more-filters"
+        @click="moreOpen = !moreOpen"
+      >
+        {{ moreOpen ? '收起筛选' : '更多筛选' }}
+        <span v-if="moreActiveCount > 0" class="more-count zw-num">{{ moreActiveCount }}</span>
+        <span class="more-caret" aria-hidden="true">▾</span>
+      </button>
+    </div>
 
-      <!-- 第二行（辅助） -->
+    <!-- 更多筛选：机构 / 年份 / 排序 -->
+    <div v-show="moreOpen" id="shelf-more-filters" class="toolbar toolbar--more">
+      <el-input
+        v-model="orgLike"
+        placeholder="发布机构（输完按回车筛选）"
+        clearable
+        class="filter-org"
+        @keyup.enter="onFilterChange"
+        @clear="onFilterChange"
+      />
+
       <el-select
         v-model="selectedYears"
         multiple
@@ -413,15 +493,6 @@ watch(
         <el-option label="按年份排序" value="year_desc" />
         <el-option label="按最新收录" value="newest" />
       </el-select>
-
-      <el-input
-        v-model="keyword"
-        placeholder="搜索资料名称、机构……"
-        clearable
-        class="search-input"
-        @keyup.enter="onFilterChange"
-        @clear="onFilterChange"
-      />
     </div>
 
     <!-- 已选条件 -->
@@ -540,9 +611,9 @@ watch(
   background: rgba(255, 255, 255, 0.22);
 }
 
-/* 工具栏：两行 —— 第一行（机构 / 主题 / 类型）＋第二行（年份 / 排序 / 关键词）。
-   T12 起「所属方向」下拉已删（提升为顶部标签），第二行少了一项，其余位置与行为不动。
-   用 grid 的显式两行 + flex 回退，窄屏（≤1100px）起自动收成单列，不出横向滚动条。 */
+/* 工具栏：默认一行（关键词 / 主题 / 类型 / 更多筛选），窄屏自动换行。
+   2026-10-18：原来两行八项一次全铺开，首屏看不见资料。
+   机构、年份、排序收进了「更多筛选」面板（.toolbar--more），其余位置与行为不动。 */
 .toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -550,18 +621,14 @@ watch(
   margin-bottom: 14px;
 }
 
-/* T10：机构文本式检索。第一项给宽一点（机构名普遍较长），且这一行不加 margin-left:auto，
-   否则第一行会被顶到右边、看起来和第二行没对齐。 */
-.filter-org {
-  width: 300px;
+/* 「更多筛选」面板：与上面那行同一套 flex 布局，只是往上贴紧一点 */
+.toolbar--more {
+  margin-top: -4px;
 }
 
-/* 行分隔：flex 的一个零宽换行点 —— 保证第一行 / 第二行严格分开，
-   且窄屏时它自然消失，下面所有项继续靠 flex-wrap 自然换行。 */
-.filter-break {
-  width: 100%;
-  height: 0;
-  flex: 0 0 100%;
+/* T10：机构文本式检索，机构名普遍较长，给宽一点。 */
+.filter-org {
+  width: 300px;
 }
 
 .filter-tag {
@@ -581,9 +648,60 @@ watch(
   width: 140px;
 }
 
+/* 关键词现在是常显三项里的第一项、靠左；
+   把 margin-left:auto 让给右边的「更多筛选」按钮，让它靠右收边。 */
 .search-input {
   width: 260px;
+}
+
+/* 「更多筛选」开关 */
+.more-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   margin-left: auto;
+  border: 1px solid var(--zw-line-strong);
+  background: var(--zw-surface);
+  color: var(--zw-text);
+  font: inherit;
+  font-size: 14px;
+  padding: 8px 14px;
+  border-radius: var(--zw-radius-sm);
+  cursor: pointer;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    color 0.16s ease;
+}
+
+.more-toggle:hover {
+  border-color: var(--zw-green-soft);
+  color: var(--zw-green-deep);
+}
+
+.more-toggle.is-open {
+  background: var(--zw-mint-2);
+  border-color: var(--zw-green-soft);
+  color: var(--zw-green-deep);
+}
+
+/* 折叠区里有几项不是默认值。收起来时这是唯一看得见的提示，别省。 */
+.more-count {
+  font-size: 12px;
+  color: var(--zw-green-deep);
+  background: var(--zw-mint);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.more-caret {
+  font-size: 11px;
+  line-height: 1;
+  transition: transform 0.16s ease;
+}
+
+.more-toggle.is-open .more-caret {
+  transform: rotate(180deg);
 }
 
 /* Element Plus 下拉项：左值右计数 */
@@ -660,8 +778,25 @@ watch(
 
 .pager {
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
   margin-top: 28px;
+}
+
+/* 窄屏（2026-10-18 修）：分页条 + 「Total 603」在 390px 下必然超宽 ——
+   Element Plus 的分页不折行，实测把整页撑到 429px、右侧出现真的横向滚动条
+   （手机上图库标题被切掉一截）。份数在页头与筛选区已经说过一遍，
+   这里把那截文字让出来，只留翻页按钮；再兜一层换行，窄到 320px 也不撑破。 */
+@media (max-width: 640px) {
+  .pager :deep(.el-pagination__total) {
+    display: none;
+  }
+
+  .pager :deep(.el-pagination) {
+    flex-wrap: wrap;
+    justify-content: center;
+    row-gap: 6px;
+  }
 }
 
 .empty-tip {
@@ -676,7 +811,7 @@ watch(
   justify-content: center;
 }
 
-/* 窄屏：全部撑满一行（filter-wrap 负责换行，这里只管宽度） */
+/* 窄屏：全部撑满一行（靠 .toolbar 的 flex-wrap 换行，这里只管宽度） */
 @media (max-width: 760px) {
   .filter-org,
   .filter-tag,
@@ -685,6 +820,13 @@ watch(
   .filter-sort,
   .search-input {
     width: 100%;
+    margin-left: 0;
+  }
+
+  /* 窄屏下「更多筛选」也撑满一行，好点 */
+  .more-toggle {
+    width: 100%;
+    justify-content: center;
     margin-left: 0;
   }
 

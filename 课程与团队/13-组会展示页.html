@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="CufziAgggrh0HJEYH4eItK">
+<head data-page-node-id="1d9DNdpl2Xruq9rBsIzpml">
+<meta charset="UTF-8" data-page-node-id="0sOxaQNjYZwS7eJpNKR3WT">
+<meta name="viewport" content="width=device-width,initial-scale=1" data-page-node-id="AwIBAORdPS02lJKmlFCFsN">
+<title>P4 组 · 组会（2026.09.20）</title>
+<style>
+:root{
+  --ink:#16403A;
+  --ink2:#2E5C52;
+  --accent:#C0553C;
+  --accent-deep:#A03F2B;
+  --gold:#9A7B2E;
+  --paper:#F7F4ED;
+  --muted:#7C736A;
+  --line:#DDD5C6;
+  --card:#FFFFFF;
+  --serif:"Noto Serif SC","Source Han Serif SC","STZhongsong","SimSun",serif;
+  --sans:system-ui,-apple-system,"PingFang SC","Microsoft YaHei","Hiragino Sans GB",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--paper);
+  color:var(--ink);
+  font-family:var(--sans);
+  overflow:hidden;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}
+#progress{
+  position:fixed;left:0;top:0;height:.45vmin;width:0;
+  background:var(--accent);z-index:99;transition:width .35s ease;
+}
+#stage{position:relative;width:100vw;height:100vh}
+
+.slide{
+  position:absolute;inset:0;
+  display:flex;flex-direction:column;justify-content:center;
+  padding:5vmin 7.5vmin 6.5vmin;
+  opacity:0;visibility:hidden;transform:translateY(1.5vmin);
+  transition:opacity .45s ease,transform .45s ease,visibility .45s;
+  background:
+    radial-gradient(52vmin 40vmin at 88% -6%, rgba(192,85,60,.075), transparent 70%),
+    radial-gradient(60vmin 46vmin at -8% 108%, rgba(22,64,58,.08), transparent 70%),
+    var(--paper);
+}
+.slide.active{opacity:1;visibility:visible;transform:none}
+
+/* ---------- 通用标题 ---------- */
+.kicker{
+  display:flex;align-items:center;gap:1.8vmin;
+  font-size:1.85vmin;letter-spacing:.34em;color:var(--accent-deep);
+  font-weight:700;margin-bottom:1.5vmin;
+}
+.kicker::after{content:"";flex:0 0 6vmin;height:1px;background:var(--accent);opacity:.55}
+h1{
+  font-family:var(--serif);font-weight:900;
+  font-size:7.6vmin;line-height:1.14;letter-spacing:.015em;
+}
+h2{
+  font-family:var(--serif);font-weight:900;
+  font-size:4.9vmin;line-height:1.2;letter-spacing:.02em;
+  margin-bottom:1.4vmin;
+}
+.sub{font-size:2.35vmin;color:var(--muted);line-height:1.65;margin-top:2.4vmin;max-width:78vw}
+.note{
+  margin-top:4.6vmin;padding-top:2.4vmin;
+  font-size:1.95vmin;color:var(--muted);line-height:1.75;
+  border-top:1px solid var(--line);
+  display:flex;gap:1.6vmin;align-items:baseline;
+}
+.note::before{content:"※";color:var(--accent);font-size:1.9vmin;flex:0 0 auto}
+
+/* ---------- 封面 ---------- */
+.cover{align-items:flex-start}
+.cover .top{
+  position:absolute;top:5vmin;left:7.5vmin;right:7.5vmin;
+  display:flex;justify-content:space-between;align-items:center;
+  font-size:1.8vmin;letter-spacing:.3em;color:var(--muted);font-weight:600;
+}
+.cover .frame{
+  position:absolute;inset:3.4vmin;pointer-events:none;
+  border:1px solid rgba(22,64,58,.16);
+  outline:.35vmin solid rgba(22,64,58,.05);outline-offset:.9vmin;
+}
+.cover h1{font-size:8.6vmin}
+.cover .zh-sub{
+  font-family:var(--serif);font-size:2.7vmin;color:var(--ink2);
+  margin-top:3vmin;letter-spacing:.12em;
+}
+.cover .meta{margin-top:4.2vmin;font-size:2.1vmin;color:var(--muted);line-height:2}
+.seal{
+  flex:0 0 auto;width:10.5vmin;height:10.5vmin;
+  border:.5vmin solid var(--accent);border-radius:1.2vmin;
+  color:var(--accent);font-family:var(--serif);font-weight:900;
+  display:flex;align-items:center;justify-content:center;
+  writing-mode:vertical-rl;letter-spacing:.35em;font-size:2.6vmin;
+  transform:rotate(-4deg);background:rgba(192,85,60,.04);
+}
+.vside{
+  position:absolute;right:6.2vmin;top:50%;transform:translateY(-50%);
+  writing-mode:vertical-rl;font-family:var(--serif);
+  font-size:2vmin;letter-spacing:.6em;color:rgba(22,64,58,.4);
+}
+
+/* ---------- 目录 ---------- */
+.toc{list-style:none;counter-reset:ti;max-width:88vw}
+.toc li{
+  counter-increment:ti;display:flex;align-items:baseline;gap:2.6vmin;
+  padding:2.05vmin 0;border-bottom:1px solid var(--line);
+}
+.toc li:last-child{border-bottom:none}
+.toc li::before{
+  content:"0" counter(ti);
+  font-family:var(--serif);font-style:italic;font-weight:900;
+  font-size:3.4vmin;color:var(--accent);min-width:5.6vmin;
+}
+.toc .t{font-size:2.95vmin;font-weight:700}
+.toc .d{margin-left:auto;font-size:1.95vmin;color:var(--muted);text-align:right}
+
+/* ---------- 候选卡（口号） ---------- */
+.slogans{display:grid;grid-template-columns:1fr 1fr;gap:2.2vmin;margin-top:1vmin}
+.slogan{
+  background:var(--card);border:1px solid var(--line);border-radius:1.6vmin;
+  padding:3vmin 3.2vmin;position:relative;overflow:hidden;
+  box-shadow:0 .4vmin 1.6vmin rgba(22,64,58,.05);
+}
+.slogan::before{
+  content:"“";position:absolute;left:1.4vmin;top:-1.6vmin;
+  font-family:var(--serif);font-size:7.5vmin;color:rgba(192,85,60,.16);font-weight:900;
+}
+.slogan .tx{font-family:var(--serif);font-size:2.9vmin;font-weight:900;line-height:1.5;letter-spacing:.03em}
+.slogan .why{font-size:1.85vmin;color:var(--muted);margin-top:1.2vmin;line-height:1.6}
+
+/* ---------- 表格 ---------- */
+table{width:100%;border-collapse:collapse;font-size:2.15vmin}
+th{
+  text-align:left;font-weight:700;color:var(--ink2);
+  font-size:1.85vmin;letter-spacing:.1em;
+  padding:1.1vmin 1.6vmin;border-bottom:.4vmin double var(--ink);
+}
+td{padding:1.5vmin 1.6vmin;border-bottom:1px solid var(--line);line-height:1.5;vertical-align:top}
+tbody tr:last-child td{border-bottom:none}
+td.k{font-weight:700;white-space:nowrap;font-family:var(--serif);font-size:2.35vmin}
+
+/* ---------- 角色网格 ---------- */
+.roles{display:grid;grid-template-columns:repeat(3,1fr);gap:1.9vmin;margin-top:.8vmin}
+.role{
+  background:var(--card);border:1px solid var(--line);border-radius:1.5vmin;
+  padding:2.3vmin 2.5vmin;box-shadow:0 .4vmin 1.4vmin rgba(22,64,58,.045);
+  position:relative;
+}
+.role .n{
+  font-family:var(--serif);font-size:2.6vmin;font-weight:900;
+  padding-bottom:1vmin;margin-bottom:1.1vmin;position:relative;
+}
+.role .n::after{
+  content:"";position:absolute;left:0;bottom:0;width:3.2vmin;height:.4vmin;
+  background:var(--accent);border-radius:1vmin;
+}
+.role .d{font-size:1.88vmin;color:var(--ink2);line-height:1.62}
+.role .lead-badge{
+  position:absolute;top:2vmin;right:2vmin;font-size:1.5vmin;color:#fff;
+  background:var(--accent);border-radius:99px;padding:.3vmin 1.2vmin;letter-spacing:.1em;
+}
+
+/* ---------- 公约 ---------- */
+.pacts{list-style:none;margin-top:.6vmin}
+.pacts li{
+  display:flex;gap:2.4vmin;align-items:baseline;
+  padding:2.1vmin 0;border-bottom:1px dashed var(--line);
+}
+.pacts li:last-child{border-bottom:none}
+.pacts .no{
+  font-family:var(--serif);font-style:italic;font-weight:900;
+  font-size:2.7vmin;color:var(--gold);min-width:4.6vmin;
+}
+.pacts .tx{font-size:2.55vmin;line-height:1.55}
+.pacts .tx b{font-weight:800}
+.pacts.mini .tx{font-size:2.05vmin;line-height:1.6}
+.pacts.mini li{padding:1.15vmin 0}
+.pacts.mini .no{font-size:2.1vmin;min-width:3.6vmin}
+.two .card{width:100%}
+
+/* ---------- 尾页（寄语） ---------- */
+.slide.dark{
+  background:
+    radial-gradient(55vmin 42vmin at 85% 10%, rgba(192,85,60,.16), transparent 70%),
+    radial-gradient(60vmin 50vmin at 8% 100%, rgba(255,255,255,.05), transparent 70%),
+    #143A34;
+  color:#F2EEE2;
+}
+.dark .kicker{color:#D8A79A}
+.dark .kicker::after{background:#D8A79A}
+.dark .quote{
+  font-family:var(--serif);font-weight:900;font-size:9.2vmin;line-height:1.3;
+  letter-spacing:.04em;margin:2vmin 0 3.4vmin;
+}
+.dark .quote em{font-style:normal;color:#E8A795}
+.dark .afterword{font-size:2.35vmin;line-height:2;color:rgba(242,238,226,.78);max-width:70vw}
+.dark .sign{
+  margin-top:4vmin;font-size:2.1vmin;color:rgba(242,238,226,.6);
+  display:flex;align-items:center;gap:2vmin;
+}
+.dark .sign::before{content:"";width:6vmin;height:1px;background:rgba(242,238,226,.35)}
+.dark .seal{
+  border-color:#E8A795;color:#E8A795;background:rgba(232,167,149,.07);
+  position:absolute;right:8vmin;bottom:9vmin;
+}
+
+#pager{
+  position:fixed;right:3vmin;bottom:2.4vmin;z-index:90;
+  font-size:1.75vmin;color:var(--muted);letter-spacing:.12em;
+  font-variant-numeric:tabular-nums;
+}
+#hint{
+  position:fixed;left:3vmin;bottom:2.4vmin;z-index:90;
+  font-size:1.6vmin;color:#A79C90;letter-spacing:.04em;transition:opacity .5s;
+}
+#hint.gone{opacity:0}
+#nav{position:fixed;inset:0;z-index:10}
+#nav .half{position:absolute;top:0;bottom:0;width:24%;cursor:pointer}
+#nav .half.l{left:0}
+#nav .half.r{right:0}
+
+@media print{
+  @page{size:A4 landscape;margin:0}
+  #nav,#pager,#hint,#progress{display:none!important}
+  html,body{overflow:visible}
+  #stage{position:static;width:auto;height:auto}
+  .slide{
+    position:static;opacity:1!important;visibility:visible!important;transform:none!important;
+    width:100%;height:100vh;overflow:hidden;
+    page-break-after:always;break-after:page;padding:8mm 12mm 10mm;
+  }
+  .slide:last-child{page-break-after:auto;break-after:auto}
+}
+</style>
+</head>
+<body data-page-node-id="BG4H9QPvCM8Sm7kOMNNQAs">
+<div id="progress" data-page-node-id="oNP4tEBJfwkFr90E1CMGOJ"></div>
+<div id="stage" data-page-node-id="3Mq3Jsxb68dVjaJaNFWmp9">
+
+  <!-- 1 封面 -->
+  <section class="slide active cover" data-page-node-id="WGMCSdE1pKGkFqfmiUF0of">
+    <div class="frame" data-page-node-id="Tv41momtC2LNHJznQz2eyX"></div>
+    <div class="top" data-page-node-id="GBAQ4ReANs6GLCnIlaLDZt"><span data-page-node-id="KhHqkM7r0Mvxbro6Q7uPx6">AI 向善实战营 · 第四期</span><span data-page-node-id="GsjptKxJv8vXOabcDuQyCA">P4 组</span></div>
+    <div class="vside" data-page-node-id="kiUhKqCwcJtxoEBY3b0nLo">让他三尺又何妨</div>
+    <div style="display:flex;align-items:center;gap:4vmin" data-page-node-id="1CU6IQljSV7thoiQz3BYeO">
+      <div data-page-node-id="udZxMlGAI0tCl2Mhg90ehc">
+        <h1 data-page-node-id="249FvqsbJ1jZDJVwjfx9EJ">一起，把这件事做完</h1>
+        <div class="zh-sub" data-page-node-id="zTCEWCU1iSW7Gc1gQAWCGa">—— P4 组第一次组会</div>
+        <div class="meta" data-page-node-id="MGc3ySIQXjbrGTR8S1aQGH">六尺巷慈善基金会 × 网页应用方向<br data-page-node-id="zAjo9hUHHGhDp26AytXnC6">2026.09.20（周日）· 线上</div>
+      </div>
+      <div class="seal" data-page-node-id="ctUbixLXakTXqyF32vBAba">六尺巷</div>
+    </div>
+  </section>
+
+  <!-- 2 目录 -->
+  <section class="slide" data-page-node-id="nPcQMBZZEyl99K1WO74JAR">
+    <div class="kicker" data-page-node-id="Py5a5OMnYFV5M8faP5Wxyo">今天聊五件事</div>
+    <h2 data-page-node-id="Q10cqrCnSAFv2HIivkl8Il">一步一步来</h2>
+    <ol class="toc" data-page-node-id="fhLTD5RAWkMQ8rdUBoqbOj">
+      <li data-page-node-id="dsDrazJrcg8v4BEDNzHAP9"><span class="t" data-page-node-id="tkRsXeKVZh1bYQFRodwX5E">一句口号</span><span class="d" data-page-node-id="zJcNf7RAj6ipIIaQcxiHcB">可选，有就写</span></li>
+      <li data-page-node-id="c7q85UxTS7gklW1Fo3dGwy"><span class="t" data-page-node-id="duLgu2WbA3lZNamRcXhKCj">一个队名</span><span class="d" data-page-node-id="jKXJ6SFByH1HHgCCW10bS1">要写进团队说明书</span></li>
+      <li data-page-node-id="KMA1CtzhVUHkZOll8MQ5zS"><span class="t" data-page-node-id="5NAIEsilDf4SGIBnxSVT5A">每个人负责什么、交什么</span><span class="d" data-page-node-id="Moi9zIPMBtUBqOy3MqKbkT">先看懂，互相了解</span></li>
+      <li data-page-node-id="qnl46r1si1a2olDRxI6Ky7"><span class="t" data-page-node-id="adYxqNtdGKEFQENbVZ5FXi">我们的团队公约</span><span class="d" data-page-node-id="dbh8onSLgjtKthRa6Gsgxp">几条彼此的承诺</span></li>
+      <li data-page-node-id="bCAYoDygiyfYPlnP0LqmDo"><span class="t" data-page-node-id="qBLZPgHWu5SJiM7nLB2da0">寄语</span><span class="d" data-page-node-id="8LvGqQBx97rc9LBheUBAtS">最后一页</span></li>
+    </ol>
+  </section>
+
+  <!-- 3 口号 -->
+  <section class="slide" data-page-node-id="B82KzTohnVe3KD6zBuTAPo">
+    <div class="kicker" data-page-node-id="QkTkPYyroKr5eHDeh8wVyv">01 · 一句口号</div>
+    <h2 data-page-node-id="y1KOY1fHUk6CA0wKHuJKGl">先抛几块砖</h2>
+    <div class="slogans" data-page-node-id="geek9qaFC5TXg6prfmkxBI">
+      <div class="slogan" data-page-node-id="8BjmqPkIlFNzvL6FIjfSL7"><div class="tx" data-page-node-id="Z2NgSPbR1tq2SwjWrQaSTO">让三尺，做实事</div><div class="why" data-page-node-id="iNe2ZskdbN2dEmyrxPmpoB">礼让的典故 + 干实事的态度</div></div>
+      <div class="slogan" data-page-node-id="OHW3Pqngwf8N28dUEOwjb0"><div class="tx" data-page-node-id="rniXN0DSNwFlfAbDF51dFd">把六尺巷的温度，搬进网页里</div><div class="why" data-page-node-id="hp9ezyvRHz0V2DDfCoQFCD">点明我们做的事：公益 × 互联网</div></div>
+      <div class="slogan" data-page-node-id="lvzGGeP2bdLHlWBjOxPobI"><div class="tx" data-page-node-id="YPTtPdvOyNlye8RKY1YEdW">礼让自然，同行一程</div><div class="why" data-page-node-id="QoZWswESFwDRgcUNjvgjcA">调性温和，贴环保公益</div></div>
+      <div class="slogan" data-page-node-id="LxeIROgQDNY4Lc9Ni1Cjtl"><div class="tx" data-page-node-id="OCGm9PmeUjNORUVOAFwe6c">一群普通人，做一件有用的事</div><div class="why" data-page-node-id="N9I93mpkIbQ9rkmF4rDSZT">最直白，也最像我们</div></div>
+    </div>
+    <div class="note" data-page-node-id="xxxtYrxoV3oHAbA0kvCTk9">口号是选填——现场想到更好的，直接说，这里只是起点。</div>
+  </section>
+
+  <!-- 4 队名 -->
+  <section class="slide" data-page-node-id="zM0XAXg8g0TZpSj7DcDaSF">
+    <div class="kicker" data-page-node-id="I8qpXSCcNo4UvXceaDD74f">02 · 一个队名</div>
+    <h2 data-page-node-id="24cHpP4tbyesjMPo7Ki1BT">候选与寓意</h2>
+    <table data-page-node-id="xnRtDRluYXleqhq9vsqlij">
+      <thead data-page-node-id="QfOIUpaBt5WCcS2C0Fu7oX"><tr data-page-node-id="V9DRtJ0DKTQ89ZPB7Poe3E"><th style="width:24%" data-page-node-id="KR1JhZ9JBEsw6gLftDWP35">候选</th><th data-page-node-id="hEwWpSSzoRDNgZfVNYXl8p">寓意</th></tr></thead>
+      <tbody data-page-node-id="PIwDpSL4NSIdn53FXFa4Zf">
+        <tr data-page-node-id="6wuCviDNo2JQJm4gtDWFso"><td class="k" data-page-node-id="fGoOKy80tpFHCUY44QbyWu">三尺巷</td><td data-page-node-id="Naoirt0auwkwB87va8aSKA">取自“让他三尺又何妨”——彼此留余地、肯协作</td></tr>
+        <tr data-page-node-id="A5n1L4PqF5Di6eaMbFpXOb"><td class="k" data-page-node-id="5Vp7WfI9XbH5lrU7rUJyJc">巷往</td><td data-page-node-id="y8VEgqOvi2EjDH7flFTYIi">谐音“向往”，好念好记</td></tr>
+        <tr data-page-node-id="hW30kFrjNyxHMHY4ci6gJ8"><td class="k" data-page-node-id="SVHdpwu4WCXUkr1jvIx10B">巷里有光</td><td data-page-node-id="D10IpawMoU7aUGmQWj2QgG">温暖，贴公益调性，也好做视觉</td></tr>
+        <tr data-page-node-id="KC5MRhQ4o8o3AqyscCGo08"><td class="k" data-page-node-id="AJOmdSzAcw55pJfSuat7QF">六尺光年</td><td data-page-node-id="Ltf4aIMOvb70JM8YkadTUi">六尺巷 + 数字化的“光”，呼应网页方向</td></tr>
+        <tr data-page-node-id="1yc559icSYToQF8QP8x0rO"><td class="k" data-page-node-id="xOMQTA04VBH5Cx3gz9Mxwv">搭把手</td><td data-page-node-id="kxBKWBtTaLSrzpV70IgMj5">最直白——公益和协作，都是搭把手的事</td></tr>
+      </tbody>
+    </table>
+    <div class="note" data-page-node-id="aSJd7mlPqk4hQxGz2iJlUw">不限于这五个，现场现想也行；定了就写进《团队说明书》。</div>
+  </section>
+
+  <!-- 5 每个人负责什么 -->
+  <section class="slide" data-page-node-id="tCSTbsM2yFFP88RwiVa864">
+    <div class="kicker" data-page-node-id="apO2eYI3GvInDEZwCHAtfe">03 · 每个人负责什么</div>
+    <h2 data-page-node-id="r1QlZ1WsmwhGCrxIuOpOVu">六个位置，一人一坑</h2>
+    <div class="roles" data-page-node-id="zukINtP1unWyL6pbcYJCzM">
+      <div class="role" data-page-node-id="t8MXuvsFndRiPtMTRHF3aR"><span class="lead-badge" data-page-node-id="OrnAEch4MHHkwo6qiu4EXX">已定</span>
+        <div class="n" data-page-node-id="pGyvv1tZVMqbrxwmiVVX6n">组长</div>
+        <div class="d" data-page-node-id="ywYHXVPlw3n70sQkvko6AO">定节奏、组织会议、盯进度、对接助教和机构、统稿《团队说明书》</div>
+      </div>
+      <div class="role" data-page-node-id="rbjyvWVJcp1FYO81dvgkCS">
+        <div class="n" data-page-node-id="IF1a1R3K2vC92nkP8xC4xC">调研负责人</div>
+        <div class="d" data-page-node-id="lUkNCs6AS9yyaFOXHDlVYo">对接机构老师、挖真实需求、写访谈记录和需求清单</div>
+      </div>
+      <div class="role" data-page-node-id="wRsyGKN4wUw3YUEy1YQ2Bj">
+        <div class="n" data-page-node-id="F2G4QZTRn6TWMFvsqopBmQ">产品负责人</div>
+        <div class="d" data-page-node-id="E0yk8gCGbuO8H3O1uygiP1">把需求翻译成功能清单，守住“做什么、不做什么”</div>
+      </div>
+      <div class="role" data-page-node-id="7zvDdn1xmi1maopBLN6scK">
+        <div class="n" data-page-node-id="qVIRH5mu94gSGtf0jmdnHV">技术负责人（+ 助手）</div>
+        <div class="d" data-page-node-id="afDEKFaKShb0GajOG5hkv7">用 AI 把网页搭出来，保证链接打得开、真的能用</div>
+      </div>
+      <div class="role" data-page-node-id="4UdEnlHSvf02Zq5mjhl1OD">
+        <div class="n" data-page-node-id="ZTtEfVsfztfDqwbvOoYJWa">设计负责人</div>
+        <div class="d" data-page-node-id="KGDCSVRpgfYL3qrAeIsdl9">页面视觉、宣传文案，把公益故事讲动人</div>
+      </div>
+      <div class="role" data-page-node-id="wXOJds7Jpvw2F8fDOtd6oY">
+        <div class="n" data-page-node-id="RmsljNvvQsrwt9qLmCNUHd">机动成员</div>
+        <div class="d" data-page-node-id="afSzIccMdylP4COE1objBI">灵活补位：谁忙不过来就顶上，关键节点支援</div>
+      </div>
+    </div>
+    <div class="note" data-page-node-id="GjbsLpL6HDzBUCaSfvkG3G">这只是参考底稿——想坐哪个位置，会后私下跟我说也行；等和机构老师聊完需求，职责还会按实际情况再调。</div>
+  </section>
+
+  <!-- 6 交付什么 -->
+  <section class="slide" data-page-node-id="ggpRKZG7wEnvnLZJVTyY6Q">
+    <div class="kicker" data-page-node-id="02louhZgFpKJhDeO2dQxY1">03 · 需要交付什么</div>
+    <h2 data-page-node-id="OdEuChW2q8at0DSKccoa2k">整个营期，我们组要交出五样</h2>
+    <table data-page-node-id="9oMhuCiNExjxLyJsexbAFb">
+      <thead data-page-node-id="bYFC1PcVyMw3sOjsUcMD1O"><tr data-page-node-id="CydvXXzIC8kVSh3OHEJ4T8"><th style="width:8%" data-page-node-id="G42a4H6p2annq0vQuYY54N">#</th><th style="width:44%" data-page-node-id="Bm8MNGW2FqrXjDhoKXsRLB">交什么</th><th style="width:26%" data-page-node-id="usA0iNhXGpNy0MgDUzPH3T">时间</th><th data-page-node-id="4R4MCFVbPDsxSgbqvmhpSi">和谁关系最大</th></tr></thead>
+      <tbody data-page-node-id="Ck0HDStLYZfrA6ECNGLutb">
+        <tr data-page-node-id="0E6VJp2UjvZK7fKbp7JMHK"><td data-page-node-id="2LktViPJKpPAPzTZJWU35f">1</td><td data-page-node-id="pAYlLaZzwOQKIC9pVA8yQL"><b data-page-node-id="J1ztvlWeHABqk8Udyw4WRP">团队说明书</b></td><td data-page-node-id="Q9JZE5bTLvzd8eHYOCXz14">9.22 周二晚</td><td data-page-node-id="w6myOWBlXXvVKWh8P82brG">全员（组长统稿）</td></tr>
+        <tr data-page-node-id="bbJJItDmNMgY6mudTx8cxX"><td data-page-node-id="BIM3XHifZ8KljOza9VAwqh">2</td><td data-page-node-id="7KEjYX4zzWVQzHstXN5y8T"><b data-page-node-id="L9wvPgmOwp4QK7TGqOCIM2">产品需求文档</b></td><td data-page-node-id="lLZam04t85592Gr7rF93SM">9.26 周六</td><td data-page-node-id="4bzoHCzNXKcRH55y4G0BPe">调研 + 产品</td></tr>
+        <tr data-page-node-id="hufsVYKT6tFO3oQsHcrNBx"><td data-page-node-id="lbWeKPmcmpFD6Fki5mrVBh">3</td><td data-page-node-id="TAzo4XErI6qjejlRvSltAc"><b data-page-node-id="LUwAeNSBCpoN1iYu3v7Uun">Demo MVP</b>（第一版产品）</td><td data-page-node-id="IGZHOPkf9nWxEGf3hNTPo5">10.8 周四</td><td data-page-node-id="U8z2Mg9vKk0zFOwupSHnEA">技术（+ 助手）</td></tr>
+        <tr data-page-node-id="M3ZUMbcr7iTb8alsCMrEZ9"><td data-page-node-id="fgwJfPbCKQN4NlJEenlrdq">4</td><td data-page-node-id="5S8WjkRjWfSpdLF9Yjvlbf"><b data-page-node-id="ueH6sYpOjQVYlLsKPm371F">迭代记录</b></td><td data-page-node-id="ob9T2UObCoMCwGywy5P2Yv">10.15 周四</td><td data-page-node-id="XJSOQz7oqAGIwXIaLpVofa">技术 + 设计</td></tr>
+        <tr data-page-node-id="ByicIusHtSg0Y00GpZRFsN"><td data-page-node-id="lXz9yb4fiQGctknVZgGSjL">5</td><td data-page-node-id="DApwIYOaSVw7jnBniDwrLs"><b data-page-node-id="iNP4c94Cp2vLAHMS5GEarr">结项作品</b>（产品链接 + 说明）</td><td data-page-node-id="50J76uRs6rlSthUVwlGOJs">10.22 周四</td><td data-page-node-id="oyJmCIVQEwRZPBwAkFBgWR">全员</td></tr>
+      </tbody>
+    </table>
+    <div class="note" data-page-node-id="9XbUILG6BmPgvKFu0mNEpA">时间按官方营期日历；具体每一样谁来主笔，等分工定了再对号入座。</div>
+  </section>
+
+  <!-- 7 团队公约：先说我们是怎样的合作关系 -->
+  <section class="slide" data-page-node-id="abrIqEKohXeLwEhjPnoEd6">
+    <div class="kicker" data-page-node-id="clY2txKXSLdGGjw8ijbniF">04 · 我们的团队公约</div>
+    <h2 data-page-node-id="9lb48pkN8iwwx3HzSTm1DL">我们想成为怎样的合作搭档</h2>
+    <div class="two" style="margin-top:1vmin">
+      <div class="card accent" style="flex:1.08">
+        <h3>挑几条，从这些参考里</h3>
+        <ul class="pacts mini" style="margin-top:.6vmin">
+          <li><span class="no">一</span><span class="tx">卡住了<b>当天在群里说</b>，不憋着</span></li>
+          <li><span class="no">二</span><span class="tx"><b>不让一个人长期兜底</b>，连扛两周主动换手</span></li>
+          <li><span class="no">三</span><span class="tx">散会后 30 分钟内<b>把结论发群</b></span></li>
+          <li><span class="no">四</span><span class="tx">答应的事<b>按时交</b>，交不了提前说，别玩消失</span></li>
+          <li><span class="no">五</span><span class="tx">有分歧<b>说理由</b>，对事不对人</span></li>
+          <li><span class="no">六</span><span class="tx">不会的<b>直接问</b>，问人不丢人</span></li>
+        </ul>
+      </div>
+      <div class="card gold">
+        <h3>我们想成为</h3>
+        <p style="font-size:2.15vmin;line-height:1.8">一个<b>谁都能开口</b>的组：<br>说错话没人笑话，<br>忙不过来有人搭手，<br>做完比做得漂亮更先发生。</p>
+        <p style="font-size:1.85vmin;color:var(--muted);margin-top:1.6vmin">左边挑 3-4 条，或换上你们自己的话——散会前定稿，写进团队说明书。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8 寄语 -->
+  <section class="slide dark" data-page-node-id="FeRI01ImbplDmOGukGfHaI">
+    <div class="kicker" data-page-node-id="mwLaZRxqqU9ES9JpnEyOlO">05 · 寄语</div>
+    <div class="quote" data-page-node-id="Qr5F1ixvtFLlXA8KiWeepj">先完成，<em data-page-node-id="Oc2iw1qGfYqh44ATwL6qa1">再完美。</em></div>
+    <div class="afterword" data-page-node-id="18cTpg7WvFk9AtsvCTszuG">
+      这一个月，愿我们把每一件说好的小事做完。<br data-page-node-id="CXU2JsY24URMrqm8kck0cr">
+      一个月后回头看，希望每个人都比来的时候，更进一步。
+    </div>
+    <div class="sign" data-page-node-id="DaRDXwafFPjBKFYhxg5D22">与大家共勉 —— 志广</div>
+    <div class="seal" data-page-node-id="Zql2J8zEcCUDXCqlmr77Z5">同心</div>
+  </section>
+
+</div>
+<div id="nav" data-page-node-id="uv9G5LbX52I8w0D8KdtsGG"><div class="half l" data-page-node-id="WJfrYlGbYFa6UovlvgRrC6"></div><div class="half r" data-page-node-id="6DQf3ScrtWwqKvBMPN4CBg"></div></div>
+<div id="pager" data-page-node-id="PouFnCjwWPjxvQFUIy48Nw">01 / 08</div>
+<div id="hint" data-page-node-id="3jrRkZlcAmtvE0c1eAfLXS">← → 翻页　·　F 全屏</div>
+
+<script>
+(function(){
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var total = slides.length, idx = 0;
+  var pager = document.getElementById('pager');
+  var bar = document.getElementById('progress');
+  var hint = document.getElementById('hint');
+
+  function pad(n){ return (n<10?'0':'')+n; }
+
+  function go(n){
+    if(n<0) n=0;
+    if(n>total-1) n=total-1;
+    if(n===idx && slides[idx].classList.contains('active')) return;
+    slides[idx].classList.remove('active');
+    idx = n;
+    slides[idx].classList.add('active');
+    pager.textContent = pad(idx+1) + ' / ' + pad(total);
+    bar.style.width = ((idx+1)/total*100) + '%';
+  }
+
+  document.addEventListener('keydown', function(e){
+    var k = e.key;
+    if(k==='ArrowRight' || k==='ArrowDown' || k===' ' || k==='PageDown' || k==='Enter'){ e.preventDefault(); go(idx+1); }
+    else if(k==='ArrowLeft' || k==='ArrowUp' || k==='PageUp' || k==='Backspace'){ e.preventDefault(); go(idx-1); }
+    else if(k==='Home'){ e.preventDefault(); go(0); }
+    else if(k==='End'){ e.preventDefault(); go(total-1); }
+    else if(k==='f' || k==='F'){
+      if(document.fullscreenElement){ document.exitFullscreen(); }
+      else { document.documentElement.requestFullscreen(); }
+    }
+    else if(/^[1-9]$/.test(k)){ go(parseInt(k,10)-1); }
+    hint.classList.add('gone');
+  });
+
+  document.getElementById('nav').addEventListener('click', function(e){
+    var r = e.target.classList;
+    if(r.contains('l')) go(idx-1);
+    else if(r.contains('r')) go(idx+1);
+  });
+
+  pager.textContent = '01 / ' + pad(total);
+  bar.style.width = (1/total*100) + '%';
+  setTimeout(function(){ hint.classList.add('gone'); }, 9000);
+
+  var x0=null;
+  document.addEventListener('touchstart', function(e){ x0 = e.changedTouches[0].clientX; }, {passive:true});
+  document.addEventListener('touchend', function(e){
+    if(x0===null) return;
+    var dx = e.changedTouches[0].clientX - x0;
+    if(Math.abs(dx)>50){ go(dx<0 ? idx+1 : idx-1); }
+    x0=null;
+  }, {passive:true});
+})();
+</script>
+</body>
+</html>

@@ -23,6 +23,14 @@ const hasToken = ref<boolean>(localStorage.getItem(TOKEN_KEY) !== null)
  *  这时若把登录态判成「未登录」，用户看到的就是「登录了但什么都没变」。 */
 const isLoggedIn = computed(() => hasToken.value)
 
+/**
+ * 是不是管理员（2026-10-19 管理台改造加）。
+ * 只看 `/auth/me` 返回的 role —— 它只用来决定「管理台入口显不显示」，
+ * **不构成任何权限**：真正的拦截在后端每个管理接口上（requireAdminGuard）。
+ * 所以这里为 false 时别去猜、也别把它当安全边界。
+ */
+const isAdmin = computed(() => user.value?.role === 'admin')
+
 export function useAuth() {
   /** 拉取当前登录用户；失败时静默降级（不弹错误提示、不清 token） */
   async function fetchMe(): Promise<void> {
@@ -49,6 +57,15 @@ export function useAuth() {
     hasToken.value = true
   }
 
+  /**
+   * 直接写入当前用户（2026-10-19 加，配合 PATCH /auth/me）：
+   * 资料改完后端会把**更新后的用户对象**回给前端，用它覆盖本地状态即可，
+   * 不用再打一次 /auth/me（省一次请求，也避免两次数据短暂不一致）。
+   */
+  function setUser(next: CurrentUser | null): void {
+    user.value = next
+  }
+
   /** 退出登录：清空本地凭证与用户信息 */
   function logout(): void {
     localStorage.removeItem(TOKEN_KEY)
@@ -56,5 +73,5 @@ export function useAuth() {
     user.value = null
   }
 
-  return { user, isLoggedIn, fetchMe, setToken, logout }
+  return { user, isLoggedIn, isAdmin, fetchMe, setToken, setUser, logout }
 }

@@ -207,6 +207,9 @@ async function onSubmitFeedback(): Promise<void> {
     fbForm.reason = ''
     fbForm.text = ''
     fbForm.contact = ''
+  } catch (err) {
+    // 失败时保留用户填的内容，只报错 —— 反馈是工单，不能悄悄丢
+    ElMessage.error(err instanceof Error ? err.message : '提交失败，请稍后再试')
   } finally {
     fbSubmitting.value = false
   }

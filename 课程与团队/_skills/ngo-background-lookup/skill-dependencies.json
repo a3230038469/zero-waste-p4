@@ -1,0 +1,114 @@
+{
+  "schema_version": "1",
+  "capabilities": [
+    "检索机构公开资料",
+    "校验来源链接可达性",
+    "输出机构一页纸画像",
+    "输出待向机构核实的问题清单"
+  ],
+  "dependencies": [
+    {
+      "id": "web-search",
+      "type": "network",
+      "required": true,
+      "auth_type": "none",
+      "capabilities": [
+        "检索机构公开资料",
+        "校验来源链接可达性"
+      ],
+      "checks": [
+        {
+          "id": "net-reach",
+          "type": "url",
+          "required": true,
+          "url": "https://www.baidu.com",
+          "method": "HEAD",
+          "expected_status": [200, 301, 302]
+        },
+        {
+          "id": "python-available",
+          "type": "python",
+          "required": false,
+          "min_version": "3.10"
+        }
+      ],
+      "setup": {
+        "official_home_url": "https://www.workbuddy.cn/",
+        "official_docs_url": "https://www.workbuddy.cn/docs/workbuddy/Overview",
+        "steps": [
+          "联网检索由 WorkBuddy 宿主提供，无需安装、注册或登录",
+          "确认本机能访问外网即可使用本技能",
+          "如需机器自检，运行 scripts/check_environment.py，该脚本只读不写入"
+        ],
+        "verify": "对任一已知存在的公开网址发起一次访问或检索，能返回内容即视为可用",
+        "security": "只检索公开信息；不上传用户提供的机构内部材料；不提交任何凭据；检索结果必须保留来源链接",
+        "verified_at": "2026-09-21",
+        "applies_to_version": "1.0.0"
+      },
+      "degradation": [
+        {
+          "capability": "检索机构公开资料",
+          "trigger": "网络不可用或检索服务超时",
+          "fallback": "只处理用户提供的材料，输出一页纸骨架并列出要靠访谈补充的缺口",
+          "user_input": "机构全称、已掌握的机构材料",
+          "limitations": "结论未经联网核实，不包含公开披露与媒体报道信息",
+          "evidence_label": "未验证",
+          "recovery": "网络恢复后重新运行本技能",
+          "stop_condition": "用户不能提供任何机构材料，且结论必须依赖公开信息"
+        },
+        {
+          "capability": "校验来源链接可达性",
+          "trigger": "单个链接超时或返回 4xx、5xx",
+          "fallback": "保留该来源的名称与获取日期，注明链接当时不可达",
+          "user_input": "无",
+          "limitations": "无法确认该来源当前内容与引用时一致",
+          "evidence_label": "部分验证",
+          "recovery": "稍后重试该链接，或改用同一来源的其他页面",
+          "stop_condition": "全部来源链接均不可达且无替代来源"
+        }
+      ]
+    }
+  ],
+  "functional_degradations": [
+    {
+      "capability": "检索机构公开资料",
+      "trigger": "无法联网，或检索始终返回空结果",
+      "fallback": "只整理用户已提供的机构材料，并明确列出公开信息缺口",
+      "user_input": "机构全称、已有的机构资料",
+      "limitations": "不产出公开披露、媒体报道与奖项信息；结论标注为未经联网核实",
+      "evidence_label": "未验证",
+      "recovery": "网络恢复或补充检索词后重新运行",
+      "stop_condition": "用户既不能提供材料，结论又必须依赖公开信息"
+    },
+    {
+      "capability": "校验来源链接可达性",
+      "trigger": "链接检查无法执行或结果不可判定",
+      "fallback": "保留来源名称、标题与获取日期，不标注可达性结论",
+      "user_input": "无",
+      "limitations": "无法确认来源当前仍可访问",
+      "evidence_label": "部分验证",
+      "recovery": "择时重新校验链接",
+      "stop_condition": "用户要求把不可达来源当成有效证据"
+    },
+    {
+      "capability": "输出机构一页纸画像",
+      "trigger": "目标目录不可写，或公开信息严重不足且用户无补充材料",
+      "fallback": "在对话中输出完整一页纸文本供用户自行保存；信息不足时只输出骨架与缺口",
+      "user_input": "可写的保存位置，或补充材料",
+      "limitations": "未落盘，或画像内容不完整、无法给出引擎判断",
+      "evidence_label": "部分验证",
+      "recovery": "目录可写或材料补齐后重新生成",
+      "stop_condition": "用户要求把无证据的推断写成机构事实"
+    },
+    {
+      "capability": "输出待向机构核实的问题清单",
+      "trigger": "机构身份无法唯一确定（同名机构无法区分）",
+      "fallback": "先输出同名机构清单与区分线索，请用户指定全称或链接，暂不产出问题清单",
+      "user_input": "机构全称、所在地或官网链接",
+      "limitations": "身份未确认前，问题清单可能问错对象",
+      "evidence_label": "未验证",
+      "recovery": "用户确认唯一机构后重新生成问题清单",
+      "stop_condition": "用户无法提供任何可区分信息"
+    }
+  ]
+}

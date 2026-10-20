@@ -4,7 +4,7 @@
  * 投稿人侧（需登录态，token 由 http.ts 拦截器自动带上）：
  *   POST /api/contributions          提交投稿
  *   GET  /api/contributions/mine     我的投稿
- * 管理侧（口令走 X-Admin-Token 请求头，口令只存在浏览器本地，不写进代码、不进 git）：
+ * 管理侧（需**管理员账号**登录态，凭证由 http.ts 拦截器自动带上）：
  *   GET  /api/admin/contributions           审核队列
  *   GET  /api/admin/contributions/:id/file  查看原件
  *   POST /api/admin/contributions/:id/approve   通过（真入库）
@@ -123,7 +123,6 @@ export async function fetchMyContributions(): Promise<MyContributionList> {
 
 /** 拉审核队列（管理视角） */
 export async function fetchAdminContributions(
-  token: string,
   options: { status?: ContributionStatus | ''; keyword?: string; page?: number; pageSize?: number } = {}
 ): Promise<AdminContributionList> {
   const params = new URLSearchParams()
@@ -135,7 +134,7 @@ export async function fetchAdminContributions(
 
   const res = await http.get<AdminContributionList>(
     `/admin/contributions${query ? `?${query}` : ''}`,
-    { headers: { 'X-Admin-Token': token }, silent: true }
+    { silent: true }
   )
   return res.data
 }
@@ -143,13 +142,12 @@ export async function fetchAdminContributions(
 /**
  * 打开待审原件（新标签页预览 PDF）。
  *
- * 不能用普通 window.open(url) —— 查看原件要带 X-Admin-Token 请求头，
+ * 不能用普通 window.open(url) —— 查看原件要带登录凭证（管理员账号才有权看审核队列），
  * 而浏览器直接导航的请求带不上自定义头。所以先 fetch 成 blob，再开本地 objectURL。
  * 一分钟后回收，避免长期占内存。
  */
-export async function openContributionFile(token: string, id: string): Promise<void> {
+export async function openContributionFile(id: string): Promise<void> {
   const res = await http.get(`/admin/contributions/${encodeURIComponent(id)}/file`, {
-    headers: { 'X-Admin-Token': token },
     responseType: 'blob',
     silent: true
   })
@@ -171,25 +169,24 @@ export interface ReviewResult {
  *    所以这里**不能**catch 后静默当成功 —— 要把后端的 message 原样显示给管理员。
  *    引擎入库有几秒到几分钟延迟，成功后别立刻断言「书架一定马上有」。
  */
-export async function approveContribution(token: string, id: string): Promise<ReviewResult> {
+export async function approveContribution(id: string): Promise<ReviewResult> {
   const res = await http.post<ReviewResult>(
     `/admin/contributions/${encodeURIComponent(id)}/approve`,
     null,
-    { headers: { 'X-Admin-Token': token }, silent: true, timeout: 300_000 }
+    { silent: true, timeout: 300_000 }
   )
   return res.data
 }
 
 /** 退回一条投稿（理由必填，投稿人会在「我的投稿」里看到） */
 export async function rejectContribution(
-  token: string,
   id: string,
   reason: string
 ): Promise<ReviewResult> {
   const res = await http.post<ReviewResult>(
     `/admin/contributions/${encodeURIComponent(id)}/reject`,
     { reason },
-    { headers: { 'X-Admin-Token': token }, silent: true }
+    { silent: true }
   )
   return res.data
 }

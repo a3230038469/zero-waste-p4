@@ -58,3 +58,13 @@ backend/data/contributions/
 # guest-ask-usage.json 内含 sha256(IP+UA) 的游客标识，更不该进
 backend/data/guest-permissions.json
 backend/data/guest-ask-usage.json
+
+# 页面取证的过程产物（2026-10-18 首页改版审计，工具见 .agent/audit/tools/audit.mjs）
+# chromium 临时用户目录 + 逐路由 dump + 整页长图：体积大（约 47MB）、可一条命令重跑，不进仓库。
+# 结论与证据索引（*.md 与样板图）要进。
+.agent/audit/chrome-profile*/
+.agent/audit/**/*.dump.json
+.agent/audit/shots/
+.agent/audit/**/_*
+# 第 3 批的验证截图目录（shots-verify / shots-b3 / shots-chat* …）同属过程产物，一并用通配收掉
+.agent/audit/shots-*/

@@ -32,3 +32,18 @@ export async function login(payload: LoginPayload): Promise<string> {
   const res = await http.post<{ token: string }>('/auth/login', payload)
   return res.data.token
 }
+
+/**
+ * 修改资料入参（2026-10-19 新增，配合导航栏账号菜单）：
+ * **部分更新** —— 只提交要改的字段，没提交的后端不动。
+ * 契约见 docs/接口约定.md 的 `PATCH /api/auth/me`。
+ */
+export type UpdateProfilePayload = Partial<
+  Pick<CurrentUser, 'name' | 'org' | 'occupation' | 'topics' | 'phone'>
+>
+
+/** 修改资料：成功返回更新后的当前用户（与 GET /auth/me 同形） */
+export async function updateMe(payload: UpdateProfilePayload): Promise<CurrentUser> {
+  const res = await http.patch<CurrentUser>('/auth/me', payload)
+  return res.data
+}

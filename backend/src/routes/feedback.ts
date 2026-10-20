@@ -9,8 +9,14 @@
  *
  * ⚠️ 但「匿名」不等于「不受后台开关管」：T11 的游客权限里有 `feedback` 一项
  *   （设置页可关），关掉后未登录访客在**所有**入口都不该能提。所以第一道闸就是它 ——
- *   见下面「闸 0」的注释。两个入口（本站表单 / B09 的 FeedbackDialog）走的是
- *   两个不同接口，各自都要拦，不能只在 /api/track 那边拦。
+ *   见下面「闸 0」的注释。
+ *
+ * 2026-10-19 变更：**本接口是反馈的唯一正路**。此前反馈弹窗（B09）只往 `POST /api/track`
+ *   记一条 `feedback_submit` 埋点、不写反馈表，导致后台「访客反馈」页一条都读不到
+ *   （那个页面只读 feedback.jsonl）。现在前端一律走本接口，埋点由本接口在落库成功后补记；
+ *   历史埋点由 `feedback/inbox.ts` 合并进后台列表，不丢旧数据。
+ *   请求体在 kind/message/contact/docId/docTitle/path 之外，新增可选的 `reason`（细分原因）
+ *   与 `scope`（doc / site），都是选填 —— 老调用方不改也能提交。
  *
  * 代价是这里成了一个公开写入点，所以配了四道闸：
  *   0. 游客权限开关（未登录且后台关了反馈 → 403 FEEDBACK_CLOSED）；
@@ -37,7 +43,7 @@ import {
   buildFeedback,
   parseFeedback
 } from '../feedback/store.js'
-import { isLoggedIn } from '../guest/identity.js'
+import { isLoggedIn, userIdFromRequest } from '../guest/identity.js'
 import { loadGuestPermissions } from '../guest/permissions.js'
 import { recordEvent } from '../track/store.js'
 
@@ -148,12 +154,22 @@ router.post('/', (req: Request, res: Response) => {
     return
   }
 
-  // 埋点是旁路：recordEvent 内部已吞掉所有异常，绝不影响上面的成功响应
+  // 埋点是旁路：recordEvent 内部已吞掉所有异常，绝不影响上面的成功响应。
+  // payload 里带上细分原因与场景，看板才分得清「功能建议」和「内容有误」；
+  // path 固定写 /api/feedback —— 后台读收件箱时靠它认出「这条已进反馈表」是镜像，不重复展示。
   recordEvent({
     event: 'feedback_submit',
     source: 'server',
+    // 埋点里带账号 id：看板能看出「登录用户提的」还是匿名提的（反馈表本身仍不记身份）
+    userId: userIdFromRequest(req),
     path: '/api/feedback',
-    payload: { kind: record.kind, hasContact: Boolean(record.contact), docId: record.docId }
+    payload: {
+      kind: record.kind,
+      reason: record.reason,
+      scope: record.scope,
+      hasContact: Boolean(record.contact),
+      docId: record.docId
+    }
   })
 
   res.status(201).json({ success: true, id: record.id })

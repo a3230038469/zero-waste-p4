@@ -12,6 +12,11 @@ export interface DocItem {
   size: number
   /** 可选：这份与另一份内容完全相同（SHA-256 一致）时，给出建议保留的那一份的 id */
   duplicateOf?: string
+  /**
+   * 可选：所属方向的中文名（`零废弃` / `化学品与健康`）。
+   * 卡片配色按它走（2026-10-18 拍板「丁」）；筛选那是另一回事——筛的时候传原始 srcTable 值。
+   */
+  direction?: string
 }
 
 export interface DocListResponse {
@@ -49,6 +54,8 @@ export interface CurrentUser {
   occupation: string
   topics: string[]
   phone: string
+  /** 身份（2026-10-19）：'admin' 才显示管理台入口；权限拦截在后端，这里只影响菜单 */
+  role?: string
 }
 
 /* ---------------- 整库概览（GET /api/overview） ---------------- */

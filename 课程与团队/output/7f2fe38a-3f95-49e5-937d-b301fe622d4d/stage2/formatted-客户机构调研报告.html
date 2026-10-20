@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="docx-page-size" content="A4">
+  <title>客户机构调研报告：安徽省六尺巷慈善基金会</title>
+  <style>
+  @page {
+    @bottom-center { content: counter(page); }
+  }
+  @page cover {
+    @bottom-center { content: none; }
+  }
+  section[role="cover"] { page: cover; }
+
+  :root {
+    /* ---- design tokens: business-modern ---- */
+    --typography-fontFamily-heading: "微软雅黑", "Microsoft YaHei", "PingFang SC", sans-serif;
+    --typography-fontFamily-body: "微软雅黑", "Microsoft YaHei", "PingFang SC", sans-serif;
+    --typography-fontSize-coverTitle: 22pt;
+    --typography-fontSize-coverCategory: 14pt;
+    --typography-fontSize-h1: 20pt;
+    --typography-fontSize-h2: 11pt;
+    --typography-fontSize-h3: 10pt;
+    --typography-fontSize-body: 9pt;
+    --typography-fontSize-small: 8pt;
+    --typography-lineHeight-body: 1.6;
+    --typography-fontWeight-heading: 600;
+    --color-primary: #1565C0;
+    --color-secondary: #0288D1;
+    --color-accent: #00897B;
+    --color-text: #212121;
+    --color-muted: #616161;
+    --color-heading: #1A237E;
+    --color-border: #E0E0E0;
+    --color-bg: #FFFFFF;
+    --color-highlight: #F5F7FA;
+    --color-emphasis: #C62828;
+
+    /* ---- spacing tokens ---- */
+    --spacing-paragraph: 0.75em;
+    --spacing-block: 1em;
+    --spacing-section: 2.5em;
+    --spacing-medium: 0.5em;
+    --spacing-tight: 0.4em;
+    --spacing-compact: 0.3em;
+    --spacing-list-indent: 1.4em;
+    --spacing-cell: 0.45em;
+    --spacing-cell-x: 0.7em;
+    --spacing-note: 8px;
+
+    /* ---- layout tokens ---- */
+    --layout-margin: 2.5cm;
+    --page-content-width: 15.6cm;
+
+    /* ---- template aliases ---- */
+    --fs-h2: var(--typography-fontSize-h2, 11pt);
+    --fs-h3: var(--typography-fontSize-h3, 10pt);
+    --fs-body: var(--typography-fontSize-body, 9pt);
+    --fs-small: var(--typography-fontSize-small, 8pt);
+    --ff-heading: var(--typography-fontFamily-heading);
+    --ff-body: var(--typography-fontFamily-body);
+    --lh-body: var(--typography-lineHeight-body, 1.6);
+    --fw-bold: 700;
+    --color-summary-bg: var(--color-highlight, #F5F7FA);
+    --color-summary-border: var(--color-primary, #1565C0);
+    --summary-border-width: 4px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--ff-body);
+    font-size: var(--fs-body);
+    line-height: var(--lh-body);
+    color: var(--color-text);
+    background: var(--color-bg);
+    max-width: var(--page-content-width);
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  /* ---- Cover ---- */
+  .report-cover {
+    min-height: 60vh;
+    padding: var(--layout-margin);
+    background: var(--color-highlight);
+  }
+  .cover-category {
+    text-align: left;
+    font-size: var(--typography-fontSize-coverCategory, 14pt);
+    font-family: var(--ff-heading);
+    font-weight: var(--fw-bold);
+    color: var(--color-primary);
+    letter-spacing: 0.08em;
+    margin-bottom: var(--spacing-block);
+  }
+  section[role="cover"] > h1.cover-title {
+    text-align: left;
+    font-size: var(--typography-fontSize-coverTitle, 22pt);
+    font-family: var(--ff-heading);
+    font-weight: var(--fw-bold);
+    color: var(--color-heading);
+    margin-bottom: var(--spacing-medium);
+  }
+  .cover-subtitle {
+    text-align: left;
+    font-size: var(--fs-h2);
+    color: var(--color-muted);
+    margin-bottom: var(--spacing-section);
+  }
+  .cover-meta { text-align: left; font-size: var(--fs-small); color: var(--color-muted); }
+  .cover-meta p { text-align: left; margin-bottom: var(--spacing-tight); }
+
+  /* ---- TOC ---- */
+  .doc-toc { padding: var(--spacing-block) 0; border-bottom: 1px solid var(--color-border); margin-bottom: var(--spacing-block); }
+  .toc-title { font-weight: var(--fw-bold); margin-bottom: var(--spacing-medium); font-family: var(--ff-heading); }
+  .toc-list { list-style: none; list-style-type: none; padding-left: 0; }
+  .toc-list li { margin-bottom: var(--spacing-compact); text-indent: 0; }
+
+  /* ---- Executive summary ---- */
+  .executive-summary {
+    margin: var(--spacing-section) 0;
+    padding: var(--spacing-block);
+    border-left: var(--summary-border-width) solid var(--color-summary-border);
+    background: var(--color-summary-bg);
+  }
+  .executive-summary h2 { font-size: var(--fs-h2); font-family: var(--ff-heading); margin-bottom: var(--spacing-paragraph); }
+  .summary-body p { margin-bottom: var(--spacing-paragraph); }
+
+  /* ---- Body ---- */
+  .report-body { padding: var(--spacing-block) 0; }
+  .report-body h2 {
+    font-size: var(--fs-h2);
+    font-family: var(--ff-heading);
+    font-weight: var(--fw-bold);
+    color: var(--color-heading);
+    margin-top: var(--spacing-section);
+    margin-bottom: var(--spacing-paragraph);
+  }
+  .report-body h3 {
+    font-size: var(--fs-h3);
+    font-family: var(--ff-heading);
+    font-weight: var(--fw-bold);
+    color: var(--color-primary);
+    margin-top: var(--spacing-block);
+    margin-bottom: var(--spacing-paragraph);
+  }
+  .report-body p { margin-bottom: var(--spacing-paragraph); }
+  .report-body ol, .report-body ul { padding-left: var(--spacing-list-indent); margin-bottom: var(--spacing-paragraph); }
+  .report-body li { margin-bottom: var(--spacing-tight); }
+
+  /* ---- Tables ---- */
+  table { width: 100%; border-collapse: collapse; margin-bottom: var(--spacing-block); }
+  th, td { padding: var(--spacing-cell) var(--spacing-cell-x); border: 1px solid var(--color-border); font-size: var(--fs-body); text-align: left; vertical-align: top; }
+  th { background: var(--color-highlight); font-weight: var(--fw-bold); font-family: var(--ff-heading); }
+  table.metrics td { text-align: center; font-family: var(--ff-heading); }
+  table.metrics td.metric-value { font-size: var(--fs-h2); font-weight: var(--fw-bold); color: var(--color-primary); }
+
+  /* ---- Emphasis ---- */
+  .data-emphasis { color: var(--color-emphasis); font-weight: var(--fw-bold); }
+  .note {
+    border-left: 3px solid var(--color-primary);
+    background: var(--color-highlight);
+    padding: var(--spacing-note);
+    margin-bottom: var(--spacing-paragraph);
+  }
+  .ai-note {
+    border-left: 3px solid var(--color-accent);
+    background: var(--color-highlight);
+    padding: var(--spacing-note);
+    margin-bottom: var(--spacing-block);
+  }
+  .appendix { padding-top: var(--spacing-section); border-top: 1px solid var(--color-border); }
+  </style>
+</head>
+<body>
+  <section role="cover" class="report-cover">
+    <p class="cover-category">客户机构调研</p>
+    <h1 class="cover-title">安徽省六尺巷慈善基金会</h1>
+    <p class="cover-subtitle">零废弃 · 新污染物治理 · 绿色标准与认证</p>
+    <div class="cover-meta">
+      <p>AI 向善实战营 · 第四期 · P4 组</p>
+      <p>2026 年 9 月 19 日</p>
+    </div>
+  </section>
+
+  <section role="body" class="report-body" data-page-restart="1">
+    <nav class="doc-toc" aria-label="文档目录">
+      <p class="toc-title">目录</p>
+      <ol class="toc-list">
+        <li>一、先用一句话认识我们的客户</li>
+        <li>二、机构基本信息</li>
+        <li>三、他们在做什么</li>
+        <li>四、他们已经有的 AI 基础</li>
+        <li>五、他们自己说出来的痛点</li>
+        <li>六、我们可能的产品方向</li>
+        <li>七、关键人物</li>
+        <li>八、第一次机构沟通要问清的问题</li>
+        <li>九、三个判断</li>
+        <li>十、信息来源</li>
+        <li>附录：我们组下一步</li>
+      </ol>
+    </nav>
+
+    <div class="executive-summary">
+      <h2>执行摘要</h2>
+      <table class="metrics">
+        <thead>
+          <tr><th>成立年份</th><th>知识库收录知识数</th><th>在执行项目数</th><th>团队规模（人）</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="metric-value">2017 年</td>
+            <td class="metric-value">470+</td>
+            <td class="metric-value">5 个</td>
+            <td class="metric-value">1-10</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="summary-body">
+        <p>六尺巷慈善基金会是一家把"六尺巷"的礼让精神延伸到环保领域的基金会，专注零废弃、新污染物治理、绿色标准与认证。与前设印象不同，<strong>他们并不是一家"不懂技术的公益机构"</strong>——他们牵头参与建设了一个垂直 AI 知识库，还拿过行业 AI 奖项。</p>
+        <p>关键在于：理事长田倩在公开说明会上明确表示，知识库"<strong>前端页面和操作路径待优化</strong>"、"因平台限制，<strong>下载功能和 AI 助理功能需加入钉钉平台使用、暂无法对外</strong>"。这为我们组的方向（网页应用）提供了明确的切入点。</p>
+      </div>
+    </div>
+
+    <h2>一、先用一句话认识我们的客户</h2>
+    <p>六尺巷慈善基金会是一家<strong>把"六尺巷"的礼让精神延伸到环保领域</strong>的基金会——专注零废弃、新污染物治理、绿色标准与认证，而且<strong>在公益圈里算 AI 数字化走得相当靠前的一家</strong>：他们自己牵头做过一个 AI 知识库，还拿过行业 AI 奖项。</p>
+    <p><strong>名字的来历</strong>：安徽桐城有座"六尺巷"，出自清代张英的家书——"千里来书只为墙，<strong>让他三尺又何妨</strong>"，讲的是宽容与礼让。基金会把这层意思从"人与人之间的包容礼让"延伸到了"<strong>人与自然的和谐共生</strong>"，提出"礼让自然"的理念。</p>
+
+    <h2>二、机构基本信息</h2>
+    <p>先看一组基础事实，它们决定了这家机构"能做什么、不能做什么"。</p>
+    <table>
+      <thead>
+        <tr><th>项目</th><th>内容</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>全称</td><td>安徽省六尺巷慈善基金会</td></tr>
+        <tr><td>成立时间</td><td>2017 年 12 月 12 日（同日被认定为慈善组织）</td></tr>
+        <tr><td>统一社会信用代码</td><td>53340000MJA540135U</td></tr>
+        <tr><td>登记管理机关</td><td>安徽省民政厅</td></tr>
+        <tr><td>法定代表人 / 理事长</td><td>田倩</td></tr>
+        <tr><td>秘书长</td><td>毛达</td></tr>
+        <tr><td>办公地址</td><td>安徽省合肥市蜀山区潜山南路卓誉中心 2303</td></tr>
+        <tr><td>业务范围</td><td>传承和挖掘、发扬传统文化；促进社会慈善事业发展；保护和改善生态环境</td></tr>
+        <tr><td>公开募捐资格</td><td><strong>没有</strong></td></tr>
+        <tr><td>公益性捐赠税前扣除资格</td><td><strong>没有</strong></td></tr>
+        <tr><td>团队规模</td><td>1-10 人（小微机构）</td></tr>
+        <tr><td>官方网站</td><td><strong>没有</strong></td></tr>
+      </tbody>
+    </table>
+    <p class="note">&nbsp;&nbsp;【登记事实】以上来自公开登记信息平台。两点值得注意：一，他们<strong>没有公募资格、也没有税前扣除资格</strong>，意味着不能面向公众公开募捐，企业筹款也会受限——这解释了为什么他们把"企业筹款突破"写进了年度战略。二，他们是<strong>1-10 人的小团队</strong>，但同时在跑多个项目，时间非常紧张。</p>
+
+    <h2>三、他们在做什么</h2>
+    <h3>三大业务方向</h3>
+    <ol>
+      <li><strong>深度传播优秀传统文化</strong>，拓展"六尺巷"精神的多维内涵</li>
+      <li><strong>募集善款，助力绿色生活与可持续消费</strong></li>
+      <li><strong>研究推广绿色标准与认证</strong>，让好环境、好产品离公众更近</li>
+    </ol>
+
+    <h3>正在执行的项目</h3>
+    <p>公开简报显示，他们同时在推进以下项目——注意看"零废弃数字化知识库"这一行。</p>
+    <table>
+      <thead>
+        <tr><th>项目</th><th>做什么</th><th>关键进展</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>无废行动（专项基金）</td><td>支持零废弃领域的一线伙伴网络</td><td>持续资助多家机构开展净滩、堆肥、社区垃圾分类等工作</td></tr>
+        <tr><td>新污染物治理（专项基金）</td><td>聚焦兽用抗生素、铅污染等议题</td><td>2026 年 4 月联合六家机构发布《药箱与餐桌的抗生素：流通与使用现状调查报告》，历时一年暗访与检测</td></tr>
+        <tr><td>绿标院 / 绿展计划</td><td>产品可持续标准研究 + 绿色标识推广，服务对象是电商企业</td><td>2026 年 3 月加入联合国环境规划署"零售影响力"（Retail4Impact）倡议；走访杭州四家头部电商企业；发布《2025 电商产品可持续信息提供与展示调研报告》</td></tr>
+        <tr><td><strong>零废弃数字化知识库</strong></td><td>面向零废弃议题公益组织的垂直 AI 知识库</td><td><strong>详见下一节——这是我们最该关注的</strong></td></tr>
+        <tr><td>徽风华韵</td><td>安徽在地文化传承公益音乐品鉴会（筹款项目）</td><td>已落地，用于拓展资金来源与区域影响力</td></tr>
+      </tbody>
+    </table>
+    <p class="note">&nbsp;&nbsp;【机构自述】以上来自基金会公开发布的月度工作简报。<strong>2025 年成绩</strong>：OKR 整体完成率 <span class="data-emphasis">86.63%</span>；"可持续生活 AI 助手网络"<strong>荣获行业奖项</strong>，AI 工具用户活跃度超预期，官方表述是"成功树立基金会 AI + 公益品牌"。</p>
+
+    <h2>四、他们已经有的 AI 基础</h2>
+    <p><strong>六尺巷基金会不是一个"不懂技术的公益机构"。</strong>他们参与了一个叫「零废弃数字化知识库」的项目，基本情况如下。</p>
+    <table>
+      <thead>
+        <tr><th>维度</th><th>情况</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>发起方</td><td>四方联合发起：中华环保联合会、六尺巷基金会、零萌公益、万科公益基金会</td></tr>
+        <tr><td>技术底座</td><td>基于<strong>钉钉</strong>的"环保社会组织数字化协同平台"</td></tr>
+        <tr><td>内容规模</td><td>截至 2026 年 6 月 30 日已收录 <span class="data-emphasis">470 多份知识</span>（200 多份政策法规、180 多份研究报告、40 多份案例工具）</td></tr>
+        <tr><td>核心功能</td><td>知识检索（按类型、领域、年份多维筛选）、<strong>AI 助理问答</strong>（答案限定在库内知识、每条附来源链接可溯源）、知识上传共建</td></tr>
+        <tr><td>状态</td><td>2026 年 5 月 21 日举办线上说明会，正式对外发布</td></tr>
+        <tr><td>知识分布</td><td>政策法规占比超过一半，其中塑料（20.89%）和垃圾分类（14.98%）是最大的两个议题</td></tr>
+      </tbody>
+    </table>
+    <p class="ai-note">&nbsp;&nbsp;【机构自述】以上来自知识库线上说明会的公开记录。另外提醒一句：他们有<strong>专职的项目技术顾问和 AI 项目顾问</strong>，还做过"通用大模型 vs 垂直领域知识库"的公开分析。这意味着——<strong>需求会提得很专业，验收也会很认真</strong>。</p>
+
+    <h2>五、他们自己说出来的痛点</h2>
+    <p>在知识库说明会上，理事长<strong>田倩</strong>公开讲了现存不足，原话摘录如下。</p>
+    <p class="note">&nbsp;&nbsp;"知识库的<strong>前端页面和操作路径待优化</strong>。"<br>&nbsp;&nbsp;"因为平台限制，<strong>下载功能和 AI 助理功能需加入钉钉平台使用，暂无法对外</strong>。"<br>&nbsp;&nbsp;"化学品知识体系与内容还需完善。"<br>&nbsp;&nbsp;"学术论文期刊等内容<strong>仍需找到更好的呈现方式</strong>。"</p>
+    <p>并明确表示，未来要"<strong>解决部分功能无法对外的技术问题</strong>"。</p>
+    <p><strong>【我们的推测，未经证实】</strong>把这几句话翻译一下就是——<strong>他们的知识库有内容、有 AI 问答，但被钉钉这个平台挡在门里出不去</strong>：外部的人想用得先注册钉钉、加入平台才行。</p>
+
+    <h2>六、我们可能的产品方向</h2>
+    <p>以下都是基于公开信息的推断，<strong>必须通过访谈验证</strong>。</p>
+    <table>
+      <thead>
+        <tr><th>可能性</th><th>内容</th><th>依据</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>首选：知识库对外网页版</strong></td><td>做一个不用登录、打开网址就能查知识、问 AI 的网页版</td><td>机构自己说"下载和 AI 问答无法对外"，而我们的方向恰好是网页应用</td></tr>
+        <tr><td>备选一：绿色标准对外展示页</td><td>面向企业的可持续信息披露与展示工具</td><td>他们在做"绿展计划"，已走访四家电商企业</td></tr>
+        <tr><td>备选二：项目成果可视化页</td><td>把散落在简报里的项目成果做成可视化汇报页</td><td>项目多、成果分散、无官网</td></tr>
+        <tr><td>备选三：企业服务入口页</td><td>让企业自助了解"绿展计划"、降低人力对接成本</td><td>团队只有 1-10 人，企业对接全靠人</td></tr>
+      </tbody>
+    </table>
+    <p><strong>为什么首选是第一个</strong>：他们已有的内容和技术积累可以直接复用，我们要做的是"把门打开"，而不是从零造一个新东西——这比从零构思省力，也更容易被真正采用。</p>
+
+    <h2>七、关键人物</h2>
+    <p>沟通时优先对接这几个人，能省很多来回。</p>
+    <table>
+      <thead>
+        <tr><th>姓名</th><th>角色</th><th>备注</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>田倩</td><td>法定代表人 / 理事长</td><td>同时担任天津市西青区零萌公益发展中心主任（一人跨两家机构，知识库是两家联合推动的事）</td></tr>
+        <tr><td>毛达</td><td>秘书长</td><td>对外发声的主要人物，在联合国倡议签约、知识库说明会上代表机构发言</td></tr>
+        <tr><td>黄正</td><td>项目助理</td><td>参与行业交流活动</td></tr>
+        <tr><td>魏晓辰</td><td>零废弃知识库项目技术顾问</td><td>实际负责知识库搭建落地，公开分享过搭建经验</td></tr>
+        <tr><td>袁琳</td><td>零废弃知识库项目顾问</td><td>负责 AI 技术分析</td></tr>
+        <tr><td>侯荔嘉</td><td>知识库项目实习生</td><td>负责知识数据的核对与标准化</td></tr>
+      </tbody>
+    </table>
+
+    <h2>八、第一次机构沟通要问清的问题</h2>
+    <p>不要问"你们需要什么"，问具体的。以下七条建议照着问。</p>
+    <ol>
+      <li>零废弃知识库现在<strong>有多少人在用</strong>？主要集中在钉钉内，还是也有外部用户？</li>
+      <li>您提到"<strong>前端和操作路径待优化</strong>"——具体是哪里卡住了？用户反馈最多的是什么？</li>
+      <li>"<strong>下载功能和 AI 助理无法对外</strong>"——这里的"对外"具体指哪些人？（公众？公益伙伴？企业？）</li>
+      <li>如果做一个<strong>不用登录、打开就能用</strong>的网页版，对你们的价值有多大？</li>
+      <li>这个月（或这个季度）你们的<strong>最高优先级</strong>是什么？</li>
+      <li>希望这个产品做完之后，<strong>谁来用、用来干什么</strong>？怎么算做得好？</li>
+      <li>有没有现成的知识库数据或页面可以给我们看一眼？哪怕是截图。</li>
+    </ol>
+
+    <h2>九、三个判断</h2>
+    <p>去见他们之前，先把这三条记在脑子里。</p>
+    <ol>
+      <li><strong>别把他们当技术小白。</strong>他们做过 AI 知识库、拿过 AI 奖项、有专职技术顾问。需求会专业、验收会挑，糊弄不过去。</li>
+      <li><strong>别从零构思产品。</strong>他们最缺的可能不是"做个新东西"，而是"<strong>把已有的东西放出来给别人用</strong>"。这个思路更省力，也更容易被采纳。</li>
+      <li><strong>他们的时间很宝贵。</strong>1-10 人的团队同时跑五个项目。约访谈要<strong>提前发问题清单、控制在 30 分钟内、会后给结论</strong>。他们已经公开提醒过"沟通时间可能与培训撞期"。</li>
+    </ol>
+
+    <h2>十、信息来源</h2>
+    <p>本报告所有信息均来自公开渠道，按可靠度标注如下。</p>
+    <table>
+      <thead>
+        <tr><th>来源</th><th>内容</th><th>可靠度</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>公开登记信息平台</td><td>成立时间、信用代码、法定代表人、住所、资格情况</td><td>较高（第三方转载官方登记）</td></tr>
+        <tr><td>中国发展简报机构页</td><td>机构简介、联系邮箱、团队规模</td><td>较高（行业媒体）</td></tr>
+        <tr><td>基金会月度工作简报</td><td>项目动态、年度 OKR、战略方向、知识库进展</td><td>中等偏高（机构自述，细节可信）</td></tr>
+        <tr><td>零废弃知识库线上说明会记录</td><td>知识库功能、数据量、机构自述的不足</td><td>较高（公开说明会，多方在场）</td></tr>
+      </tbody>
+    </table>
+    <p><strong>存疑未采用</strong>：有来源称该基金会"由中国知名音乐唱作人张正扬先生发起"，因无法与登记信息交叉验证，本报告不采用。</p>
+
+    <div class="appendix">
+      <h2>附录：我们组下一步</h2>
+      <p>落地动作只有四步，按顺序走。</p>
+      <ol>
+        <li><strong>等机构伙伴进组</strong>（截至目前还没进群），进组后第一时间约第一次沟通</li>
+        <li>沟通时带上本报告第八节的问题清单</li>
+        <li>沟通后回来更新第六节——<strong>把"推测方向"变成"确认需求"</strong></li>
+        <li>需求确定后，再动手做产品，不要提前开工</li>
+      </ol>
+      <p class="note">&nbsp;&nbsp;本报告由组内成员整理，信息均来自公开渠道。<strong>如发现任何错误，请直接在群里指出，我们随时更正。</strong></p>
+    </div>
+  </section>
+</body>
+</html>
