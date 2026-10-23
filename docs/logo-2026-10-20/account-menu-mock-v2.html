@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>账号组件 · 叶片版 草图 v2</title>
+<style>
+  /* 令牌取自 frontend/src/styles/global.css :root，保持与现有 UI 一致 */
+  :root{
+    --zw-green:#2e7d32; --zw-green-deep:#1b5e20; --zw-green-light:#6fbf73; --zw-green-soft:#66bb6a;
+    --zw-mint:#e9f3e9; --zw-mint-2:#f2f8f2; --zw-bg:#f4f8f4; --zw-surface:#ffffff; --zw-line:#e1ebe1;
+    --zw-radius-sm:8px; --zw-radius:14px; --zw-shadow-lg:0 18px 48px rgba(22,36,26,.12);
+    --zw-ink:#16241a; --zw-text:#2c3a2f; --zw-muted:#66786a; --zw-faint:#93a396; --zw-danger:#c45656;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--zw-bg);font-family:'PingFang SC','Microsoft YaHei',system-ui,sans-serif;color:var(--zw-text);padding:40px 24px 80px}
+  .label{font-size:12px;color:var(--zw-faint);letter-spacing:.12em;margin:0 0 10px}
+  .stage{display:flex;gap:56px;align-items:flex-start;flex-wrap:wrap;margin-bottom:56px}
+
+  /* 叶片头像：一角收尖、一角圆，像一片叶子；与搜索图标的叶子同一语汇 */
+  .leaf{
+    position:relative;display:grid;place-items:center;flex-shrink:0;
+    width:32px;height:32px;border-radius:50% 0 50% 50%;
+    background:linear-gradient(135deg,var(--zw-green-soft),var(--zw-green));
+    color:#fff;font-size:13px;font-weight:600;
+  }
+  .leaf--lg{width:44px;height:44px;font-size:17px}
+  /* 叶脉：一道斜线，很轻 */
+  .leaf::after{content:"";position:absolute;left:50%;top:18%;bottom:18%;width:1px;background:rgba(255,255,255,.35);transform:rotate(45deg)}
+  .leaf--lg::after{top:20%;bottom:20%}
+
+  /* 触发区：柔和胶囊，与站内 eyebrow/chip 同一圆角语言 */
+  .account{position:relative;display:inline-block}
+  .trigger{
+    display:inline-flex;align-items:center;gap:8px;
+    padding:4px 12px 4px 4px;border:1px solid transparent;border-radius:999px;
+    background:transparent;font:inherit;font-size:13px;color:var(--zw-text);cursor:pointer;
+    transition:background .16s ease,border-color .16s ease;
+  }
+  .trigger:hover,.trigger.open{background:var(--zw-mint-2);border-color:var(--zw-line)}
+  .trigger:focus-visible{outline:2px solid var(--zw-green-soft);outline-offset:2px}
+  .trigger-name{max-width:8em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* 展开指示：小圆点代替三角，展开时点变绿 */
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--zw-faint);transition:background .16s,transform .16s}
+  .trigger.open .dot{background:var(--zw-green);transform:scale(1.25)}
+
+  /* 下拉卡：14px 圆角，浅绿内底 */
+  .panel{
+    position:absolute;top:calc(100% + 8px);right:0;width:248px;padding:8px;
+    background:var(--zw-surface);border:1px solid var(--zw-line);border-radius:var(--zw-radius);
+    box-shadow:var(--zw-shadow-lg);
+  }
+  .panel-head{
+    display:flex;align-items:center;gap:12px;padding:10px;margin-bottom:6px;
+    background:var(--zw-mint-2);border-radius:var(--zw-radius-sm);
+  }
+  .head-text{display:flex;flex-direction:column;min-width:0;line-height:1.4}
+  .head-text strong{font-size:14px;font-weight:600;color:var(--zw-ink)}
+  .head-text em{font-style:normal;font-size:12px;color:var(--zw-faint)}
+
+  .item{
+    display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border:0;border-radius:var(--zw-radius-sm);
+    background:none;font:inherit;font-size:13px;color:var(--zw-text);text-align:left;cursor:pointer;text-decoration:none;
+    transition:background .14s,color .14s;
+  }
+  .item:hover{background:var(--zw-mint);color:var(--zw-green-deep)}
+  /* 每一项前面一片小叶子，hover 时展开成圆 */
+  .item i{width:6px;height:6px;border-radius:50% 0 50% 50%;background:var(--zw-green-light);flex-shrink:0;transition:transform .16s}
+  .item:hover i{transform:rotate(90deg) scale(1.2)}
+  .item .hint{margin-left:auto;font-size:11px;color:var(--zw-faint)}
+
+  .sep{height:1px;margin:6px 8px;background:var(--zw-line)}
+  .item--danger{color:var(--zw-danger)}
+  .item--danger:hover{background:#fdeeee;color:var(--zw-danger)}
+  .item--danger i{background:var(--zw-danger)}
+
+  .note{max-width:640px;font-size:13px;line-height:1.85;color:var(--zw-muted)}
+  .note h3{font-size:15px;color:var(--zw-ink);margin:18px 0 6px}
+  .note ul{padding-left:18px;margin:0}
+  .note li{margin:4px 0}
+</style>
+</head>
+<body>
+
+<p class="label">默认收起</p>
+<div class="stage">
+  <div class="account">
+    <button class="trigger" type="button" aria-haspopup="menu" aria-expanded="false">
+      <span class="leaf" aria-hidden="true">2</span>
+      <span class="trigger-name">254123</span>
+      <span class="dot" aria-hidden="true"></span>
+    </button>
+  </div>
+</div>
+
+<p class="label">展开状态</p>
+<div class="stage">
+  <div class="account" style="width:260px;height:300px">
+    <button class="trigger open" type="button" aria-haspopup="menu" aria-expanded="true">
+      <span class="leaf" aria-hidden="true">2</span>
+      <span class="trigger-name">254123</span>
+      <span class="dot" aria-hidden="true"></span>
+    </button>
+    <div class="panel" role="menu">
+      <div class="panel-head">
+        <span class="leaf leaf--lg" aria-hidden="true">2</span>
+        <span class="head-text">
+          <strong>254123</strong>
+          <em>机构未填写</em>
+        </span>
+      </div>
+      <button class="item" role="menuitem" type="button"><i></i>个人资料</button>
+      <button class="item" role="menuitem" type="button"><i></i>我的投稿</button>
+      <button class="item" role="menuitem" type="button"><i></i>意见反馈</button>
+      <div class="sep" role="separator"></div>
+      <button class="item item--danger" role="menuitem" type="button"><i></i>退出登录</button>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <h3>相对 v1 的修改</h3>
+  <ul>
+    <li>去掉所有方角与印章感：头像改为<b>叶片形</b>（一角收尖、一角圆），圆角统一用站内的 8px / 14px / 999px。</li>
+    <li>颜色只用现有令牌：墨绿 <code>#2e7d32</code>、薄荷 <code>#e9f3e9</code>、底 <code>#f4f8f4</code>，不引入新色。头像用一段很浅的绿渐变，和首页 logo 的绿色环保持一致。</li>
+    <li>下拉卡是 14px 圆角白卡 + 薄荷色身份区，和站内卡片一致。</li>
+    <li>菜单项前面是一片小叶子，hover 时旋转，轻微、有生命感，不做装饰性图标。</li>
+    <li>展开指示从三角改为小圆点，展开时变绿。</li>
+    <li>退出登录用 <code>--zw-danger</code>，放在分隔线之后。</li>
+  </ul>
+  <h3>待确认</h3>
+  <ul>
+    <li>叶片头像里的字取名字首字（与现在一致）。</li>
+    <li>是否保留"叶脉"细线，还是去掉更干净？</li>
+  </ul>
+</div>
+
+</body>
+</html>

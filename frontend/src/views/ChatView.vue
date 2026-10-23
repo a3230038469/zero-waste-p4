@@ -21,23 +21,43 @@
  * ⚠️ 赞/踩与「分享」都不写后端：赞踩只在本页记状态（不声称已上报），分享复制对话链接。
  *    要做成真分享页要在后端加接口，属于另一件事。
  */
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import ChatBubble, { type BubbleMessage } from '../components/ChatBubble.vue'
 import { useWaitingLines } from '../composables/useWaitingLines'
 import { useAuth } from '../composables/useAuth'
-import { askStream } from '../api/ask'
 import type { AskSource } from '../api/ask'
+import {
+  MAX_QUESTION_LENGTH,
+  cancelAskTurn,
+  fetchAiStatus,
+  fetchAskUsage,
+  type AskAiStatus,
+  type AskUsage
+} from '../api/ask'
+import {
+  abortLiveAnswer,
+  cancelLiveAnswer,
+  clearLiveAnswer,
+  getLiveAnswer,
+  hasLiveAnswer,
+  isAnswerStreaming,
+  startLiveAnswer,
+  subscribeLiveAnswer,
+  type LiveAnswer
+} from '../composables/useChatStreamStore'
 import { fetchGuestPermissions } from '../api/guest'
-import { ASK_DISCLAIMER, ASK_SCOPE_NOTE, NO_ANSWER_TEXT } from '../utils/askCopy'
+import { publicErrorText } from '../api/http'
+import { ASK_DISCLAIMER, ASK_ERROR_TEXT, ASK_SCOPE_NOTE, parseStoredAnswer } from '../utils/askCopy'
 import {
   createConversation,
   deleteConversation,
   fetchMessages,
   listConversations,
-  type ConversationSummary
+  type ConversationSummary,
+  type StoredMessage
 } from '../api/chat'
 
 const route = useRoute()
@@ -70,6 +90,14 @@ const rated = ref<Record<number, 'up' | 'down'>>({})
 /** 游客每日提问上限：只有公开接口真实返回时才用于展示，读不到保持 null */
 const guestDailyLimit = ref<number | null>(null)
 const guestAiOpen = ref(true)
+/** 游客今天已用/剩余次数（后端 GET /api/guest/ask-usage）；读不到保持 null（不编数字） */
+const guestUsage = ref<AskUsage | null>(null)
+/** 引擎可用状态（后端 GET /api/ai/status）；读不到保持 null（不显示降级公告） */
+const aiStatus = ref<AskAiStatus | null>(null)
+/** 这一轮还在服务端生成中（刷新/切页回来时轮询历史把它捞回来） */
+const pendingReply = ref(false)
+/** 「停止生成」正在执行中（避免连点两次） */
+const stopping = ref(false)
 const { isLoggedIn } = useAuth()
 
 const activeTitle = computed(
@@ -84,6 +112,25 @@ const citeSources = computed<AskSource[]>(() => {
 
 /** 空状态：没有消息时显示引导（加载中不显示，避免闪一下） */
 const showHero = computed(() => !loading.value && messages.value.length === 0)
+
+/**
+ * 「停止生成」按钮：只有这一轮**真的在流**的时候才出现。
+ *
+ * 🔴 2026-10-21（task-21 · T2-7）：后端早有 POST /api/ask/cancel，
+ *    界面上却没有入口 —— 用户只能看着半截正文干等。
+ */
+const canStop = computed(() => streamingIdx.value >= 0 && !stopping.value)
+
+/**
+ * 「游客是否可提问」判断（仅未登录时有意义）。
+ * - 游客问答关闭、或次数用完 → 不可问
+ */
+const guestCanAsk = computed(() => {
+  if (isLoggedIn.value) return true
+  if (!guestAiOpen.value) return false
+  if (guestUsage.value && guestUsage.value.remaining <= 0) return false
+  return true
+})
 
 /** 空面板时的示例问题 */
 const EXAMPLES = [
@@ -127,13 +174,37 @@ const convGroups = computed(() => {
   return groups
 })
 
-/** 访客每日可提问次数的提示（数字只有一个来源：后端真实返回） */
+/**
+ * 访客每日可提问次数的提示（数字只有一个来源：后端真实返回）。
+ *
+ * P3-1：光说「每天 5 次」没用，公众不知道今天还剩几次 →
+ * 有 /api/guest/ask-usage 就显示「今天还能问 N 次」，用完了直接说用完。
+ */
 const guestLimitText = computed(() => {
   if (isLoggedIn.value || !guestAiOpen.value) return ''
+  const usage = guestUsage.value
+  if (usage && usage.limit > 0) {
+    if (usage.remaining <= 0) return '今天的提问次数已经用完了，登录后不受此限制'
+    return `游客今天还能问 ${usage.remaining} 次，登录后不设上限`
+  }
   const limit = guestDailyLimit.value
   if (limit === null || limit <= 0) return ''
   return `游客每天可提问 ${limit} 次，登录后不受此限制`
 })
+
+/** 引擎不可用时的公告（后端说不可用才显示；读不到状态就不显示） */
+const aiStatusText = computed(() => {
+  const status = aiStatus.value
+  if (!status || status.available) return ''
+  return status.messageZh || 'AI 问答暂时不可用，请稍后再试'
+})
+
+/** 输入框字数（上限 ${MAX_QUESTION_LENGTH}） */
+const draftLength = computed(() => draft.value.length)
+/** 超长：前端先拦住，别等后端回 400 */
+const overLimit = computed(() => draftLength.value > MAX_QUESTION_LENGTH)
+/** DeepSeek 式输入卡：计数器平时不显示，接近上限才浮出来 */
+const nearLimit = computed(() => draftLength.value > MAX_QUESTION_LENGTH * 0.8)
 
 async function loadGuestLimit(): Promise<void> {
   if (isLoggedIn.value) return
@@ -143,10 +214,136 @@ async function loadGuestLimit(): Promise<void> {
   guestDailyLimit.value = payload.values.aiAskDailyLimit
 }
 
-function scrollToBottom(): void {
+/** 游客今天还剩几次（P3-1；接口没有 / 读不到就静默） */
+async function loadGuestUsage(): Promise<void> {
+  if (isLoggedIn.value) return
+  guestUsage.value = await fetchAskUsage()
+}
+
+/** 引擎能不能用（P3-5；接口没有 / 读不到就静默） */
+async function loadAiStatus(): Promise<void> {
+  aiStatus.value = await fetchAiStatus()
+}
+
+/** 轮询定时器（刷新/切页回来时把服务端那一轮的回答捞回来） */
+let pollTimer: number | null = null
+let pollDeadline = 0
+
+function stopPolling(): void {
+  if (pollTimer !== null) {
+    window.clearTimeout(pollTimer)
+    pollTimer = null
+  }
+  pendingReply.value = false
+}
+
+/**
+ * 把库里读回来的消息转成气泡。
+ *
+ * 失败/拒答/取消在库里是「正文 + 前缀标记」（Message 表只有 content 一列，加字段要迁移），
+ * 这里按前缀还原成 failed / noAnswer 状态。
+ */
+function toBubbleMessages(stored: StoredMessage[]): BubbleMessage[] {
+  return stored.map((m) => {
+    if (m.role === 'assistant') {
+      const parsed = parseStoredAnswer(m.content)
+      return {
+        role: m.role,
+        text: parsed.text,
+        ...(parsed.failed ? { failed: true } : {}),
+        ...(parsed.noAnswer ? { noAnswer: true } : {}),
+        ...(m.sources.length > 0 ? { sources: m.sources } : {})
+      }
+    }
+    return {
+      role: m.role,
+      text: m.content,
+      ...(m.sources.length > 0 ? { sources: m.sources } : {})
+    }
+  })
+}
+
+/**
+ * 轮询等服务端把这一轮回答落库。
+ *
+ * 🔴 为什么需要：服务端从 2026-10-21 起不再因为「客户端断开」而中止上游，
+ *    所以刷新页面 / 切走再回来时，这一轮可能还在跑 —— 库里此时只有那条提问。
+ *    这里每隔 2 秒拉一次历史，答案一落库就把它显示出来。
+ */
+function maybePollPendingReply(id: string): void {
+  const last = messages.value[messages.value.length - 1]
+  if (!last || last.role !== 'user') return
+  pendingReply.value = true
+  pollDeadline = Date.now() + 120_000
+
+  const tick = async (): Promise<void> => {
+    if (activeId.value !== id) {
+      stopPolling()
+      return
+    }
+    try {
+      const { conversation, messages: stored } = await fetchMessages(id)
+      if (activeId.value !== id) return
+      const hasAssistant = stored.some((m) => m.role === 'assistant')
+      if (hasAssistant) {
+        messages.value = toBubbleMessages(stored)
+        conversations.value = conversations.value.map((c) => (c.id === id ? conversation : c))
+        pendingReply.value = false
+        scrollToBottom()
+        return
+      }
+    } catch {
+      // 拉不到就等下一轮（别打扰用户）
+    }
+    if (Date.now() > pollDeadline) {
+      pendingReply.value = false
+      ElMessage.warning('这次提问没有完成，可以点「重新生成」再试一次')
+      return
+    }
+    pollTimer = window.setTimeout(() => {
+      void tick()
+    }, 2000)
+  }
+  pollTimer = window.setTimeout(() => {
+    void tick()
+  }, 1500)
+}
+
+/** 把当前会话写进地址栏（?c=<id>）：刷新、分享、后退都能回到同一个会话 */
+function syncUrlWithConversation(id: string): void {
+  if (!id) return
+  void router.replace({ path: '/chat', query: { ...route.query, c: id } })
+}
+
+/**
+ * 流式输出时的滚动跟随。
+ *
+ * 🔴 2026-10-22：以前每个 SSE 片段都无条件 `scrollTop = scrollHeight`，
+ *    用户往上滚去看前一段（长回答里很常见），下个字一到就被拽回底部 ——
+ *    等于读不了已经生成的内容。
+ * 现在只做「粘底跟随」：本来就在底部（距底 ≤ 80px）才跟着滚；
+ * 用户手动往上滚就暂停跟随，自己滚回底部后自动恢复。
+ */
+const followBottom = ref(true)
+const FOLLOW_THRESHOLD_PX = 80
+
+function onStreamScroll(): void {
+  const el = bodyRef.value
+  if (!el) return
+  followBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_THRESHOLD_PX
+}
+
+/**
+ * 滚到底部。
+ * @param force true = 无视当前是否在底部（发新问题时用）
+ */
+function scrollToBottom(force = false): void {
   void nextTick(() => {
     const el = bodyRef.value
-    if (el) el.scrollTop = el.scrollHeight
+    if (!el) return
+    if (!force && !followBottom.value) return
+    el.scrollTop = el.scrollHeight
+    followBottom.value = true
   })
 }
 
@@ -155,18 +352,144 @@ function isNarrowScreen(): boolean {
   return window.matchMedia('(max-width: 860px)').matches
 }
 
-let controller: AbortController | null = null
+/**
+ * 在途回答现在放在组件外面（见 `composables/useChatStreamStore.ts`）：
+ * 切页不再 abort，回来能接上。这里只保留「界面怎么挂」的几个小状态。
+ */
+let detachLive: (() => void) | null = null
+/** 在途回答气泡在上面的 messages 里排第几（-1 = 当前没有） */
+let liveIndex = -1
 
 /** 等待文案轮换（与首页挂件共用同一份策略） */
 const waiting = useWaitingLines()
+
+/** 把暂存里的当前内容写进第 idx 个气泡 */
+function paintLive(live: LiveAnswer, idx: number): void {
+  const msg = messages.value[idx]
+  if (!msg) return
+  msg.text = live.text
+  if (!live.noAnswer && live.sources.length > 0) msg.sources = live.sources
+  if (live.failed) msg.failed = true
+  if (live.noAnswer) msg.noAnswer = true
+}
+
+/** 服务端已有同一条回答（已落库）时，暂存就是多余的 */
+function hasServerAnswer(text: string): boolean {
+  const target = text.trim()
+  if (!target) return false
+  return messages.value.some((m) => m.role === 'assistant' && m.text.trim() === target)
+}
+
+/** 只取消订阅，不中止流（切会话/离开页面都用它） */
+function detachLiveAnswer(): void {
+  if (detachLive) {
+    detachLive()
+    detachLive = null
+  }
+  liveIndex = -1
+  streamingIdx.value = -1
+}
+
+/** 收到暂存更新：进行中就边收边画，结束就收尾一次 */
+function onLiveUpdate(conversationId: string, live: LiveAnswer): void {
+  if (conversationId !== activeId.value) return
+
+  if (live.streaming) {
+    busy.value = true
+    if (liveIndex >= 0) {
+      streamingIdx.value = liveIndex
+      paintLive(live, liveIndex)
+    }
+    if (live.text) waiting.stop()
+    scrollToBottom()
+    return
+  }
+
+  // 结束（正常 / 报错 / 被中止）：画最后一份，然后复位界面
+  if (liveIndex >= 0) paintLive(live, liveIndex)
+  waiting.stop()
+  busy.value = false
+  scrollToBottom()
+  // 失败/取消都要把会话摘要对上（标题取首问前 20 字，公众才分得清哪个会话问了什么）；
+  // 只有「用户主动取消」不改摘要（那一轮没问成）
+  if (!live.failed.includes('取消')) syncActiveSummary(live.question)
+  detachLiveAnswer()
+
+  // 问题 1 修复：每轮问答结束后，未登录则刷新游客剩余次数
+  if (!isLoggedIn.value) {
+    void loadGuestUsage()
+  }
+}
+
+/** 把某个会话的在途回答接到界面上（没有就什么都不做） */
+function attachLiveAnswer(conversationId: string, idx: number): void {
+  detachLiveAnswer()
+  liveIndex = idx
+  detachLive = subscribeLiveAnswer(conversationId, (live) => onLiveUpdate(conversationId, live))
+  const live = getLiveAnswer(conversationId)
+  if (!live) return
+  paintLive(live, idx)
+  if (live.streaming) {
+    busy.value = true
+    streamingIdx.value = idx
+    if (!live.text) waiting.start()
+    scrollToBottom()
+  }
+}
+
+/**
+ * 会话加载完，看这个会话有没有在途/刚落定的回答需要接回来。
+ *
+ * 判定顺序：① 服务端已有同一条回答 → 用服务端的，暂存清掉
+ *          ② 服务端列表最后一条就是这轮提问 → 只补回答气泡
+ *          ③ 都没有（例如刚建会话没刷新）→ 提问 + 回答两个气泡都补上
+ */
+function adoptLiveAnswer(conversationId: string): void {
+  const live = getLiveAnswer(conversationId)
+  if (!live) {
+    detachLiveAnswer()
+    busy.value = false
+    return
+  }
+
+  if (!live.streaming && hasServerAnswer(live.text)) {
+    clearLiveAnswer(conversationId)
+    detachLiveAnswer()
+    busy.value = false
+    return
+  }
+
+  const last = messages.value[messages.value.length - 1]
+  if (last?.role === 'assistant' && last.text.trim() === live.text.trim()) {
+    detachLiveAnswer()
+    busy.value = false
+    return
+  }
+
+  if (last?.role === 'user' && last.text.trim() === live.question.trim()) {
+    // 服务端已经存了这轮提问，只补回答气泡
+    messages.value.push({ role: 'assistant', text: '' })
+  } else {
+    messages.value.push({ role: 'user', text: live.question })
+    messages.value.push({ role: 'assistant', text: '' })
+  }
+  attachLiveAnswer(conversationId, messages.value.length - 1)
+}
 
 async function newConversation(options: { silent?: boolean } = {}): Promise<void> {
   try {
     const conv = await createConversation()
     conversations.value = [conv, ...conversations.value]
+    // 只是换界面看哪一栏；旧会话里没跑完的流不掐，留在暂存里，切回去还能接上
+    detachLiveAnswer()
+    busy.value = false
+    waiting.stop()
     activeId.value = conv.id
     messages.value = []
     citeOpen.value = false
+    stopPolling()
+    followBottom.value = true
+    syncUrlWithConversation(conv.id)
     if (isNarrowScreen()) railOpen.value = false
     if (!options.silent) ElMessage.success('已新建对话')
   } catch (err) {
@@ -177,20 +500,24 @@ async function newConversation(options: { silent?: boolean } = {}): Promise<void
 async function selectConversation(id: string): Promise<void> {
   if (isNarrowScreen()) railOpen.value = false
   if (id === activeId.value) return
-  // 切换时把上一轮还没跑完的流掐掉，否则答案会写进**新**会话的气泡里
-  abortStream()
+  // 切换只换「看的会话」，不掐断在途流：流在 store 里继续跑，回来能接上
+  detachLiveAnswer()
+  busy.value = false
+  waiting.stop()
   activeId.value = id
   loading.value = true
   messages.value = []
   citeOpen.value = false
+  // 换会话是「看另一条对话」，跟随状态跟着重置（否则上一会话滚上去过就再也不跟了）
+  followBottom.value = true
   try {
     const { conversation, messages: stored } = await fetchMessages(id)
-    messages.value = stored.map((m) => ({
-      role: m.role,
-      text: m.content,
-      ...(m.sources.length > 0 ? { sources: m.sources } : {})
-    }))
+    messages.value = toBubbleMessages(stored)
     conversations.value = conversations.value.map((c) => (c.id === id ? conversation : c))
+    adoptLiveAnswer(id)
+    syncUrlWithConversation(id)
+    // 最后一条只有提问、没有回答 → 服务端那一轮还在跑（或刚断），轮询把它捞回来
+    maybePollPendingReply(id)
     scrollToBottom()
   } catch (err) {
     ElMessage.error(errorText(err, '加载对话失败'))
@@ -210,7 +537,12 @@ async function removeConversation(id: string): Promise<void> {
     return
   }
 
-  abortStream()
+  // 删掉的会话不该再在后台跑：中止它的流并把暂存清干净
+  if (hasLiveAnswer(id)) abortLiveAnswer(id)
+  clearLiveAnswer(id)
+  // 服务端那一轮也掐掉（服务端不再因「客户端断开」而中止，必须显式说一声）
+  void cancelAskTurn(id)
+  if (activeId.value === id) detachLiveAnswer()
   try {
     await deleteConversation(id)
   } catch (err) {
@@ -223,31 +555,103 @@ async function removeConversation(id: string): Promise<void> {
   if (activeId.value === id) {
     activeId.value = ''
     messages.value = []
+    busy.value = false
+    waiting.stop()
     if (rest.length > 0) await selectConversation(rest[0]?.id ?? '')
     else await newConversation({ silent: true })
   }
 }
 
+/**
+ * 会话相关的失败提示。
+ *
+ * ⚠️ 2026-10-21（task-20）：后端原文**不再**直接弹给用户 —— 原文里可能带
+ *    内部引擎地址、英文堆栈。原文只进 console.warn；弹给用户的一律是
+ *    前端本地固定中文（publicErrorText：错误码 → 状态码 → 兜底）。
+ */
 function errorText(err: unknown, fallback: string): string {
   const axiosErr = err as { response?: { data?: { error?: { message?: string } } } }
-  const message = axiosErr?.response?.data?.error?.message
-  return typeof message === 'string' && message.trim() ? message : fallback
+  const raw = axiosErr?.response?.data?.error?.message
+  if (typeof raw === 'string' && raw.trim()) console.warn('[chat] 会话请求失败：', raw)
+  return publicErrorText(err, fallback)
 }
 
+/**
+ * 中止当前会话的在途回答（换会话/删会话**不再**调它；只留给「重新生成」这类
+ * 明确要作废本轮的操作）。
+ */
 function abortStream(): void {
-  controller?.abort()
-  controller = null
-  busy.value = false
-  streamingIdx.value = -1
+  const id = activeId.value
+  if (id && hasLiveAnswer(id)) abortLiveAnswer(id)
   waiting.stop()
+  busy.value = false
+  detachLiveAnswer()
 }
 
-async function send(question: string): Promise<void> {
+/**
+ * 「停止生成」：用户不要这一轮了。
+ *
+ * 🔴 2026-10-21（task-21 · T2-7）：后端早就有 POST /api/ask/cancel，
+ *    界面上却没有入口 —— 用户只能看着半截正文干等，或干等超时。
+ *    现在给一个中文按钮：点了先通知服务端（那一轮别再写正文，
+ *    服务端会落一条【已取消】），再本地停流，并让气泡里明确写出「本次提问已取消」。
+ */
+async function stopGenerating(): Promise<void> {
+  const convId = activeId.value
+  if (!convId || stopping.value) return
+  stopping.value = true
+  try {
+    await cancelAskTurn(convId)
+    const stopped = cancelLiveAnswer(convId, ASK_ERROR_TEXT.aborted)
+    if (stopped) {
+      ElMessage.info(ASK_ERROR_TEXT.aborted)
+    } else {
+      ElMessage.info('这一轮刚好已经答完了')
+    }
+  } finally {
+    stopping.value = false
+  }
+}
+
+/**
+ * 发一轮提问。
+ *
+ * @returns true = 真的发出去了；false = 被拦下了（界面上已经给过提示）
+ *
+ * 🔴 2026-10-21（task-21 · D1）：门禁原来用 `hasLiveAnswer`（内存里有这条暂存就算），
+ *    而暂存在回答**结束后还要留 5 分钟**（切页回来能接上）——
+ *    于是「同一会话 5 分钟内问第二句」被当成「还有一条在流」而**静默丢弃**。
+ *    现在只拦「真的正在输出」的那一条（isAnswerStreaming），
+ *    并且拦下来时必须给用户一句提示，不能悄悄吞掉。
+ */
+async function send(question: string): Promise<boolean> {
   const q = question.trim()
-  if (!q || busy.value) return
+  if (!q) return false
+  if (busy.value) {
+    ElMessage.info('这一轮还在回答中，等它说完再发下一句')
+    return false
+  }
+  // 游客额度检查：未登录且（关闭 / 次数用完）时拦住
+  if (!guestCanAsk.value) {
+    ElMessage.warning('游客今日提问次数已用完，登录后不受限制')
+    return false
+  }
+  // 超长在前端就拦下来（后端也会 400，但让用户白等一轮才知道不合适）
+  if (q.length > MAX_QUESTION_LENGTH) {
+    ElMessage.warning(`问题太长了，最多 ${MAX_QUESTION_LENGTH} 字，请精简一下再发送`)
+    return false
+  }
   if (!activeId.value) {
     await newConversation({ silent: true })
-    if (!activeId.value) return
+    if (!activeId.value) return false
+  }
+
+  const conversationId = activeId.value
+  // 同一个会话同一时间只允许一条**正在输出**的流（否则两条回答会写进同一串气泡里）。
+  // ⚠️ 这里不能用 hasLiveAnswer —— 它对「已结束但还缓存着」的那条也算 true。
+  if (isAnswerStreaming(conversationId)) {
+    ElMessage.info('这一轮还在回答中，等它说完再发下一句')
+    return false
   }
 
   draft.value = ''
@@ -257,49 +661,13 @@ async function send(question: string): Promise<void> {
   streamingIdx.value = idx
   busy.value = true
   waiting.start()
-  scrollToBottom()
+  // 发新问题一定回到底部并恢复跟随（哪怕上一轮用户曾往上滚过）
+  followBottom.value = true
+  scrollToBottom(true)
 
-  controller = new AbortController()
-  try {
-    await askStream({
-      query: q,
-      conversationId: activeId.value,
-      signal: controller.signal,
-      onEvent: (evt) => {
-        const msg = messages.value[idx]
-        if (!msg) return
-        if (evt.type === 'answer') {
-          waiting.stop()
-          msg.text += evt.content
-          scrollToBottom()
-        } else if (evt.type === 'sources') {
-          msg.sources = evt.items
-        } else if (evt.type === 'error') {
-          waiting.stop()
-          msg.failed = true
-          msg.text = msg.text || evt.content || 'AI 暂时不可用'
-        }
-      }
-    })
-    const msg = messages.value[idx]
-    if (msg && !msg.text) {
-      msg.noAnswer = true
-      msg.text = NO_ANSWER_TEXT
-    }
-  } catch (err) {
-    const msg = messages.value[idx]
-    if (msg) {
-      msg.failed = true
-      msg.text = errorText(err, '请求失败，请稍后再试')
-    }
-  } finally {
-    waiting.stop()
-    busy.value = false
-    controller = null
-    streamingIdx.value = -1
-    scrollToBottom()
-    syncActiveSummary(q)
-  }
+  startLiveAnswer({ conversationId, question: q })
+  attachLiveAnswer(conversationId, idx)
+  return true
 }
 
 function syncActiveSummary(question: string): void {
@@ -320,6 +688,11 @@ function syncActiveSummary(question: string): void {
 function onKeydown(event: KeyboardEvent): void {
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault()
+    // 未登录且游客不可问时，拦住回车并给提示
+    if (!guestCanAsk.value) {
+      ElMessage.warning('游客今日提问次数已用完，登录后不受限制')
+      return
+    }
     void send(draft.value)
   }
 }
@@ -357,18 +730,47 @@ async function copyAnswer(m: BubbleMessage): Promise<void> {
   }
 }
 
-/** 重新生成：把这条回答连同它的提问一起撤掉，用同一个问题再发一次 */
+/**
+ * 重新生成：把这条回答连同它的提问一起撤掉，用同一个问题再发一次。
+ *
+ * 🔴 2026-10-21（task-21 · D2）：原来这里是「先截断气泡，再 send」，
+ *    而 send 会被「同一会话只允许一条流」的门禁拦下 ——
+ *    结果：气泡没了、请求也没发出去（用户只看到一个空会话）。
+ *    现在改成**原子**操作：先作废旧的一轮（中止 + 清掉那条 5 分钟缓存），
+ *    再撤气泡，再发新一轮；发不出去就把旧气泡放回去，并明确告诉用户。
+ */
 async function regenerate(index: number): Promise<void> {
-  if (busy.value) return
+  const convId = activeId.value
   const question = messages.value
     .slice(0, index)
     .reverse()
     .find((m) => m.role === 'user')
   if (!question) return
   const q = question.text
+
+  // 重来就是把这一轮作废：先中止仍在跑的那条流，免得两条回答写进同一串气泡
+  // ⚠️ 服务端不再因「客户端断开」而中止上游，所以这里要显式调取消接口
+  // 🔴 2026-10-21（task-21 复验修正）：取消请求必须**等它回来**再发新一轮。
+  //    原来这里是 `void cancelAskTurn(convId)`（不等）——
+  //    取消请求与新一轮的提问请求同时在路上，取消请求后到，
+  //    就把**刚发出的新一轮自己取消掉**（实测：点「重试」后新回答只吐了半句就变成失败态）。
+  //    另外只有「真的还在流」的那一轮才需要取消，已结束的轮次发取消过去纯属添乱。
+  if (convId && isAnswerStreaming(convId)) await cancelAskTurn(convId)
+  abortStream()
+  // 🔴 关键：把「已结束但还留在内存 5 分钟」的那条暂存也清掉，
+  //    否则新的一轮会被门禁当成「还有一条在流」而被拦下（D1 的另一半）。
+  if (convId) clearLiveAnswer(convId)
+
+  // 撤掉旧气泡 —— 先留个备份，发不出去要能放回去
+  const backup = messages.value.slice()
   messages.value = messages.value.slice(0, Math.max(0, index - 1))
   rated.value = {}
-  await send(q)
+
+  const sent = await send(q)
+  if (!sent) {
+    messages.value = backup
+    ElMessage.error('没能重新发起这次提问，请点「重试」再试一次')
+  }
 }
 
 /** 相对时间：会话列表要一眼看出「刚聊过」还是「三天前」 */
@@ -388,15 +790,27 @@ function relativeTime(iso: string): string {
 function rate(index: number, kind: 'up' | 'down'): void {
   // 只在本页记状态：不写后端，也不弹「已上报」这种不诚实的提示
   const next = { ...rated.value }
-  if (next[index] === kind) delete next[index]
-  else next[index] = kind
+  if (next[index] === kind) {
+    delete next[index]
+    rated.value = next
+    ElMessage.info('已取消标记')
+    return
+  }
+  next[index] = kind
   rated.value = next
+  ElMessage.success(kind === 'up' ? '已记为有帮助（只在本机记录）' : '已记为没帮助（只在本机记录）')
 }
 
 async function shareConversation(): Promise<void> {
+  const id = activeId.value
+  if (!id) {
+    ElMessage.warning('还没有可分享的对话')
+    return
+  }
+  const url = `${window.location.origin}/chat?c=${encodeURIComponent(id)}`
   try {
-    await navigator.clipboard.writeText(window.location.href)
-    ElMessage.success('对话链接已复制')
+    await navigator.clipboard.writeText(url)
+    ElMessage.success('已复制本机对话链接（仅本机可打开）')
   } catch {
     ElMessage.warning('复制失败，请从地址栏复制链接')
   }
@@ -411,7 +825,10 @@ function sourceMeta(source: AskSource): string {
 }
 
 onMounted(async () => {
+  window.addEventListener('keydown', onGlobalKeydown)
   void loadGuestLimit()
+  void loadGuestUsage()
+  void loadAiStatus()
 
   const incoming = typeof route.query.q === 'string' ? route.query.q.trim() : ''
   if (incoming) {
@@ -419,10 +836,17 @@ onMounted(async () => {
     draft.value = incoming
   }
 
+  // 分享链接 ?c=<会话 id> → 直接落到那一条对话（别人点开就能看到那条回答）
+  const wanted = typeof route.query.c === 'string' ? route.query.c.trim() : ''
+
   try {
     const items = await listConversations()
     conversations.value = items
-    if (items.length > 0) {
+    // 有会话还在后台跑（用户是切页回来的）→ 直接回到那一个，接上在途回答
+    const liveId = items.find((c) => hasLiveAnswer(c.id))?.id
+    if (wanted && items.some((c) => c.id === wanted)) await selectConversation(wanted)
+    else if (liveId) await selectConversation(liveId)
+    else if (items.length > 0) {
       const first = items[0]
       if (first) await selectConversation(first.id)
     } else {
@@ -433,6 +857,22 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+})
+
+/** 引用抽屉的 Esc 关闭（QA-CHAT-06）：抽屉是自绘浮层，Esc 是标准退出方式 */
+function onGlobalKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape' && citeOpen.value) citeOpen.value = false
+}
+
+/**
+ * 离开问答页只「摘掉订阅」，不断流也不清暂存：
+ * 回答继续在 store 里跑，切回来会由 adoptLiveAnswer 接上。
+ */
+onUnmounted(() => {
+  detachLiveAnswer()
+  waiting.stop()
+  stopPolling()
+  window.removeEventListener('keydown', onGlobalKeydown)
 })
 </script>
 
@@ -484,7 +924,7 @@ onMounted(async () => {
         <span class="main-tip">引用可点开原文核对</span>
       </header>
 
-      <div ref="bodyRef" class="stream">
+      <div ref="bodyRef" class="stream" @scroll.passive="onStreamScroll">
         <!-- 空态：问候 + 示例问题胶囊（照参考产品：居中、留白大） -->
         <div v-if="showHero" class="hello">
           <h2 class="hello-h">Hi，我是零废弃助手</h2>
@@ -528,7 +968,7 @@ onMounted(async () => {
                 />
 
                 <button
-                  v-if="m.sources && m.sources.length > 0"
+                  v-if="!m.failed && !m.noAnswer && m.sources && m.sources.length > 0"
                   type="button"
                   class="citebar"
                   @click="openCitations(i)"
@@ -538,21 +978,23 @@ onMounted(async () => {
                   <span class="cv" aria-hidden="true">▾</span>
                 </button>
 
-                <div v-if="!m.failed" class="acts">
-                  <button type="button" title="复制回答" @click="copyAnswer(m)">
+                <div class="acts" :class="{ 'acts-failed': m.failed }">
+                  <button v-if="!m.failed" type="button" title="复制回答" @click="copyAnswer(m)">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
                       <rect x="9" y="9" width="11" height="11" rx="2" />
                       <path d="M5 15V5a2 2 0 012-2h10" />
                     </svg>
                   </button>
-                  <button type="button" title="重新生成" @click="regenerate(i)">
+                  <button type="button" class="retry" title="重新生成" @click="regenerate(i)">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
                       <path d="M20 11a8 8 0 10-2.6 5.9" />
                       <path d="M20 5v6h-6" />
                     </svg>
+                    <span v-if="m.failed" class="retry-t">重试</span>
                   </button>
-                  <span class="sep" aria-hidden="true"></span>
+                  <span v-if="!m.failed" class="sep" aria-hidden="true"></span>
                   <button
+                    v-if="!m.failed"
                     type="button"
                     :class="{ on: rated[i] === 'up' }"
                     title="有帮助"
@@ -564,6 +1006,7 @@ onMounted(async () => {
                     </svg>
                   </button>
                   <button
+                    v-if="!m.failed"
                     type="button"
                     :class="{ on: rated[i] === 'down' }"
                     title="没帮助"
@@ -574,7 +1017,7 @@ onMounted(async () => {
                       <path d="M17 14h4V3h-4" />
                     </svg>
                   </button>
-                  <button type="button" title="分享（复制对话链接）" @click="shareConversation">
+                  <button v-if="!m.failed" type="button" title="复制本机对话链接（仅本机可打开）" @click="shareConversation">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
                       <circle cx="18" cy="5" r="2.5" />
                       <circle cx="6" cy="12" r="2.5" />
@@ -586,35 +1029,55 @@ onMounted(async () => {
               </div>
             </div>
           </div>
+          <p v-if="pendingReply" class="pending-note">回答还在生成中…（可以先去别的页面，回来这条还在）</p>
         </template>
       </div>
 
-      <!-- 输入区：常驻底部 -->
+      <!-- 输入区：常驻底部。2026-10-22 视觉改版：对齐 DeepSeek 输入卡 ——
+           无占位说明括号、计数器平时隐藏、右侧圆形发送/停止 -->
       <div class="composer-wrap">
         <div class="composer">
           <textarea
             v-model="draft"
             class="ta"
-            rows="2"
-            placeholder="发送消息（回车发送，Shift + 回车换行）"
+            rows="1"
+            placeholder="发送消息"
             :disabled="busy || !activeId"
             @keydown="onKeydown"
           ></textarea>
           <div class="composer-bar">
-            <span class="scope">检索范围：全部资料</span>
-            <button
-              type="button"
-              class="send"
-              :disabled="!draft.trim() || busy || !activeId"
-              title="发送"
-              @click="send(draft)"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-                <path d="M12 19V5M6 11l6-6 6 6" />
-              </svg>
-            </button>
+            <span v-if="overLimit || nearLimit" class="counter" :class="{ over: overLimit }">{{ draftLength }}/{{ MAX_QUESTION_LENGTH }}</span>
+            <div class="composer-actions">
+              <!-- 只有一颗按钮：平时 ↑ 发送；生成中原地变成 ■ 停止（DeepSeek 口径） -->
+              <button
+                v-if="canStop"
+                type="button"
+                class="send send--stop"
+                :disabled="stopping"
+                title="停止生成"
+                @click="stopGenerating"
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="7" y="7" width="10" height="10" rx="2" />
+                </svg>
+              </button>
+              <button
+                v-else
+                type="button"
+                class="send"
+                :disabled="!draft.trim() || busy || !activeId || overLimit || !guestCanAsk"
+                title="发送"
+                @click="send(draft)"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                  <path d="M12 19V5M6 11l6-6 6 6" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
+        <p v-if="aiStatusText" class="ai-warn">{{ aiStatusText }}</p>
+        <p v-if="overLimit" class="finep over-tip">问题太长了，最多 {{ MAX_QUESTION_LENGTH }} 字，请精简一下再发送</p>
         <p v-if="guestLimitText" class="finep">{{ guestLimitText }}</p>
         <p class="finep">{{ ASK_SCOPE_NOTE }}；{{ ASK_DISCLAIMER }}</p>
       </div>
@@ -806,6 +1269,13 @@ onMounted(async () => {
 }
 .sess-del:hover {
   color: var(--zw-danger);
+}
+/* QA-CHAT-11：触屏上永远看不到 hover —— 移动端把删除钮永久可见已做（1690 处 opacity:1），
+   桌面端给触屏指针也补一个替代表示（不依赖 hover） */
+@media (pointer: coarse) and (min-width: 861px) {
+  .sess-del {
+    opacity: 1;
+  }
 }
 
 /* ---- 中：对话流 ---- */
@@ -1043,16 +1513,16 @@ onMounted(async () => {
   background: var(--zw-line);
 }
 
-/* ---- 输入区 ---- */
+/* ---- 输入区（2026-10-22 DeepSeek 版）：大圆角白卡、无边内框、按钮全收在右侧 ---- */
 .composer-wrap {
   padding: 4px 24px 10px;
 }
 .composer {
-  max-width: 780px;
+  max-width: 860px;
   margin: 0 auto;
-  padding: 10px 12px 8px;
+  padding: 12px 14px 10px;
   border: 1px solid var(--zw-line-strong);
-  border-radius: 16px;
+  border-radius: 24px;
   background: var(--zw-surface);
   box-shadow: var(--zw-shadow-sm);
   transition: border-color 0.16s ease, box-shadow 0.16s ease;
@@ -1065,12 +1535,12 @@ onMounted(async () => {
   display: block;
   width: 100%;
   max-height: 168px;
-  min-height: 48px;
-  padding: 2px 4px;
+  min-height: 52px;
+  padding: 4px 6px;
   border: 0;
   background: none;
   font: inherit;
-  font-size: 14.5px;
+  font-size: 15px;
   line-height: 1.7;
   color: var(--zw-ink);
   resize: none;
@@ -1083,22 +1553,32 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding-top: 4px;
+  padding-top: 6px;
 }
-.scope {
-  font-size: 12px;
+/* 计数器平时藏起来，接近上限才出现（DeepSeek 口径） */
+.counter {
+  margin-right: auto;
+  font-size: 11.5px;
   color: var(--zw-muted);
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: var(--zw-mint-2);
+  font-variant-numeric: tabular-nums;
+}
+.counter.over {
+  color: var(--zw-danger, #c0392b);
+  font-weight: 600;
+}
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
 }
 .send {
-  margin-left: auto;
+  margin-left: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 36px; /* QA-ALL-03 热区：32→36，触屏仍与 composer-bar 行高匹配 */
+  height: 36px;
   padding: 0;
   border: 0;
   border-radius: 50%;
@@ -1108,8 +1588,8 @@ onMounted(async () => {
   transition: background 0.16s ease, opacity 0.16s ease;
 }
 .send svg {
-  width: 16px;
-  height: 16px;
+  width: 17px;
+  height: 17px;
 }
 .send:hover:not(:disabled) {
   background: var(--zw-green-deep);
@@ -1119,12 +1599,28 @@ onMounted(async () => {
   color: #fff;
   cursor: not-allowed;
 }
+/* QA-ALL-01：键盘可达 —— 按钮补焦点态（textarea 不描边，见下） */
+.send:focus-visible {
+  outline: 2px solid var(--zw-green);
+  outline-offset: 2px;
+}
+.ta:focus-visible {
+  outline: none; /* DeepSeek 口径：textarea 自身不描边，聚焦只亮外卡 */
+}
+/* 生成中的同一颗按钮原地变「停止」：深底白方块，尺寸位置与发送完全一致 */
+.send--stop {
+  background: var(--zw-green-deep);
+}
+.send--stop svg {
+  width: 15px;
+  height: 15px;
+}
 .finep {
   max-width: 780px;
   margin: 6px auto 0;
   font-size: 11.5px;
   line-height: 1.7;
-  color: var(--zw-faint);
+  color: var(--zw-muted); /* QA-CHAT-01：faint #93a396 on 白 ≈2.6:1 不达标，muted ≈4.9:1 */
   text-align: center;
 }
 
@@ -1174,6 +1670,10 @@ onMounted(async () => {
 .dh-x:hover {
   background: var(--zw-mint);
   color: var(--zw-ink);
+}
+.dh-x:focus-visible {
+  outline: 2px solid var(--zw-green);
+  outline-offset: 2px;
 }
 .drawer-list {
   flex: 1;
@@ -1320,5 +1820,36 @@ onMounted(async () => {
   .drawer-hd {
     padding-top: 14px;
   }
+}
+
+/* ---- 2026-10-21 新增：字数计数已并入输入区样式；此处保留超长提示/公告/失败重试 ---- */
+.over-tip {
+  color: var(--zw-danger, #c0392b);
+}
+.ai-warn {
+  max-width: 780px;
+  margin: 0 auto 6px;
+  padding: 7px 12px;
+  border-radius: 10px;
+  background: rgba(192, 57, 43, 0.08);
+  color: var(--zw-danger, #c0392b);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.pending-note {
+  margin: 8px auto 0;
+  font-size: 12.5px;
+  color: var(--zw-faint);
+  text-align: center;
+}
+.acts-failed .retry-t {
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--zw-green);
+  white-space: nowrap; /* 「重试」不许被压成竖排 */
+}
+.acts-failed .retry {
+  display: inline-flex;
+  align-items: center;
 }
 </style>

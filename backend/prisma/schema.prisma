@@ -61,13 +61,24 @@ model SiteSetting {
 /// 这个值只落在后端库里，**绝不返回给前端**（与 ask.ts「会话 id 服务端持有」一致）。
 /// 建会话时引擎若不可用（密钥未到位 / 额度 429），它会是 null，
 /// 提问时再懒建一次补上，不让引擎抖动把「建会话」这个动作整个废掉。
+///
+/// ownerId（2026-10-21 加 · T1 会话鉴权）：这条会话**属于谁**。
+///   - 'u:' + userId  登录用户的会话
+///   - 't:' + 令牌    匿名访客的会话（令牌是服务端随机发的，不可猜）
+/// 前缀是必须的：用户 id 与匿名令牌分属两个命名空间，
+/// 否则游客只要把请求头填成别人的 userId 就能进别人的会话。
+/// 可空 = 这个字段加之前的历史会话：它们谁都不属于，接口不会把它们列给任何人
+/// （数据本身保留，清理归数据治理任务）。
 model Conversation {
   id              String   @id @default(uuid())
   title           String   @default("新对话")
   engineSessionId String?
+  ownerId         String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   messages        Message[]
+
+  @@index([ownerId])
 }
 
 /// 一条对话消息（T5）

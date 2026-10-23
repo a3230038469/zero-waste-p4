@@ -68,6 +68,8 @@ const router = createRouter({
         },
         // 2026-10-19：机构信息（联系方式 / 邮箱 / 地址 / 合作说明 / 版权行）
         { path: 'site', name: 'adminSite', component: () => import('../views/admin/AdminSiteView.vue') },
+        // 2026-10-22：模型管理（对话 / 视觉 / 重排可增删改，向量只读）
+        { path: 'models', name: 'adminModels', component: () => import('../views/admin/AdminModelsView.vue') },
         // T10：老师后台 · 设置（智能体设置 / 解析引擎设置 / 一键自检）
         { path: 'settings', name: 'adminSettings', component: () => import('../views/AdminSettingsView.vue') }
       ]
@@ -77,8 +79,25 @@ const router = createRouter({
   scrollBehavior(to) {
     // 带锚点的页内跳转（如首页 `/#cite`、`/#distribution`）落在对应区块，其余一律回顶部
     // 2026-10-18（task-6）：`/about`、`/insights` 两条路由已删，锚点全部落在首页
-    if (to.hash) return { el: to.hash, behavior: 'smooth', top: 80 }
-    return { top: 0 }
+    // 2026-10-21（T3 · 公-2）：首页是**异步组件**，路由确认的那一刻 DOM 还没渲染出来，
+    // 直接返回 { el: to.hash } 会在文档里找不到那个元素 → 页面停在顶部，锚点形同虚设
+    //（从 /shelf 点页脚「数据来源与口径」这类同页跳转最明显）。
+    // 改成：等目标元素出现（最多等 2 秒）再定位；一直不出现就回顶部，不让页面干等。
+    if (!to.hash) return { top: 0 }
+    return new Promise<{ el?: string; top?: number; behavior?: 'smooth' }>((resolve) => {
+      const tryScroll = (attempt: number): void => {
+        if (document.querySelector(to.hash)) {
+          resolve({ el: to.hash, behavior: 'smooth', top: 80 })
+          return
+        }
+        if (attempt >= 40) {
+          resolve({ top: 0 })
+          return
+        }
+        window.setTimeout(() => tryScroll(attempt + 1), 50)
+      }
+      tryScroll(0)
+    })
   }
 })
 
@@ -106,6 +125,25 @@ router.beforeEach(async (to) => {
 // 埋点失败只打一条 warn（api/track.ts 内部已吞异常），不影响任何导航。
 router.afterEach((to) => {
   void trackEvent({ event: 'page_view', path: to.fullPath })
+
+  // 设置浏览器标签页标题（SPA 站内跳转更新）
+  if (!to.path.startsWith('/doc')) {
+    if (to.path.startsWith('/admin')) {
+      document.title = '管理台 · 零废弃知识库'
+    } else if (to.path === '/') {
+      document.title = '零废弃知识库'
+    } else if (to.path === '/shelf') {
+      document.title = '资料库 · 零废弃知识库'
+    } else if (to.path === '/chat') {
+      document.title = 'AI 问答 · 零废弃知识库'
+    } else if (to.path === '/contribute') {
+      document.title = '我要投稿 · 零废弃知识库'
+    } else if (to.path === '/auth') {
+      document.title = '注册登录 · 零废弃知识库'
+    } else {
+      document.title = '零废弃知识库'
+    }
+  }
 })
 
 export default router

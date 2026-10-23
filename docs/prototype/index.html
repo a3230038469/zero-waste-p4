@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>零废弃知识库 · 样板首页（绿色版）</title>
+<style>
+  :root {
+    --paper: #F0F4EC;      /* 微绿的宣纸，不是纯白 */
+    --paper-2: #E4EDDD;    /* 苔青底，用于大块分区 */
+    --ink: #1B2A21;        /* 墨绿黑 */
+    --ink-2: #4E6356;
+    --ink-3: #7F9385;
+    --rule: #C9D8C6;
+    --bamboo: #2F6B4C;     /* 竹青，主色 */
+    --bamboo-deep: #1A4431;
+    --sprout: #8DB580;     /* 嫩芽 */
+    --mist: #CFE2C8;       /* 雾绿 */
+    --seal: #B0392F;       /* 朱红印，仅一处 */
+    --serif: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'SimSun', serif;
+    --sans: 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+    --gap: 56px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--paper); color: var(--ink); }
+  body { font-family: var(--sans); font-size: 16px; line-height: 1.85; }
+  a { color: inherit; text-decoration: none; border-bottom: 1px solid var(--rule); }
+  a:hover { border-bottom-color: var(--bamboo); color: var(--bamboo); }
+
+  .page { max-width: 920px; margin: 0 auto; padding: 0 28px; }
+
+  /* 顶部 */
+  .masthead { display: flex; justify-content: space-between; align-items: center;
+    padding: 22px 0; font-size: 14px; color: var(--ink-2); }
+  .masthead .mark { font-family: var(--serif); font-size: 17px; color: var(--bamboo-deep); letter-spacing: .08em; display: flex; align-items: center; gap: 10px; }
+  .masthead .mark i { display: inline-block; width: 4px; height: 18px; background: var(--bamboo); border-radius: 2px; }
+  .masthead nav a { margin-left: 22px; border: 0; }
+
+  /* 扉页：竹节生长 */
+  .frontis { position: relative; padding: 72px 0 84px; display: grid; grid-template-columns: 220px 1fr; gap: 56px; align-items: end; overflow: hidden; }
+  .frontis .stalks { height: 260px; display: flex; align-items: flex-end; gap: 10px; }
+  .frontis .stalks b { display: block; width: 8px; border-radius: 4px 4px 0 0; background: linear-gradient(180deg, var(--sprout), var(--bamboo) 70%, var(--bamboo-deep)); transform-origin: bottom center; }
+  .frontis .stalks b.gap { background: transparent; }
+  .frontis .epigraph { font-family: var(--serif); font-size: 15px; color: var(--bamboo); letter-spacing: .04em; margin: 0 0 28px; }
+  .frontis h1 { font-family: var(--serif); font-weight: 600; font-size: 40px; line-height: 1.45; letter-spacing: .02em; margin: 0 0 26px; color: var(--bamboo-deep); }
+  .frontis p.lede { font-size: 17px; color: var(--ink-2); margin: 0 0 34px; max-width: 34em; }
+  .frontis .cta a { margin-right: 16px; font-size: 16px; padding: 10px 22px; border: 1px solid var(--bamboo); color: var(--bamboo); border-radius: 999px; }
+  .frontis .cta a.solid { background: var(--bamboo); color: #F0F4EC; }
+  .frontis .cta a:hover { background: var(--bamboo-deep); color: #F0F4EC; border-color: var(--bamboo-deep); }
+
+  /* 章节 */
+  .sec { border-top: 1px solid var(--rule); padding: 40px 0 var(--gap); }
+  .sec-head { display: flex; align-items: baseline; gap: 16px; margin-bottom: 24px; }
+  .sec-head .no { font-family: var(--serif); font-size: 14px; color: var(--bamboo); min-width: 3em; }
+  .sec-head h2 { font-family: var(--serif); font-weight: 600; font-size: 24px; margin: 0; letter-spacing: .02em; color: var(--bamboo-deep); }
+
+  /* 卷一：五领域 · 每行一根竹节，长度=资料数 */
+  .toc { list-style: none; margin: 0; padding: 0; }
+  .toc li { display: grid; grid-template-columns: 2.4em 1fr 1fr 6em; gap: 14px; align-items: center; padding: 16px 0; border-bottom: 1px solid var(--rule); }
+  .toc li:first-child { border-top: 1px solid var(--rule); }
+  .toc .n { font-family: var(--serif); color: var(--bamboo); font-size: 15px; }
+  .toc .t { font-family: var(--serif); font-size: 18px; color: var(--ink); }
+  .toc .t small { display: block; font-family: var(--sans); font-size: 14px; color: var(--ink-2); margin-top: 2px; }
+  .toc .bar { height: 10px; background: var(--mist); border-radius: 5px; overflow: hidden; }
+  .toc .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--sprout), var(--bamboo)); border-radius: 5px; }
+  .toc .bar.wip i { width: 0; }
+  .toc .c { text-align: right; font-variant-numeric: tabular-nums; color: var(--bamboo-deep); font-size: 14px; }
+  .toc .c.wip { color: var(--ink-3); }
+
+  /* 卷二：循环 · 四段竹节 */
+  .cycle { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border: 1px solid var(--rule); border-radius: 14px; overflow: hidden; background: #F7FAF4; }
+  .cycle > div { padding: 22px 20px 24px; border-right: 1px solid var(--rule); position: relative; }
+  .cycle > div:last-child { border-right: 0; }
+  .cycle > div::before { content: ''; position: absolute; left: 20px; top: 0; width: 28px; height: 4px; background: var(--sprout); border-radius: 0 0 3px 3px; }
+  .cycle .k { font-family: var(--serif); font-size: 13px; color: var(--ink-3); letter-spacing: .1em; }
+  .cycle .v { font-family: var(--serif); font-size: 20px; color: var(--bamboo-deep); margin: 6px 0 6px; }
+  .cycle .d { font-size: 14px; color: var(--ink-2); line-height: 1.7; }
+  .cycle .tag { display: inline-block; margin-top: 10px; font-size: 13px; color: var(--bamboo); }
+
+  /* 卷三：数字 */
+  .figures { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+  .figures .box { background: #F7FAF4; border-radius: 14px; padding: 22px 22px 20px; border: 1px solid var(--rule); }
+  .figures .v { font-family: var(--serif); font-size: 48px; font-variant-numeric: tabular-nums; line-height: 1.1; color: var(--bamboo-deep); }
+  .figures .v span { font-size: 16px; margin-left: 4px; color: var(--ink-2); }
+  .figures .k { font-size: 15px; color: var(--ink); margin-top: 8px; }
+  .figures .k b { font-weight: normal; color: var(--ink-3); display: block; font-size: 13px; }
+
+  /* 卷四：检索 */
+  .search { display: flex; align-items: center; gap: 12px; background: #F7FAF4; border: 1px solid var(--rule); border-radius: 999px; padding: 8px 8px 8px 22px; }
+  .search input { flex: 1; border: 0; background: transparent; font: inherit; font-size: 17px; color: var(--ink); outline: none; }
+  .search input::placeholder { color: var(--ink-3); }
+  .search button { border: 0; background: var(--bamboo); font: inherit; font-size: 15px; color: #F0F4EC; cursor: pointer; padding: 10px 22px; border-radius: 999px; }
+  .hot { margin-top: 16px; font-size: 14px; color: var(--ink-2); }
+  .hot a { margin-right: 10px; border: 0; color: var(--bamboo-deep); background: var(--mist); padding: 4px 12px; border-radius: 999px; display: inline-block; margin-bottom: 8px; }
+  .hot a:hover { background: var(--sprout); color: var(--ink); }
+  .hot .label { color: var(--ink-3); margin-right: 10px; }
+
+  /* 卷五：支持我们 */
+  .support { display: grid; grid-template-columns: 1fr auto; gap: 28px; align-items: center; background: var(--bamboo-deep); color: #F0F4EC; border-radius: 18px; padding: 36px 40px; }
+  .support h3 { font-family: var(--serif); font-size: 22px; margin: 0 0 8px; font-weight: 600; }
+  .support p { margin: 0; color: #CFE2C8; font-size: 15px; max-width: 34em; }
+  .seal { width: 52px; height: 52px; border: 2px solid #E26B5E; color: #E26B5E; display: grid; place-items: center; font-family: var(--serif); font-size: 15px; letter-spacing: .1em; writing-mode: vertical-rl; border-radius: 6px; }
+  .support .btns a { display: inline-block; margin-left: 10px; padding: 10px 20px; border-radius: 999px; font-size: 15px; border: 1px solid #8DB580; color: #F0F4EC; }
+  .support .btns a.solid { background: #8DB580; color: var(--ink); border-color: #8DB580; }
+
+  /* colophon */
+  .colophon { border-top: 1px solid var(--rule); padding: 24px 0 56px; font-size: 13px; color: var(--ink-2); line-height: 1.9; }
+  .colophon .row { display: grid; grid-template-columns: 6em 1fr; gap: 8px; }
+  .colophon .row b { font-weight: normal; color: var(--bamboo); }
+
+  @media (max-width: 720px) {
+    .frontis { grid-template-columns: 1fr; gap: 28px; padding: 48px 0 56px; }
+    .frontis .stalks { height: 140px; gap: 6px; }
+    .frontis .stalks b { width: 5px; }
+    .frontis h1 { font-size: 30px; }
+    .masthead { flex-wrap: wrap; gap: 10px; }
+    .masthead nav a { margin-left: 0; margin-right: 14px; }
+    .toc li { grid-template-columns: 2em 1fr 4.5em; }
+    .toc .bar { display: none; }
+    .cycle { grid-template-columns: 1fr 1fr; }
+    .cycle > div:nth-child(2) { border-right: 0; }
+    .cycle > div:nth-child(-n+2) { border-bottom: 1px solid var(--rule); }
+    .figures { grid-template-columns: 1fr; }
+    .support { grid-template-columns: 1fr; padding: 28px 24px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="masthead">
+    <div class="mark"><i></i>零废弃知识库</div>
+    <nav>
+      <a href="#">我们的工作</a>
+      <a href="#">知识库</a>
+      <a href="#">问答</a>
+      <a href="#">信息公开</a>
+      <a href="#">关于</a>
+    </nav>
+  </header>
+
+  <!-- 扉页：竹节从巷子两侧生长，中间让出空隙 -->
+  <section class="frontis">
+    <div class="stalks" aria-hidden="true">
+      <b style="height:92%"></b><b style="height:80%"></b><b style="height:68%"></b><b style="height:56%"></b><b style="height:42%"></b><b style="height:30%"></b>
+      <b class="gap" style="height:0"></b><b class="gap" style="height:0"></b>
+      <b style="height:30%"></b><b style="height:42%"></b><b style="height:56%"></b><b style="height:68%"></b><b style="height:80%"></b><b style="height:92%"></b>
+    </div>
+    <div>
+      <p class="epigraph">千里来书只为墙，让他三尺又何妨。</p>
+      <h1>把零废弃与化学品的知识，整理成一条可以走进去的绿巷。</h1>
+      <p class="lede">安徽省六尺巷慈善基金会的资料库。收录政策、研究、案例与工具，每一条都标明来源与日期。</p>
+      <div class="cta">
+        <a class="solid" href="#">进入知识库</a>
+        <a href="#">问一个问题</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- 卷一：五领域，竹节长度按资料数 -->
+  <section class="sec">
+    <div class="sec-head">
+      <span class="no">卷一</span>
+      <h2>我们做的五件事</h2>
+    </div>
+    <ol class="toc">
+      <li>
+        <span class="n">一</span>
+        <span class="t">零废弃<small>减少一次性使用，让废弃物重新回到循环里</small></span>
+        <span class="bar"><i style="width:100%"></i></span>
+        <span class="c">480 份</span>
+      </li>
+      <li>
+        <span class="n">二</span>
+        <span class="t">化学品安全与健康<small>有毒有害物质的识别、管控与替代</small></span>
+        <span class="bar"><i style="width:26%"></i></span>
+        <span class="c">123 份</span>
+      </li>
+      <li>
+        <span class="n">三</span>
+        <span class="t">行业赋能<small>帮助机构与社区把经验变成可复制的做法</small></span>
+        <span class="bar wip"><i></i></span>
+        <span class="c wip">建设中</span>
+      </li>
+      <li>
+        <span class="n">四</span>
+        <span class="t">绿色标准与认证<small>让好环境、好产品离公众更近</small></span>
+        <span class="bar wip"><i></i></span>
+        <span class="c wip">建设中</span>
+      </li>
+      <li>
+        <span class="n">五</span>
+        <span class="t">文化传承<small>六尺巷的礼让，以及它今天怎么用</small></span>
+        <span class="bar wip"><i></i></span>
+        <span class="c wip">建设中</span>
+      </li>
+    </ol>
+  </section>
+
+  <!-- 卷二：循环 -->
+  <section class="sec">
+    <div class="sec-head">
+      <span class="no">卷二</span>
+      <h2>一件东西的一生</h2>
+    </div>
+    <div class="cycle">
+      <div><div class="k">01 · 减量</div><div class="v">先不买</div><div class="d">能不用就不用，能少用就少用。</div><span class="tag">查「源头减量」→</span></div>
+      <div><div class="k">02 · 再用</div><div class="v">多用几次</div><div class="d">修、借、换、共享，让一件物品服务更久。</div><span class="tag">查「再利用案例」→</span></div>
+      <div><div class="k">03 · 分好</div><div class="v">分得清楚</div><div class="d">分类投放，把有害物质挡在源头之外。</div><span class="tag">查「分类与投放」→</span></div>
+      <div><div class="k">04 · 回归</div><div class="v">回到循环</div><div class="d">进入再生与处置链路，不留在环境里。</div><span class="tag">查「末端处置」→</span></div>
+    </div>
+  </section>
+
+  <!-- 卷三：数字 -->
+  <section class="sec">
+    <div class="sec-head">
+      <span class="no">卷三</span>
+      <h2>资料库现状</h2>
+    </div>
+    <div class="figures">
+      <div class="box">
+        <div class="v">603<span>份</span></div>
+        <div class="k">收录资料<b>截至 2026-10-20，实时统计</b></div>
+      </div>
+      <div class="box">
+        <div class="v">17<span>个</span></div>
+        <div class="k">主题<b>按工作领域与资料类型归并</b></div>
+      </div>
+      <div class="box">
+        <div class="v">372<span>家</span></div>
+        <div class="k">发布机构<b>来自政府、研究机构、企业与社会组织</b></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 卷四：检索 -->
+  <section class="sec">
+    <div class="sec-head">
+      <span class="no">卷四</span>
+      <h2>检索</h2>
+    </div>
+    <form class="search" onsubmit="return false;">
+      <input type="text" placeholder="输入关键词，例如：塑料、化学品目录、垃圾分类">
+      <button type="submit">检索</button>
+    </form>
+    <div class="hot">
+      <span class="label">常被查询</span>
+      <a href="#">塑料污染</a>
+      <a href="#">危险化学品目录</a>
+      <a href="#">化学品分类标签</a>
+      <a href="#">电商化学品管理</a>
+      <a href="#">垃圾分类</a>
+    </div>
+  </section>
+
+  <!-- 卷五：支持 -->
+  <section class="sec">
+    <div class="sec-head">
+      <span class="no">卷五</span>
+      <h2>一起做</h2>
+    </div>
+    <div class="support">
+      <div>
+        <h3>资料库免费开放</h3>
+        <p>如果它对你的工作有用，欢迎参与共建，把你的案例与报告放进来；或者捐助一次绿色行动。</p>
+      </div>
+      <div class="btns">
+        <a class="solid" href="#">我要共建</a>
+        <a href="#">捐助行动</a>
+      </div>
+    </div>
+  </section>
+
+  <footer class="colophon">
+    <div class="row"><b>机构</b><span>安徽省六尺巷慈善基金会　成立于 2017 年 12 月 12 日</span></div>
+    <div class="row"><b>地址</b><span>安徽省合肥市蜀山区潜山南路卓誉中心 2303</span></div>
+    <div class="row"><b>数据</b><span>资料数据截至 2026-10-20；口径与更新规则见「信息公开」</span></div>
+    <div class="row"><b>授权</b><span>每条资料标注原始发布机构与许可；转载请保留来源</span></div>
+    <div class="row"><b>样板</b><span>这是设计样板，不是正式页面。文案、数字与颜色待机构确认。</span></div>
+  </footer>
+
+</div>
+</body>
+</html>

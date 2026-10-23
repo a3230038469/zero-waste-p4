@@ -99,7 +99,7 @@ async function load(): Promise<void> {
     errorText.value =
       response?.status === 403
         ? '当前账号不是管理员。'
-        : (response?.data?.error?.message ?? '拉取失败，看看后端（:4000）在不在。')
+        : (response?.data?.error?.message ?? '反馈列表读取失败，请稍后再试。')
     items.value = []
   } finally {
     loading.value = false

@@ -21,13 +21,17 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 import {
   approveContribution,
+  CONTRIBUTION_PARSE_LABEL,
+  CONTRIBUTION_STATUS_LABEL,
   fetchAdminContributions,
   openContributionFile,
   rejectContribution,
   type AdminContribution,
   type AdminContributionCounts,
+  type ContributionParseState,
   type ContributionStatus
 } from '../api/contributions'
+import { publicErrorDetail, publicErrorText } from '../api/http'
 import { formatBytes } from '../utils/format'
 
 const items = ref<AdminContribution[]>([])
@@ -39,6 +43,10 @@ const actingId = ref('')
 const statusFilter = ref<ContributionStatus | ''>('pending')
 /** 检索词（标题/机构/文件名/投稿人）；队列长了以后这一栏是主要找稿手段 */
 const keyword = ref('')
+/** 分页状态：默认每页 20 条；切筛选/搜索/刷新时重置到第 1 页 */
+const page = ref(1)
+const pageSize = ref(20)
+const total = ref(0)
 
 const FILTERS: { value: ContributionStatus | ''; label: string }[] = [
   { value: 'pending', label: '待审核' },
@@ -49,11 +57,14 @@ const FILTERS: { value: ContributionStatus | ''; label: string }[] = [
 
 const hasItems = computed(() => items.value.length > 0)
 
+/**
+ * 面向用户的错误文案：一律本地固定中文（task-18 B-1）。
+ * 后端原文里可能带内部引擎地址，不能直接弹给用户。
+ */
 function errorMessage(err: unknown, fallback: string): string {
-  const response = (err as { response?: { status?: number; data?: { error?: { message?: string } } } })
-    .response
-  if (response?.status === 403) return '当前账号不是管理员。'
-  return response?.data?.error?.message ?? fallback
+  const status = (err as { response?: { status?: number } }).response?.status
+  if (status === 403) return '当前账号不是管理员。'
+  return publicErrorText(err, fallback)
 }
 
 async function load(): Promise<void> {
@@ -62,14 +73,17 @@ async function load(): Promise<void> {
     const data = await fetchAdminContributions({
       status: statusFilter.value,
       keyword: keyword.value.trim(),
-      pageSize: 100
+      page: page.value,
+      pageSize: pageSize.value
     })
     items.value = data.items ?? []
     counts.value = data.counts ?? { pending: 0, approved: 0, rejected: 0 }
+    total.value = data.total ?? 0
     errorText.value = ''
   } catch (err) {
-    errorText.value = errorMessage(err, '拉取失败，看看后端（:4000）在不在。')
+    errorText.value = errorMessage(err, '审核队列拉取失败，请稍后再试。')
     items.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
@@ -77,16 +91,19 @@ async function load(): Promise<void> {
 
 function switchFilter(value: ContributionStatus | ''): void {
   statusFilter.value = value
+  page.value = 1
   void load()
 }
 
 /** 检索：回车或点「搜索」才请求（不逐字打后端） */
 function search(): void {
+  page.value = 1
   void load()
 }
 
 function resetKeyword(): void {
   keyword.value = ''
+  page.value = 1
   void load()
 }
 
@@ -100,7 +117,10 @@ async function viewFile(row: AdminContribution): Promise<void> {
   try {
     await openContributionFile(row.id)
   } catch (err) {
-    ElMessage.error(errorMessage(err, '原件打不开（可能已被清理）'))
+    // 弹窗被浏览器拦截时，err 没有 response，publicErrorText 会误判成“连不上服务器”，
+    // 这里优先保留 openContributionFile 给出的明确中文原因。
+    const raw = err instanceof Error ? err.message : ''
+    ElMessage.error(raw.includes('拦截') ? raw : errorMessage(err, '原件打不开（可能已被清理）'))
   }
 }
 
@@ -122,8 +142,14 @@ async function approve(row: AdminContribution): Promise<void> {
     ElMessage.success(res.message || '已通过')
     await load()
   } catch (err) {
-    // ⚠️ 这里是「没入成库」。后端已经保证状态仍是待审核，所以只要把原因显示出来
-    ElMessage.error(errorMessage(err, '入库失败，状态仍是待审核'))
+    // ⚠️ 这里是「没入成库」。后端已经保证状态仍是待审核，所以把原因显示出来 ——
+    // 但原因要先过清洗（publicErrorDetail）：带内部引擎地址 / 英文堆栈的一律不显示。
+    const detail = publicErrorDetail(err)
+    ElMessage.error(
+      detail
+        ? `入库失败，状态仍是待审核（${detail}）`
+        : '入库失败，状态仍是待审核，请稍后再试或联系管理员。'
+    )
     await load()
   } finally {
     actingId.value = ''
@@ -161,15 +187,46 @@ async function reject(row: AdminContribution): Promise<void> {
   }
 }
 
-function statusTag(status: ContributionStatus): { type: 'success' | 'warning' | 'danger'; text: string } {
-  if (status === 'approved') return { type: 'success', text: '已通过' }
-  if (status === 'rejected') return { type: 'danger', text: '已退回' }
-  return { type: 'warning', text: '待审核' }
+/**
+ * 状态标签（2026-10-21 起「已通过」再细分引擎解析进度）
+ *
+ * 「通过」只是把文件送进了知识库；引擎解析完（completed）才算真的能被问答引用。
+ * 这里如实标出「解析中 / 已入库 / 解析失败」，避免管理员以为通过后就立刻搜得到。
+ */
+function statusTag(row: {
+  status: ContributionStatus
+  parseState?: ContributionParseState
+}): { type: 'success' | 'warning' | 'danger'; text: string } {
+  const statusText = CONTRIBUTION_STATUS_LABEL[row.status] ?? '状态未知'
+  if (row.status === 'approved') {
+    const parse = row.parseState
+    if (parse === 'completed') {
+      return { type: 'success', text: statusText + ' · ' + CONTRIBUTION_PARSE_LABEL.completed }
+    }
+    if (parse === 'failed') {
+      return { type: 'danger', text: statusText + ' · ' + CONTRIBUTION_PARSE_LABEL.failed }
+    }
+    if (parse && parse !== 'unknown') {
+      return { type: 'warning', text: statusText + ' · ' + CONTRIBUTION_PARSE_LABEL[parse] }
+    }
+    return { type: 'success', text: statusText }
+  }
+  if (row.status === 'rejected') return { type: 'danger', text: statusText }
+  return { type: 'warning', text: statusText }
 }
 
+/**
+ * 时间按**本地时区**显示（2026-10-21 · task-18 B-4）。
+ *
+ * 以前直接切 ISO 字符串（UTC），比本地早 8 小时；现在用 new Date 转本地时区，
+ * 与导出的 CSV 口径一致（带秒）。
+ */
 function fmtTime(value: string): string {
   if (!value) return '—'
-  return value.replace('T', ' ').slice(0, 16)
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return value.replace('T', ' ').slice(0, 19)
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
 onMounted(() => {
@@ -221,7 +278,7 @@ onMounted(() => {
       <el-empty v-if="!loading && !hasItems" description="这个状态下暂时没有投稿" />
 
       <el-table v-else v-loading="loading" :data="items" class="ct-table">
-        <el-table-column label="标题" min-width="200">
+        <el-table-column label="标题" min-width="180">
           <template #default="{ row }">
             <div class="cell-title">{{ row.title }}</div>
             <div v-if="row.note" class="cell-note">{{ row.note }}</div>
@@ -235,7 +292,7 @@ onMounted(() => {
           </template>
         </el-table-column>
 
-        <el-table-column label="元数据" min-width="180">
+        <el-table-column label="元数据" min-width="160">
           <template #default="{ row }">
             <div class="cell-sub">
               {{ [row.org, row.year, row.type, row.tags].filter(Boolean).join(' · ') || '—' }}
@@ -256,7 +313,7 @@ onMounted(() => {
 
         <el-table-column label="状态" width="150">
           <template #default="{ row }">
-            <el-tag :type="statusTag(row.status).type" size="small">{{ statusTag(row.status).text }}</el-tag>
+            <el-tag :type="statusTag(row).type" size="small">{{ statusTag(row).text }}</el-tag>
             <div v-if="row.status === 'rejected'" class="cell-sub reason">{{ row.reason }}</div>
             <div v-else-if="row.status === 'approved'" class="cell-sub">{{ fmtTime(row.reviewedAt) }}</div>
           </template>
@@ -273,12 +330,31 @@ onMounted(() => {
               >
                 通过
               </el-button>
-              <el-button size="small" :disabled="actingId === row.id" @click="reject(row)">退回</el-button>
+              <el-button
+                size="small"
+                :loading="actingId === row.id"
+                :disabled="actingId === row.id"
+                @click="reject(row)"
+              >
+                退回
+              </el-button>
             </template>
             <span v-else class="cell-sub">已处理</span>
           </template>
         </el-table-column>
       </el-table>
+
+      <div v-if="total > pageSize" class="pagination-wrap">
+        <el-pagination
+          v-model:current-page="page"
+          v-model:page-size="pageSize"
+          :total="total"
+          :page-sizes="[20, 50, 100]"
+          layout="total, sizes, prev, pager, next, jumper"
+          @current-change="() => void load()"
+          @size-change="() => { page = 1; void load() }"
+        />
+      </div>
     </template>
   </section>
 </template>
@@ -406,5 +482,11 @@ onMounted(() => {
   text-align: left;
   text-decoration: underline;
   word-break: break-all;
+}
+
+.pagination-wrap {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
 }
 </style>

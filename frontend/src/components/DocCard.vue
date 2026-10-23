@@ -39,7 +39,7 @@
 import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { LARGE_FILE_LIMIT } from '../api/docs'
+import { isPdfTitle, LARGE_FILE_LIMIT } from '../api/docs'
 import type { DocItem } from '../api/types'
 import { useDocActions } from '../composables/useDocActions'
 import { formatBytes, formatYear } from '../utils/format'
@@ -65,12 +65,21 @@ const downloading = computed(() => downloadingId.value === props.doc.id)
 const tooLarge = computed(() => props.doc.size > LARGE_FILE_LIMIT)
 
 /**
+ * 这份资料是不是 PDF（公-4）。
+ * 非 PDF（.docx/.txt/.xlsx）浏览器里渲染不了，卡片上**不给预览按钮** ——
+ * 之前只按体积判断，给了 .docx 预览按钮，点进去是一片空白或英文报错。
+ */
+const isPdfDoc = computed(() => isPdfTitle(props.doc.title))
+
+/**
  * 卡片上的「预览」（2026-10-18 晚按用户拍板改）：
  * 不再就地弹层，而是**跳到详情页并带 `?preview=1`**，由详情页在本页展开预览区。
  * 这样全站只有一套预览实现（详情页那块），卡片只负责把读者送过去。
  */
 function onPreview(): void {
   if (tooLarge.value) return
+  if (!isPdfDoc.value) return
+  if (locked('preview')) return
   void router.push({ path: `/doc/${props.doc.id}`, query: { preview: '1' } })
 }
 
@@ -105,9 +114,20 @@ const dirClass = computed(() => DIR_CLASS[props.doc.direction ?? ''] ?? 'dir-non
 function shortOrg(org: string): string {
   const raw = (org ?? '').trim()
   if (!raw) return ''
+  // 2026-10-21（T3 · P2-1 / P3-8 / 公众-10）：
+  //   之前**不管中英文**都按分隔符切，于是「World Bank」被切成「World…」
+  //   （切在词中间），纯英文机构名看起来像被截断了。
+  //   现在：只有含中日韩字符的机构名（中文联合发文「A 委 B 部 C 局…」）才切，
+  //   纯拉丁机构名整体返回，末尾由 CSS 的 ellipsis 正常省略。
+  if (!hasCjk(raw)) return raw
   const parts = raw.split(/[\s、,，;；/／]+/).filter(Boolean)
   if (parts.length <= 1) return parts[0] ?? ''
   return `${parts[0]}…`
+}
+
+/** 字符串里有没有中日韩字符（用来区分「中文联合发文」与「英文机构名」） */
+function hasCjk(text: string): boolean {
+  return /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/.test(text)
 }
 </script>
 
@@ -124,7 +144,7 @@ function shortOrg(org: string): string {
       <p class="doc-org" :title="doc.org">{{ shortOrg(doc.org) }}</p>
 
       <div class="doc-tags">
-        <span v-for="t in shownTags" :key="t" class="tag">{{ t }}</span>
+        <span v-for="t in shownTags" :key="t" class="tag" :title="t">{{ t }}</span>
         <span v-if="restTags > 0" class="tag tag--rest">+{{ restTags }}</span>
       </div>
     </RouterLink>
@@ -138,13 +158,16 @@ function shortOrg(org: string): string {
 
       <div v-if="actions" class="card-actions">
         <button
+          v-if="isPdfDoc"
           type="button"
           class="act act--preview"
-          :disabled="tooLarge"
+          :disabled="tooLarge || locked('preview')"
           :title="
             tooLarge
               ? `文件约 ${formatBytes(doc.size)}，超过在线预览上限，请下载原件查看`
-              : '在详情页里打开预览'
+              : locked('preview')
+                ? '预览功能需要登录'
+                : '在详情页里打开预览'
           "
           @click="onPreview"
         >
@@ -287,6 +310,15 @@ function shortOrg(org: string): string {
   padding: 2px 8px;
 }
 
+/* VI-02：标签 >6 字才会折行（实测第一屏 18 张卡全单行）——
+   给标签加最大宽度 + ellipsis（全名在 title 上），保证同排卡片底缘永远整齐。 */
+.tag {
+  max-width: 132px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .tag--rest {
   color: var(--zw-muted);
   background: #f1f4f1;
@@ -308,8 +340,10 @@ function shortOrg(org: string): string {
   font-variant-numeric: tabular-nums;
 }
 
+/* 重复副本徽标（QA-SHF-06）：amber #c8871f on soft #fdf3e0 ≈2.8:1 不达标，
+   换深琥珀 --zw-amber-ink #8a5a12 ≈7:1（令牌本来就是为此建的）。 */
 .dup-flag {
-  color: var(--zw-amber);
+  color: var(--zw-amber-ink);
   background: var(--zw-amber-soft);
   border-radius: 6px;
   padding: 2px 8px;
@@ -348,6 +382,15 @@ function shortOrg(org: string): string {
   cursor: default;
 }
 
+/* 下载按钮：与「预览」视觉平权（白底实线描边，虚线只留给「需登录」锁定态）。
+   VI-07：虚线语义回收 —— 普通下载曾经长得像被禁用的样子（与预览差 3 档权重），
+   现在与预览同色族不同档：同 mint 底，但实线边框、无填充差异。 */
+.act--download {
+  font-weight: 600;
+  color: var(--zw-green-deep);
+  border-color: var(--zw-line-strong);
+}
+
 .act--preview {
   font-weight: 600;
   color: var(--zw-green-deep);
@@ -355,9 +398,19 @@ function shortOrg(org: string): string {
   background: var(--zw-mint-2);
 }
 
-/* 下载对游客关着时不装死：置灰 + 标题里写明「需登录」，点了会带去登录页 */
+/* 下载对游客关着时不装死：置灰 + 标题里写明「需登录」，点了会带去登录页。
+   QA-ALL-04：锁定态语义统一 = 虚线描边（全站只有锁定按钮才用虚线）。 */
 .act--locked {
+  font-weight: 400;
   color: var(--zw-muted);
+  background: #fff;
   border-style: dashed;
+  border-color: var(--zw-line-strong);
+}
+
+/* 键盘焦点与 hover 同样有去处（卡片脚部的按钮原来没有 focus 态） */
+.act:focus-visible {
+  outline: 2px solid var(--zw-green);
+  outline-offset: 2px;
 }
 </style>

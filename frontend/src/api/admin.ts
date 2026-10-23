@@ -5,10 +5,95 @@
  * 登录凭证由 api/http.ts 的请求拦截器统一附上（`Authorization: Bearer <token>`），
  * 后端查这个账号的 `role` 是不是 admin（见 backend/src/admin/guard.ts）。
  * 原来的共用口令 `X-Admin-Token` 已从这一层彻底移除。
+ *
+ * 【统一文案表（操作员口径）】2026-10-21 T4：管理台各页的提示语都出自这张表，
+ * 不要再写「看看后端（:4000）在不在」这种开发口吻 —— 操作员看不懂，
+ * 也不知道该找谁。后端给出的 error.message 优先直接显示；后端没给时才用下面这些。
+ *
+ * | 场景 | 统一说法 |
+ * | --- | --- |
+ * | 资料列表读不出来 | 资料列表暂时读不出来，请稍后再试。 |
+ * | 用户列表读不出来 | 用户名单暂时读不出来，请稍后再试。 |
+ * | 反馈列表读不出来 | 反馈列表读取失败，请稍后再试。 |
+ * | 机构信息读不出来 | 机构信息读取失败，请刷新页面重试。 |
+ * | 不是管理员 | 当前账号不是管理员。 |
+ * | 登录过期 / 没权限（403） | 没有下载权限，或登录已过期。请重新登录后再试。 |
+ * | 资料确实没了（404） | 这份资料已经不在了（可能已被删除），刷新一下列表看看。 |
+ * | 删除失败 | 删除失败，请稍后再试 |
+ * | 重新上传失败 | 重新上传失败，请稍后再试 |
+ * | 上传失败 | 上传失败，请稍后再试 |
+ * | 导出失败 | 导出失败，请稍后再试 |
+ * | 保存失败 | 保存失败，请稍后再试。 |
+ * | 引擎 Key 没填 | 没填新的 API Key，引擎继续用现在那个（已配置，没改动）。 |
+ * | 自检没跑起来 | 自检没跑起来，请稍后再试。 |
+ *
+ * 数字口径：状态标签一律用 KNOWLEDGE_STATE_LABEL（6 值枚举），
+ * 页面上不允许出现 success / deleting / parsing 这类英文原值。
  */
 import http from './http'
 import { describeBlobError, saveBlob } from '../utils/download'
 import type { GuestPermissionsPayload } from './guest'
+import type { FacetItem } from './types'
+
+/* ------------------------------------------------------------------ *
+ * 资料处理状态：前端与后端共用同一张表（契约 C5）
+ *
+ * 后端会把引擎原值（success / error / parsing / deleting …）归一到这 6 个值；
+ * 这里再兜一层归一，防止后端未升级时把英文原值漏到页面上（页面上出现
+ * "success" / "deleting" 这种词，运营根本看不懂）。
+ * ------------------------------------------------------------------ */
+
+/** 资料的处理状态 */
+export type KnowledgeState = 'completed' | 'failed' | 'processing' | 'pending' | 'deleted' | 'unknown'
+
+/** 状态 → 页面上的说法（表格标签、统计数字都用这一份，不要各写各的） */
+export const KNOWLEDGE_STATE_LABEL: Record<KnowledgeState, string> = {
+  completed: '已入库',
+  failed: '解析失败',
+  processing: '解析中',
+  pending: '待解析',
+  deleted: '已删除',
+  unknown: '状态未知'
+}
+
+/** 状态 → 标签颜色（Element Plus 的 type） */
+export const KNOWLEDGE_STATE_TAG: Record<KnowledgeState, 'success' | 'danger' | 'warning' | 'info'> = {
+  completed: 'success',
+  failed: 'danger',
+  processing: 'warning',
+  pending: 'info',
+  deleted: 'info',
+  unknown: 'info'
+}
+
+/**
+ * 把后端可能给出的各种值归一到 6 值枚举。
+ * 兼容后端未升级时的引擎原值：success→completed、error→failed、
+ * parsing→processing、deleting→deleted，其余一律 unknown。
+ */
+export function normalizeKnowledgeState(raw: string | null | undefined): KnowledgeState {
+  const v = (raw ?? '').trim().toLowerCase()
+  switch (v) {
+    case 'completed':
+    case 'success':
+    case 'done':
+      return 'completed'
+    case 'failed':
+    case 'error':
+      return 'failed'
+    case 'processing':
+    case 'parsing':
+    case 'finalizing':
+      return 'processing'
+    case 'pending':
+      return 'pending'
+    case 'deleted':
+    case 'deleting':
+      return 'deleted'
+    default:
+      return 'unknown'
+  }
+}
 
 /** 管理视角的一条资料 */
 export interface AdminKnowledgeItem {
@@ -28,18 +113,101 @@ export interface AdminKnowledgeItem {
   meta: { org: string; year: string; type: string; tags: string }
 }
 
+/** 全库状态分布（页面顶部那排数字的权威来源） */
+export interface AdminKnowledgeFacets {
+  all: number
+  completed: number
+  processing: number
+  /** 解析失败（要重传的那种） */
+  failed: number
+  /**
+   * 解析成功但摘要没生成（2026-10-22 起单独计数）。
+   * 多数是扫描件/纯图片 PDF 没有可读正文，引擎主动跳过摘要，不算故障；
+   * 不能算进 failed，否则后台会一直报「失败 N 份」吓人。
+   */
+  nosummary: number
+  /** 没填机构/年份/类型标签的份数（与上面几项可重叠） */
+  untagged: number
+}
+
 export interface AdminKnowledgeList {
   success: boolean
   total: number
   items: AdminKnowledgeItem[]
+  /** facets=1 时后端回全库分布；没回就说明后端还不支持，前端退回本页统计 */
+  facets?: AdminKnowledgeFacets
+  /** 后端支持分页时会回传当前页与每页条数（未升级时这两个字段不存在） */
+  page?: number
+  pageSize?: number
 }
 
-/** 拉知识库资料列表（管理视角） */
-export async function fetchKnowledgeList(): Promise<AdminKnowledgeList> {
-  const res = await http.get<AdminKnowledgeList>('/admin/knowledge', {
-    silent: true
-  })
+/** 列表查询参数（后端支持后由后端分页；未升级时后端会忽略 page/pageSize） */
+export interface KnowledgeListParams {
+  page?: number
+  pageSize?: number
+  keyword?: string
+  /** 状态筛选：按「分组状态」筛（completed / processing / failed / nosummary / untagged） */
+  status?: KnowledgeState | 'nosummary' | 'untagged' | 'all'
+  /** 要全库状态分布时传 true（页面顶部数字靠它，别再用当前页自己数） */
+  facets?: boolean
+}
+
+/**
+ * 拉知识库资料列表（管理视角）。
+ *
+ * 带上分页参数：后端升级后一次只回一页（列表响应从 200KB+ 降到几 KB）；
+ * 后端还没升级时会忽略这些参数、照旧回全量，前端据此自动退回本地分页。
+ */
+export async function fetchKnowledgeList(
+  params: KnowledgeListParams = {}
+): Promise<AdminKnowledgeList> {
+  const res = await http.get<AdminKnowledgeList>('/admin/knowledge', { params })
   return res.data
+}
+
+/** 公开检索页的筛选候选（类型 / 机构 / 年份 / 主题标签） */
+export interface DocFacets {
+  types: FacetItem[]
+  orgs: FacetItem[]
+  years: FacetItem[]
+  tags: FacetItem[]
+}
+
+/**
+ * 读筛选候选词。
+ * ⚠️ 必须走 http（统一 baseURL + 登录凭证），不能用裸 fetch：
+ *    裸 fetch 打的是前端开发服务器（5173），部署后就是打错地址。
+ */
+export async function fetchDocFacets(): Promise<DocFacets> {
+  const res = await http.get<DocFacets>('/docs/facets')
+  return res.data
+}
+
+/**
+ * 下载一份资料的原件。
+ *
+ * 走统一 http（带登录凭证）：后台下载走的是公开下载接口 /docs/:id/download，
+ * 匿名会被拒（403），带凭证才给文件。之前这里用裸 fetch 不带凭证，
+ * 老师一点「下载」就弹「下载失败（403），这份资料可能已经被删掉了」——
+ * 其实文件好好的，是没带凭证。
+ */
+export async function downloadKnowledgeFile(id: string, fileName: string): Promise<void> {
+  try {
+    const res = await http.get<Blob>(`/docs/${encodeURIComponent(id)}/download`, {
+      responseType: 'blob',
+      silent: true
+    })
+    saveBlob(res.data, fileName)
+  } catch (err) {
+    const status = (err as { response?: { status?: number } }).response?.status
+    if (status === 403) {
+      throw new Error('没有下载权限，或登录已过期。请重新登录后再试。')
+    }
+    if (status === 404) {
+      throw new Error('这份资料已经不在了（可能已被删除），刷新一下列表看看。')
+    }
+    throw new Error(await describeBlobError(err, '下载失败，请稍后再试'))
+  }
 }
 
 /** 允许上传的资料类型（与引擎侧支持的一致） */
@@ -183,9 +351,7 @@ export interface ParserConfigPayload {
 
 /** 读解析引擎设置 */
 export async function fetchParserConfig(): Promise<ParserConfigPayload> {
-  const res = await http.get<ParserConfigPayload>('/admin/parser-config', {
-    silent: true
-  })
+  const res = await http.get<ParserConfigPayload>('/admin/parser-config')
   return res.data
 }
 
@@ -256,16 +422,20 @@ export async function runSelfcheck(): Promise<SelfcheckPayload> {
   return res.data
 }
 
-/** 管理视角的一个注册用户（手机号已脱敏） */
+/** 管理视角的一个注册用户 */
 export interface AdminUserItem {
   id: string
   name: string
   org: string
   occupation: string
   topics: string[]
-  /** 已脱敏，形如 138****8888 */
+  /** 手机号（后端给的是完整号码；导出 CSV 时前端会做脱敏） */
   phone: string
   createdAt: string
+  /** 身份：admin = 管理员，其他为普通用户（契约 P1-9，后端未升级时这个字段没有） */
+  role?: string
+  /** 账号状态（如 active / disabled）。后端未升级时这个字段没有 */
+  status?: string
 }
 
 export interface AdminUserList {
@@ -274,12 +444,90 @@ export interface AdminUserList {
   items: AdminUserItem[]
 }
 
-/** 拉注册用户列表（管理视角；手机号由后端脱敏，前端拿到就是打码后的） */
+/** 拉注册用户列表（管理视角） */
 export async function fetchUserList(): Promise<AdminUserList> {
-  const res = await http.get<AdminUserList>('/admin/users', {
-    silent: true
-  })
+  const res = await http.get<AdminUserList>('/admin/users')
   return res.data
+}
+
+/** 管理员修改某个用户资料（契约：PATCH /admin/users/:id） */
+export interface AdminUserPatch {
+  name?: string
+  org?: string
+  occupation?: string
+  topics?: string[]
+  /** 角色只能从固定选项里选（user / admin），不接受自由文本 */
+  role?: 'user' | 'admin'
+}
+
+export interface AdminUserUpdateResult {
+  success: boolean
+  message?: string
+  /** 回读后的用户（后端未实现该接口时返回空） */
+  user?: AdminUserItem
+}
+
+/**
+ * 管理员修改某个用户的资料。
+ *
+ * ⚠️ 后端尚未提供 PATCH /admin/users/:id（目前只有 PATCH /auth/me 改自己）。
+ *    这里先把对接写好：接口到位即可用；没到位时抛中文错，页面照常显示，不静默。
+ */
+export async function updateAdminUser(
+  id: string,
+  patch: AdminUserPatch
+): Promise<AdminUserUpdateResult> {
+  try {
+    const res = await http.patch<AdminUserUpdateResult>(
+      `/admin/users/${encodeURIComponent(id)}`,
+      patch,
+      { silent: true }
+    )
+    return res.data
+  } catch (err) {
+    const status = (err as { response?: { status?: number; data?: { error?: { message?: string } } } }).response?.status
+    const backendMessage = (err as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message
+    if (status === 404 || status === 405 || status === 501) {
+      throw new Error('后端还没有提供「修改用户资料」接口，这次改动没有保存。')
+    }
+    if (status === 403) {
+      throw new Error('当前账号不是管理员，改不了别人的资料。')
+    }
+    if (status === 400) {
+      throw new Error(backendMessage ?? '保存失败，请检查填写内容')
+    }
+    throw err
+  }
+}
+
+export interface ResetPasswordResult {
+  success: boolean
+  message: string
+  user?: { id: string; name: string; phone: string }
+}
+
+/**
+ * 管理员把用户密码重置为初始密码 123456。
+ *
+ * 为什么不是「查看密码」：库里只有 bcrypt 单向哈希，无法反推原文。
+ * 重置后原密码立即失效，页面要提醒管理员转告用户尽快修改。
+ */
+export async function resetAdminUserPassword(id: string): Promise<ResetPasswordResult> {
+  try {
+    const res = await http.post<ResetPasswordResult>(
+      `/admin/users/${encodeURIComponent(id)}/reset-password`,
+      {},
+      { silent: true }
+    )
+    return res.data
+  } catch (err) {
+    const status = (err as { response?: { status?: number; data?: { error?: { message?: string } } } }).response?.status
+    const backendMessage = (err as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message
+    if (status === 403) throw new Error('当前账号不是管理员，不能重置别人的密码。')
+    if (status === 404) throw new Error('找不到这个用户，可能已被删除。')
+    if (backendMessage) throw new Error(backendMessage)
+    throw new Error('重置密码失败，请稍后重试。')
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -326,9 +574,7 @@ export interface AdminFeedbackList {
 
 /** 拉访客反馈列表（已按提交时间倒序） */
 export async function fetchFeedbackList(): Promise<AdminFeedbackList> {
-  const res = await http.get<AdminFeedbackList>('/admin/feedback', {
-    silent: true
-  })
+  const res = await http.get<AdminFeedbackList>('/admin/feedback')
   return res.data
 }
 
@@ -349,6 +595,15 @@ export interface AgentEditableConfig {
   fallback_response: string
   /** true = 思考模式（先想再答），false = 快速模式（直接答） */
   thinking: boolean
+  /** 视觉模型（用户上传图片提问时由它看图）；空串 = 引擎没配 */
+  vlm_model_id: string
+  /** 检索重排模型；空串 = 引擎没配 */
+  rerank_model_id: string
+  /**
+   * 摘要模型（**知识库级** summary_model_id，不在智能体 config 里）。
+   * 保存时后端会单独写知识库配置，并回读校验「除它以外别的都没动」。
+   */
+  summary_model_id: string
 }
 
 /** 只读展示的 4 组字段 */
@@ -374,12 +629,97 @@ export interface AgentConfigPayload {
   models: Array<{ id: string; name: string; status: string }>
   /** 非空说明引擎没连上、models 是空的（接口本身仍是 200） */
   modelsError: string
+  /** 非空说明知识库那边的摘要模型没读到（不影响别的字段照常显示） */
+  summaryModelError?: string
 }
 
 /** 读智能体设置（管理视角） */
 export async function fetchAgentConfig(): Promise<AgentConfigPayload> {
-  const res = await http.get<AgentConfigPayload>('/admin/agent', {
-    silent: true
+  const res = await http.get<AgentConfigPayload>('/admin/agent')
+  return res.data
+}
+
+/* ------------------------------------------------------------------ *
+ * 模型选择（2026-10-21 新增：系统设置页把引擎里的模型都摆出来）
+ * ------------------------------------------------------------------ *
+ *
+ * 三类可改（回答 / 看图 / 重排）走同一份智能体配置；
+ * 向量 / 摘要 / 解析引擎**只读** —— 引擎没有可安全调用的更新接口。
+ */
+
+/** 下拉里的一项 */
+export interface ModelOption {
+  id: string
+  name: string
+  /** active / downloading / download_failed */
+  status: string
+}
+
+/** 按类型分好组的模型清单（类型由后端分组，前端不自己按 type 猜） */
+export interface ModelGroups {
+  qa: ModelOption[]
+  vlm: ModelOption[]
+  embedding: ModelOption[]
+  rerank: ModelOption[]
+}
+
+/** 智能体上当前绑定的三项（可改） */
+export interface AgentModelBindings {
+  model_id: string
+  vlm_model_id: string
+  rerank_model_id: string
+}
+
+/** 知识库上绑定的模型（只读） */
+export interface KbModelBindings {
+  id: string
+  name: string
+  embeddingModelId: string
+  summaryModelId: string
+  vlmModelId: string
+  vlmEnabled: boolean
+  parserRules: Array<{ fileTypes: string; engine: string }>
+}
+
+export interface ModelSettingsPayload {
+  success: boolean
+  models: ModelGroups
+  /** 非空 = 模型列表没拉到（接口本身仍是 200） */
+  modelsError: string
+  current: AgentModelBindings
+  kb: KbModelBindings | null
+  kbError: string
+  /** 三行只读项为什么不能改 */
+  notes: { embedding: string; summary: string; parser: string }
+}
+
+/** 读「模型选择」（模型清单 + 当前绑定） */
+export async function fetchModelSettings(): Promise<ModelSettingsPayload> {
+  const res = await http.get<ModelSettingsPayload>('/admin/model-settings')
+  return res.data
+}
+
+/** 保存请求体：只这三项可改，空串 = 不改 */
+export interface ModelSettingsPatch {
+  model_id?: string
+  vlm_model_id?: string
+  rerank_model_id?: string
+}
+
+export interface ModelSettingsSaveResult {
+  success: boolean
+  message: string
+  changed: string[]
+  ignored: string[]
+  /** 保存后重新读到的视图（页面直接用，不靠本地猜） */
+  view: ModelSettingsPayload
+}
+
+/** 保存模型绑定。后端会先验「模型存在 + 类型对」，再走智能体配置的合并写入与回读校验 */
+export async function saveModelSettings(patch: ModelSettingsPatch): Promise<ModelSettingsSaveResult> {
+  const res = await http.put<ModelSettingsSaveResult>('/admin/model-settings', patch, {
+    silent: true,
+    timeout: 60_000
   })
   return res.data
 }
@@ -416,11 +756,21 @@ function exportFileName(kind: ExportKind): string {
   return `零废弃知识库-${EXPORT_LABELS[kind]}-${stamp}.csv`
 }
 
+/** 手机号脱敏：只保留后 4 位（138****8888 这种） */
+export function maskPhone(phone: string): string {
+  const digits = (phone ?? '').replace(/\D/g, '')
+  if (digits.length < 7) return phone ?? ''
+  return `${'*'.repeat(digits.length - 4)}${digits.slice(-4)}`
+}
+
 /**
  * 下载一份 CSV 报表。
  *
  * 失败时抛 `Error`，message 是可直接展示给用户的中文；
  * `silent: true` 是为了不让统一拦截器再补一条英文的 axios 原文。
+ *
+ * 注册用户名单的 CSV **手机号做脱敏**（只留后 4 位）：名单是个人信息，
+ * 导出后容易外传，页面表格里看得到完整号码就够了。
  */
 export async function exportCsv(kind: ExportKind): Promise<void> {
   try {
@@ -428,7 +778,13 @@ export async function exportCsv(kind: ExportKind): Promise<void> {
       responseType: 'blob',
       silent: true
     })
-    saveBlob(res.data, exportFileName(kind))
+    if (kind !== 'users') {
+      saveBlob(res.data, exportFileName(kind))
+      return
+    }
+    const text = await res.data.text()
+    const masked = text.replace(/(?<!\d)1\d{10}(?!\d)/g, (m) => maskPhone(m))
+    saveBlob(new Blob([masked], { type: 'text/csv;charset=utf-8' }), exportFileName(kind))
   } catch (err) {
     throw new Error(await describeBlobError(err, '导出失败，请稍后再试'))
   }
@@ -450,6 +806,12 @@ export interface AgentConfigPatch {
   fallback_response?: string
   /** true = 思考模式，false = 快速模式（布尔值，没有「空串 = 不改」这一说） */
   thinking?: boolean
+  /** 视觉模型；空串 = 不改这一项 */
+  vlm_model_id?: string
+  /** 检索重排模型；空串 = 不改这一项 */
+  rerank_model_id?: string
+  /** 摘要模型（知识库级）；空串 = 不改这一项 */
+  summary_model_id?: string
 }
 
 /** 回读校验的一项（老师要看得见「到底哪一项没过」） */
@@ -474,6 +836,14 @@ export interface AgentSaveResult {
   checks: AgentCheck[]
   models: Array<{ id: string; name: string; status: string }>
   modelsError: string
+  /** 这次摘要模型的写入结果（没提交这一项时是 null） */
+  summaryModel: {
+    changed: boolean
+    message: string
+    before: string
+    after: string
+    preserved: Array<{ key: string; ok: boolean }>
+  } | null
 }
 
 /** 保存智能体设置。后端会走「GET 全量 → 合并 → PUT 完整 config → 回读校验」 */
@@ -497,9 +867,7 @@ export async function saveAgentConfig(
 
 /** 读游客权限（开关清单 + 当前值）。需要管理员账号登录态 */
 export async function fetchGuestPermissions(): Promise<GuestPermissionsPayload> {
-  const res = await http.get<GuestPermissionsPayload>('/admin/guest-permissions', {
-    silent: true
-  })
+  const res = await http.get<GuestPermissionsPayload>('/admin/guest-permissions')
   return res.data
 }
 

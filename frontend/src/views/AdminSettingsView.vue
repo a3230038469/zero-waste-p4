@@ -23,6 +23,7 @@ import { ElMessage } from 'element-plus'
 import {
   fetchAgentConfig,
   fetchGuestPermissions,
+  fetchModelSettings,
   fetchParserConfig,
   runSelfcheck,
   saveAgentConfig,
@@ -31,6 +32,7 @@ import {
   type AgentCheck,
   type AgentConfigPayload,
   type GuestPermissionCheck,
+  type ModelOption,
   type ParserFieldCheck,
   type SelfcheckItem
 } from '../api/admin'
@@ -68,6 +70,8 @@ const agentKbMode = ref('')
 const agentKbIds = ref<string[]>([])
 const agentIntentPrompts = ref<Array<{ key: string; length: number }>>([])
 const agentMode = ref('')
+/** 知识库摘要模型读不到时的提示（不影响别的字段） */
+const agentSummaryError = ref('')
 
 /** 「详细设置」展开态：默认收起，只露模型与 API Key */
 const detailsOpen = ref(false)
@@ -81,7 +85,13 @@ const agentForm = ref({
   fallback_strategy: 'fixed',
   fallback_response: '',
   /** true = 思考模式（先想再答），false = 快速模式（直接答） */
-  thinking: false
+  thinking: false,
+  /** 视觉模型（详细设置里选） */
+  vlm_model_id: '',
+  /** 检索重排模型（详细设置里选） */
+  rerank_model_id: '',
+  /** 摘要模型（知识库级设置，后端单独写知识库并回读校验） */
+  summary_model_id: ''
 })
 /** 已保存、现在生效中的值（只用来判断「当前模型是否还在引擎里」） */
 const agentSaved = ref({ ...agentForm.value })
@@ -124,8 +134,12 @@ function applyAgentView(d: AgentConfigPayload): void {
     max_completion_tokens: d.editable?.max_completion_tokens ?? 0,
     fallback_strategy: d.editable?.fallback_strategy ?? 'fixed',
     fallback_response: d.editable?.fallback_response ?? '',
-    thinking: d.editable?.thinking === true
+    thinking: d.editable?.thinking === true,
+    vlm_model_id: d.editable?.vlm_model_id ?? '',
+    rerank_model_id: d.editable?.rerank_model_id ?? '',
+    summary_model_id: d.editable?.summary_model_id ?? ''
   }
+  agentSummaryError.value = d.summaryModelError ?? ''
   agentSaved.value = { ...agentForm.value }
 }
 
@@ -135,7 +149,7 @@ async function loadAgent(): Promise<void> {
   try {
     applyAgentView(await fetchAgentConfig())
   } catch (err) {
-    agentError.value = errorMessage(err, '智能体设置拉取失败，看看后端（:4000）在不在。')
+    agentError.value = errorMessage(err, '智能体设置拉取失败，请稍后再试。')
   } finally {
     agentLoading.value = false
   }
@@ -159,25 +173,61 @@ async function submitAgentCard(): Promise<void> {
       max_completion_tokens: agentForm.value.max_completion_tokens,
       fallback_strategy: agentForm.value.fallback_strategy,
       fallback_response: agentForm.value.fallback_response,
-      thinking: agentForm.value.thinking
+      thinking: agentForm.value.thinking,
+      vlm_model_id: agentForm.value.vlm_model_id,
+      rerank_model_id: agentForm.value.rerank_model_id,
+      summary_model_id: agentForm.value.summary_model_id
     })
     applyAgentView(d.after)
     agentChecks.value = failedAgentChecks(d.checks)
     if (d.ignored && d.ignored.length > 0) {
       ElMessage.warning(`这几项填的是空值，已保持原样没改：${d.ignored.join('、')}`)
     }
-    // 顺手把填了新值的 MinerU API Key 一起存掉（没填就跳过）
-    const keySubmitted = await saveMineruKeyIfAny()
     if (agentChecks.value.length > 0) {
       ElMessage.error(`已写入，但有 ${agentChecks.value.length} 项回读校验没过`)
-    } else if (!keySubmitted) {
+    } else {
       ElMessage.success('已保存')
     }
   } catch (err) {
-    ElMessage.error(errorMessage(err, '保存失败，看看后端（:4000）在不在'))
+    ElMessage.error(errorMessage(err, '保存失败，请稍后再试。'))
     await loadAgent()
   } finally {
     agentSaving.value = false
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 详细设置里的「视觉模型 / rerank 模型」下拉选项（2026-10-21）
+ * ------------------------------------------------------------------ *
+ * 只取引擎模型清单里的 VLLM 类与 Rerank 类两份候选，其余一律不展示；
+ * 当前值读智能体配置（GET /admin/agent 的 editable），跟「保存」一起提交。
+ * ------------------------------------------------------------------ */
+
+const modelOptionsLoading = ref(false)
+const modelOptionsError = ref('')
+const vlmOptions = ref<ModelOption[]>([])
+const rerankOptions = ref<ModelOption[]>([])
+
+/** 引擎里正在下载 / 下载失败的模型，选了大概率跑不起来 */
+function modelDisabled(status: string): boolean {
+  return status !== 'active'
+}
+function modelLabel(m: ModelOption): string {
+  return m.status === 'active' ? m.name : `${m.name}（${m.status === 'downloading' ? '下载中' : '不可用'}）`
+}
+
+async function loadModelOptions(): Promise<void> {
+  modelOptionsLoading.value = true
+  modelOptionsError.value = ''
+  try {
+    const d = await fetchModelSettings()
+    vlmOptions.value = d.models?.vlm ?? []
+    rerankOptions.value = d.models?.rerank ?? []
+    modelOptionsError.value = d.modelsError ?? ''
+  } catch (err) {
+    modelOptionsError.value = errorMessage(err, '视觉模型 / rerank 模型的候选列表没拉到，下拉会是空的。')
+  } finally {
+    modelOptionsLoading.value = false
   }
 }
 
@@ -205,19 +255,30 @@ async function loadParser(): Promise<void> {
     const d = await fetchParserConfig()
     mineruConfigured.value = d.secrets?.['mineru_api_key']?.configured === true
   } catch (err) {
-    parserError.value = errorMessage(err, '解析引擎设置拉取失败，看看后端（:4000）在不在。')
+    parserError.value = errorMessage(err, '解析引擎设置拉取失败，请稍后再试。')
   } finally {
     parserLoading.value = false
   }
 }
 
 /**
- * 只有真填了新密钥才提交；空串绝不提交（后端也不接受空串当成新密钥）。
- * 返回「这次有没有提交 Key」——用来决定还要不要弹通用的「已保存」。
+ * 「解析引擎设置」区块的保存（2026-10-21 独立成块后，键不再跟着智能体设置一起存）。
+ *
+ * 口径：只有真填了新密钥才提交；空串绝不提交（后端也不接受空串当成新密钥）。
+ * 但空串**不能悄悄跳过** —— 要明确告诉老师「你现在填的是空的，引擎还是用原来那个」，
+ * 否则他会以为已经保存成功、其实什么都没变。
  */
-async function saveMineruKeyIfAny(): Promise<boolean> {
+async function submitParserCard(): Promise<void> {
+  if (parserSaving.value) return
   const key = mineruApiKey.value.trim()
-  if (!key) return false
+  if (!key) {
+    ElMessage.info(
+      mineruConfigured.value
+        ? '没填新的 API Key，引擎继续用现在那个（已配置，没改动）。'
+        : '还没填过 API Key，引擎现在没有可用的 MinerU 密钥。'
+    )
+    return
+  }
   parserSaving.value = true
   parserChecks.value = []
   try {
@@ -235,7 +296,6 @@ async function saveMineruKeyIfAny(): Promise<boolean> {
   } finally {
     parserSaving.value = false
   }
-  return true
 }
 
 /* ------------------------------------------------------------------ *
@@ -281,7 +341,7 @@ async function loadGuest(): Promise<void> {
   try {
     applyGuestView(await fetchGuestPermissions())
   } catch (err) {
-    guestError.value = errorMessage(err, '游客权限拉取失败，看看后端（:4000）在不在。')
+    guestError.value = errorMessage(err, '游客权限拉取失败，请稍后再试。')
   } finally {
     guestLoading.value = false
   }
@@ -313,7 +373,7 @@ async function submitGuest(): Promise<void> {
       ElMessage.warning(`这几项没有开关、已被忽略：${result.ignored.join('、')}`)
     }
   } catch (err) {
-    ElMessage.error(errorMessage(err, '保存失败，看看后端（:4000）在不在'))
+    ElMessage.error(errorMessage(err, '保存失败，请稍后再试。'))
     // 存失败也要让老师看到「现在生效的是什么」——重新拉一次，别让表单停在半改状态
     await loadGuest()
   } finally {
@@ -345,7 +405,7 @@ async function runCheck(): Promise<void> {
     if (result.ok) ElMessage.success('四项全部正常')
     else ElMessage.warning(`有 ${selfcheckItems.value.filter((i) => !i.ok).length} 项没通过，看下面的说明`)
   } catch (err) {
-    ElMessage.error(errorMessage(err, '自检失败，看看后端（:4000）在不在'))
+    ElMessage.error(errorMessage(err, '自检没跑起来，请稍后再试。'))
   } finally {
     selfchecking.value = false
   }
@@ -353,6 +413,7 @@ async function runCheck(): Promise<void> {
 
 onMounted(() => {
   void loadAgent()
+  void loadModelOptions()
   void loadParser()
   void runCheck()
   void loadGuest()
@@ -383,14 +444,13 @@ onMounted(() => {
 
       <p v-if="agentError" class="warn">{{ agentError }}</p>
       <p v-else-if="agentModelsError" class="warn">{{ agentModelsError }}</p>
+      <p v-else-if="agentSummaryError" class="warn">{{ agentSummaryError }}</p>
       <p v-else-if="agentModelMissing" class="warn">
         当前生效的模型（{{ agentSaved.model_id }}）在引擎里已经找不到了，请重新选一个再保存。
       </p>
       <p v-else-if="agentKbMode && agentKbMode !== 'selected'" class="warn">
         ⚠️ 智能体的知识库范围现在是「{{ agentKbMode }}」，会把不相干的库一起拉进检索。请到引擎里改回「按选择」。
       </p>
-
-      <p v-if="parserError" class="warn">{{ parserError }}</p>
 
       <div class="grid">
         <div class="field">
@@ -413,6 +473,64 @@ onMounted(() => {
         </div>
 
         <div class="field">
+          <label>摘要模型</label>
+          <el-select
+            v-model="agentForm.summary_model_id"
+            :loading="agentLoading"
+            :disabled="agentLoading || Boolean(agentModelsError)"
+            placeholder="跟随知识库配置"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="m in agentModels"
+              :key="m.id"
+              :value="m.id"
+              :label="agentModelLabel(m.name, m.status)"
+              :disabled="agentModelDisabled(m.status)"
+            />
+          </el-select>
+          <p class="hint">知识库级：决定资料摘要由哪个模型生成，不影响已有向量与检索。</p>
+        </div>
+
+        <div class="field">
+          <label>视觉模型</label>
+          <el-select
+            v-model="agentForm.vlm_model_id"
+            :loading="modelOptionsLoading"
+            :disabled="agentLoading || modelOptionsLoading"
+            placeholder="跟随引擎默认"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="m in vlmOptions"
+              :key="m.id"
+              :value="m.id"
+              :label="modelLabel(m)"
+              :disabled="modelDisabled(m.status)"
+            />
+          </el-select>
+        </div>
+
+        <div class="field">
+          <label>rerank 模型</label>
+          <el-select
+            v-model="agentForm.rerank_model_id"
+            :loading="modelOptionsLoading"
+            :disabled="agentLoading || modelOptionsLoading"
+            placeholder="跟随引擎默认"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="m in rerankOptions"
+              :key="m.id"
+              :value="m.id"
+              :label="modelLabel(m)"
+              :disabled="modelDisabled(m.status)"
+            />
+          </el-select>
+        </div>
+
+        <div class="field">
           <label>回答模式</label>
           <el-radio-group
             v-model="agentForm.thinking"
@@ -423,34 +541,97 @@ onMounted(() => {
             <el-radio-button :value="true">思考模式</el-radio-button>
           </el-radio-group>
         </div>
+      </div>
+      <p v-if="modelOptionsError" class="warn">{{ modelOptionsError }}</p>
 
-        <div class="field">
-          <label>
-            MinerU 云解析 API Key
-            <span class="key-state" :class="mineruConfigured ? 'on' : 'off'">
-              {{ mineruConfigured ? '已配置' : '未配置' }}
-            </span>
-          </label>
+      <div class="key-row">
+        <div class="key-head">
+          <label>MinerU 云解析 API Key</label>
+          <span class="key-state" :class="mineruConfigured ? 'on' : 'off'">
+            {{ mineruConfigured ? '已配置' : '未配置' }}
+          </span>
+        </div>
+        <p v-if="parserError" class="warn">{{ parserError }}</p>
+        <div class="key-body">
           <el-input
             v-model="mineruApiKey"
             type="password"
             show-password
-            placeholder="留空 = 不改"
+            placeholder="填新的密钥才会替换；留空 = 保持现在这个不变"
             autocomplete="new-password"
             :disabled="parserLoading || parserSaving"
           />
+          <el-button :loading="parserSaving" @click="submitParserCard">
+            {{ parserSaving ? '保存中…' : '保存密钥' }}
+          </el-button>
         </div>
+        <p class="hint">
+          密钥只存在服务器上，页面不会显示、也不会回显原值；留空点保存不会清空它，会明确告诉你「没改动」。
+        </p>
       </div>
 
       <div v-show="detailsOpen" class="details">
-        <div class="field">
-          <label>系统提示词 <span class="count">{{ agentForm.system_prompt.length }} 字</span></label>
-          <el-input
-            v-model="agentForm.system_prompt"
-            type="textarea"
-            :rows="10"
-            placeholder="智能体回答问题的总规则"
-          />
+        <div class="group">
+          <h4 class="group-title">回答细节</h4>
+          <div class="grid">
+            <div class="field">
+              <label>随机度</label>
+              <el-input-number
+                v-model="agentForm.temperature"
+                :min="0"
+                :max="1"
+                :step="0.1"
+                :precision="2"
+                style="width: 100%"
+              />
+              <p class="hint">0～1，越大越随机，越小越稳。</p>
+            </div>
+
+            <div class="field">
+              <label>长度上限</label>
+              <el-input-number
+                v-model="agentForm.max_completion_tokens"
+                :min="256"
+                :max="65536"
+                :step="512"
+                style="width: 100%"
+              />
+              <p class="hint">越大能写得越长，但也更慢；8192 够日常问答。</p>
+            </div>
+
+            <div class="field">
+              <label>答不上来时</label>
+              <el-select v-model="agentForm.fallback_strategy" style="width: 100%">
+                <el-option value="fixed" label="用固定文案" />
+                <el-option value="model" label="交给模型自由发挥" />
+              </el-select>
+            </div>
+          </div>
+
+          <div class="field wide">
+            <label>固定文案 <span class="count">{{ agentForm.fallback_response.length }} 字</span></label>
+            <el-input v-model="agentForm.fallback_response" type="textarea" :rows="5" />
+          </div>
+        </div>
+
+        <div class="group">
+          <h4 class="group-title">系统提示词</h4>
+          <div class="field">
+            <label>系统提示词 <span class="count">{{ agentForm.system_prompt.length }} 字</span></label>
+            <el-input
+              v-model="agentForm.system_prompt"
+              type="textarea"
+              :rows="10"
+              placeholder="智能体回答问题的总规则"
+            />
+          </div>
+        </div>
+
+        <div class="group">
+          <h4 class="group-title">解析引擎</h4>
+          <p class="hint">
+            PDF / Word / PPT / Excel 走云端解析（MinerU、AnyDoc），Markdown 与纯文本用引擎自带解析。解析引擎是知识库级配置，只能进引擎后台改，这里不提供切换。
+          </p>
         </div>
 
         <div class="readonly">
@@ -465,6 +646,7 @@ onMounted(() => {
         <el-button type="primary" :loading="agentSaving" @click="submitAgentCard">
           {{ agentSaving ? '保存中…' : '保存' }}
         </el-button>
+        <span class="foot-hint">保存模型、回答模式以及「详细设置」里的改动</span>
       </div>
 
       <div v-if="agentChecks.length" class="checks">
@@ -486,60 +668,7 @@ onMounted(() => {
       </div>
     </el-card>
 
-    <!-- ② 回答模型 -->
-    <el-card shadow="never" class="block">
-      <div class="block-head">
-        <h3 class="block-title">回答模型</h3>
-      </div>
-
-      <div class="grid">
-        <div class="field">
-          <label>随机度</label>
-          <el-input-number
-            v-model="agentForm.temperature"
-            :min="0"
-            :max="1"
-            :step="0.1"
-            :precision="2"
-            style="width: 100%"
-          />
-          <p class="hint">0～1，越大越随机，越小越稳。</p>
-        </div>
-
-        <div class="field">
-          <label>长度上限</label>
-          <el-input-number
-            v-model="agentForm.max_completion_tokens"
-            :min="256"
-            :max="65536"
-            :step="512"
-            style="width: 100%"
-          />
-          <p class="hint">越大能写得越长，但也更慢；8192 够日常问答。</p>
-        </div>
-
-        <div class="field">
-          <label>答不上来时</label>
-          <el-select v-model="agentForm.fallback_strategy" style="width: 100%">
-            <el-option value="fixed" label="用固定文案" />
-            <el-option value="model" label="交给模型自由发挥" />
-          </el-select>
-        </div>
-      </div>
-
-      <div class="field wide">
-        <label>固定文案 <span class="count">{{ agentForm.fallback_response.length }} 字</span></label>
-        <el-input v-model="agentForm.fallback_response" type="textarea" :rows="5" />
-      </div>
-
-      <div class="foot">
-        <el-button type="primary" :loading="agentSaving" @click="submitAgentCard">
-          {{ agentSaving ? '保存中…' : '保存' }}
-        </el-button>
-      </div>
-    </el-card>
-
-    <!-- ③ 游客权限 -->
+    <!-- ② 游客权限 -->
     <el-card shadow="never" class="block">
       <div class="block-head">
         <h3 class="block-title">游客权限</h3>
@@ -749,6 +878,46 @@ onMounted(() => {
   margin-top: 16px;
   padding-top: 14px;
   border-top: 1px dashed var(--zw-line);
+}
+/* 详细设置里的分组：回答细节 / 系统提示词 / 解析引擎 */
+.group + .group {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--zw-line);
+}
+.group-title {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--zw-text);
+}
+/* 云解析密钥：常显在卡片里，只有这里能改 */
+.key-row {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--zw-line);
+}
+.key-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: var(--zw-text);
+}
+.key-body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.key-body :deep(.el-input) {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+.foot-hint {
+  font-size: 12px;
+  color: var(--zw-faint);
 }
 .readonly {
   display: flex;

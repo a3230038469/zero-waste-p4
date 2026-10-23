@@ -1,0 +1,15 @@
+# 零废弃知识库 · 公开站点抓取规则
+# 2026-10-21（T3 · 公-7）新增。
+
+User-agent: *
+Allow: /
+
+# 管理台不对外，也不需要被收录
+Disallow: /admin
+Disallow: /admin/
+
+# 接口路径没有可抓取的页面
+Disallow: /api/
+
+# 站点地图：公网域名确认后，把这里改成绝对地址（https://<域名>/sitemap.xml）
+Sitemap: /sitemap.xml

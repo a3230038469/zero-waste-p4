@@ -8,10 +8,10 @@
  *
  * 契约见 docs/接口约定.md 第二节「会话（T5）」。
  *
- * ⚠️ 鉴权：演示阶段**故意不加**，保持开放，任何人建任何人的会话。
- *    交付前若要按用户隔离，在这里挂 userId 即可（改动点见下面 TODO 注释三处）——
- *    现在就把 userId 塞进 Conversation 模型也不合适：注册模块是别人的文件，
- *    且演示期根本没走登录。先把「一条会话 = 一段对话」这件事做干净。
+ * ✅ 鉴权（2026-10-21 · T1 账号与会话安全补上，P0-3）：
+ *    四个接口全部按**会话归属**校验，越权一律 403 且不返回任何内容。
+ *    归属怎么算在 ../chat/owner.ts（登录按 userId，匿名按服务端随机令牌）。
+ *    原来这里没做归属校验，任何人拿到会话 id 就能读走/删掉别人的会话。
  */
 import { Router, type Request, type Response, type NextFunction } from 'express'
 
@@ -19,7 +19,6 @@ import {
   ConversationNotFoundError,
   createConversation,
   deleteConversation,
-  getConversation,
   listConversations,
   listMessages,
   setEngineSessionId,
@@ -27,6 +26,12 @@ import {
   type ConversationSummary
 } from '../chat/store.js'
 import { EngineError, createAskSession } from '../weknora/index.js'
+import {
+  ConversationForbiddenError,
+  assertConversationOwner,
+  ownerIdOf,
+  resolveOwner
+} from '../chat/owner.js'
 
 const router = Router()
 
@@ -61,14 +66,16 @@ router.post('/conversations', async (req: Request, res: Response, next: NextFunc
     const body = (req.body ?? {}) as Record<string, unknown>
     const title = typeof body.title === 'string' ? body.title : ''
 
+    // 归属先定下来：这条会话从创建这一刻就属于某个人/某个匿名访客
+    const owner = resolveOwner(req, res)
+
     // 先落库再连引擎：库里的会话是主数据，引擎只是它的「脑子」
-    const created = await createConversation(title)
+    const created = await createConversation(ownerIdOf(owner), title)
     const engineSessionId = await tryCreateEngineSession(created.title)
     if (engineSessionId) {
       await setEngineSessionId(created.id, engineSessionId)
     }
 
-    // TODO(交付前按用户隔离)：给 Conversation 加 userId，这里从 req 取登录态写入
     const conversation: ConversationSummary = {
       ...created,
       engineReady: engineSessionId !== null
@@ -80,10 +87,11 @@ router.post('/conversations', async (req: Request, res: Response, next: NextFunc
 })
 
 // —— GET /conversations：会话列表 ——
-router.get('/conversations', async (_req: Request, res: Response, next: NextFunction) => {
+router.get('/conversations', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const items = await listConversations()
-    // TODO(交付前按用户隔离)：where: { userId }
+    // 只列本人（登录用户 or 本机匿名令牌）的会话
+    const owner = resolveOwner(req, res)
+    const items = await listConversations(ownerIdOf(owner))
     res.json({ success: true, items })
   } catch (err) {
     next(err)
@@ -94,13 +102,19 @@ router.get('/conversations', async (_req: Request, res: Response, next: NextFunc
 router.get('/conversations/:id/messages', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const id = String(req.params.id ?? '')
+    // 先校验归属：不是本人的会话直接 403，一个字都不回
+    const owner = resolveOwner(req, res)
+    await assertConversationOwner(id, owner)
     const conversation = await summarize(id)
     const messages = await listMessages(id)
-    // TODO(交付前按用户隔离)：校验这条会话是不是当前用户的，不是就 403
     res.json({ success: true, conversation, messages })
   } catch (err) {
     if (err instanceof ConversationNotFoundError) {
       fail(res, 404, 'CONVERSATION_NOT_FOUND', '这个对话不存在或已被删除')
+      return
+    }
+    if (err instanceof ConversationForbiddenError) {
+      fail(res, 403, 'CONVERSATION_FORBIDDEN', '无权访问这个对话')
       return
     }
     next(err)
@@ -111,15 +125,20 @@ router.get('/conversations/:id/messages', async (req: Request, res: Response, ne
 router.delete('/conversations/:id', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const id = String(req.params.id ?? '')
-    // 先确认存在：删一个不存在的会话回 404，前端才能区分「删掉了」和「本来就坏的」
-    await getConversation(id)
-    // TODO(交付前按用户隔离)：校验归属后再删
+    // 先校验归属：不是本人的会话直接 403，不碰它一根毫毛
+    // （不存在仍然回 404，前端才能区分「删掉了」和「本来就坏的」）
+    const owner = resolveOwner(req, res)
+    await assertConversationOwner(id, owner)
     await deleteConversation(id)
     // 引擎侧 session 不主动删 —— 它自己会过期，留着比调接口删更稳
     res.json({ success: true })
   } catch (err) {
     if (err instanceof ConversationNotFoundError) {
       fail(res, 404, 'CONVERSATION_NOT_FOUND', '这个对话不存在或已被删除')
+      return
+    }
+    if (err instanceof ConversationForbiddenError) {
+      fail(res, 403, 'CONVERSATION_FORBIDDEN', '无权访问这个对话')
       return
     }
     next(err)
@@ -129,7 +148,8 @@ router.delete('/conversations/:id', async (req: Request, res: Response, next: Ne
 // —— 路由级兜底：异常一律 JSON，不让前端收到 HTML 错误页 ——
 router.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   const message = err instanceof Error ? err.message : '服务器内部错误'
-  res.status(500).json({ success: false, error: { code: 'CHAT_INTERNAL_ERROR', message } })
+  console.error(`[chat] 内部错误: ${message}, requestId: ${_req.requestId || 'unknown'}`)
+  res.status(500).json({ success: false, error: { code: 'CHAT_INTERNAL_ERROR', message: '聊天服务暂时不可用，请稍后再试' } })
 })
 
 export default router

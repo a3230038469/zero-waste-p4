@@ -29,6 +29,17 @@
  *      - 「数据概览」「关于项目」两项撤掉：两个页面整页并进首页（关于项目的内容搬到首页
  *        分隔线以下，统计收成一张「按主题领域」的分布图），页面文件与路由一并删除。
  *      - 手机端汉堡菜单因此只剩「首页 / 我要投稿」两项；底部常驻条（找资料 / 问 AI）不变。
+ *   9. 2026-10-20（logo 替换，最终版）：品牌标识换成 docs/logo-2026-10-20 那套新 logo 的图标。
+ *      顶栏不放整条横版（用户对比过：整条锁合最窄也要 316px，且缩到能看清时字标 33px，
+ *      和 15.5px 的导航项比例失衡），改成「图标 40px + 一条 24px 高的细竖线 + 两行字」：
+ *      站名用宋体 21px（品牌气质靠它，21px 下 SimSun 渲染正常），下面一行机构副标 11.5px，
+ *      竖线颜色 #cfcabb、只到字块中间，起「图标 | 字块」的分隔作用但不抢眼。
+ *      顶栏高度随之从 112px 收回 76px（见下 .inner 与 App.vue 的 77px）。
+ *      手机端（≤720px）：图标 34px、竖线与副标隐去、站名 17px 无衬线
+ *      （小字号宋体只能落到 SimSun 合成粗体，会糊）。
+ *      页脚继续用整条 logo-horizontal.svg（80px 渲染正常）；旧的 zero-logo.png 已无任何页面引用。
+ *  10. 2026-10-21：删掉「AI 问答」左侧的绿色小圆点（用户要求「把这个绿点删掉」）。
+ *      NAV 里的 dot 字段与 .nav-link.has-dot::before 一并移除，四项导航一视同仁。
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -54,6 +65,12 @@ watch(
   { immediate: true }
 )
 
+/** 任何站内跳转后自动收起汉堡菜单 */
+watch(
+  () => route.fullPath,
+  () => { menuOpen.value = false }
+)
+
 /** 手机端汉堡菜单是否展开（桌面端不显示汉堡，此值恒为 false） */
 const menuOpen = ref(false)
 
@@ -77,15 +94,16 @@ const CORE_PATHS: string[] = ['/shelf', '/chat']
  *
  * 顺序（2026-10-18 task-6）：首页 → 资料库 → AI 问答 → 我要投稿。
  * 「首页」回到第一位，`exact: true` 限定它只在 `/` 高亮；
- * `dot: true` 只给「AI 问答」，用于默认态就能看见的小圆点标记。
  * 「我要投稿」留在末位（B09 起就是公众参与的唯一入口，不该藏进页脚）。
+ * 2026-10-21：「AI 问答」左侧那个小圆点标记已按用户要求撤掉 —— 四项一视同仁，
+ * 不再给单项加装饰（选中态照旧靠背景色和加粗区分）。
  * ⚠️ 新增导航项时记得同步 SiteFooter 的「浏览」列 —— 两处顺序此前是对齐的。
  */
 const NAV = [
-  { to: '/', label: '首页', exact: true, dot: false },
-  { to: '/shelf', label: '资料库', exact: false, dot: false },
-  { to: '/chat', label: 'AI 问答', exact: false, dot: true },
-  { to: '/contribute', label: '我要投稿', exact: false, dot: false }
+  { to: '/', label: '首页', exact: true },
+  { to: '/shelf', label: '资料库', exact: false },
+  { to: '/chat', label: 'AI 问答', exact: false },
+  { to: '/contribute', label: '我要投稿', exact: false }
 ]
 
 /** 汉堡菜单项（手机端）：从 NAV 剔除两个核心功能，只留次要两项 */
@@ -105,11 +123,12 @@ onMounted(() => {
 <template>
   <header class="site-nav">
     <div class="zw-container inner">
-      <!-- 回首页改由 Logo 承担：悬停给 title 提示，读屏给 aria-label -->
+      <!-- 回首页改由 Logo 承担：悬停给 title 提示，读屏给 aria-label。
+           品牌区 = 图标 + 一条细竖线 + 两行字（宋体站名 / 机构副标）。竖线是 2026-10-20 用户指定的
+           「图标 | 字块」分隔，只到字块中间高度（24px），不压满，起到分开但不抢眼的作用。 -->
       <RouterLink to="/" class="brand" title="回到首页" aria-label="回到首页">
-        <span class="brand-mark" aria-hidden="true">
-          <img src="/zero-logo.png" alt="" class="brand-logo-img" width="32" height="32" />
-        </span>
+        <img src="/logo-mark-nav.svg" alt="" class="brand-mark" width="40" height="40" />
+        <span class="brand-vline" aria-hidden="true"></span>
         <span class="brand-text">
           <strong>零废弃知识库</strong>
           <em>六尺巷基金会</em>
@@ -123,8 +142,7 @@ onMounted(() => {
           :to="item.to"
           class="nav-link"
           :class="{
-            'is-current': item.exact ? $route.path === item.to : $route.path.startsWith(item.to),
-            'has-dot': item.dot
+            'is-current': item.exact ? $route.path === item.to : $route.path.startsWith(item.to)
           }"
         >
           {{ item.label }}
@@ -176,8 +194,8 @@ onMounted(() => {
        必须放在 header **外面**：.site-nav 带 backdrop-filter，会给 fixed 子元素当定位基准，
        留在里面 bottom:0 会贴到导航条底边而不是视口底边。 -->
   <nav v-if="!atFullBleed" class="mobile-bar" aria-label="核心功能">
-    <RouterLink to="/shelf" class="bar-btn bar-shelf">找资料</RouterLink>
-    <RouterLink to="/chat" class="bar-btn bar-chat">问 AI</RouterLink>
+    <RouterLink to="/shelf" class="bar-btn bar-shelf" @click="closeMenu">找资料</RouterLink>
+    <RouterLink to="/chat" class="bar-btn bar-chat" @click="closeMenu">问 AI</RouterLink>
   </nav>
 </template>
 
@@ -195,49 +213,55 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 20px;
-  min-height: 64px;
+  /* 桌面端顶栏 76px：40px 图标上下各留 18px。2026-10-20 之前为放整条横版 logo 曾加到 112px，
+     改成「图标 + 竖线 + 两行字」后收回来（App.vue 里全屏页高度同步改成减 77）。 */
+  min-height: 76px;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
   text-decoration: none;
   color: var(--zw-ink);
   flex-shrink: 0;
 }
 
 .brand-mark {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  overflow: hidden;
+  display: block;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
 }
 
-.brand-mark img {
-  width: 32px;
-  height: 32px;
-  object-fit: contain;
+/* 图标与字块之间的细竖线：颜色比正文淡一档，高度只到字块中间（24px） */
+.brand-vline {
+  width: 1px;
+  height: 24px;
+  background: #cfcabb;
+  flex-shrink: 0;
 }
 
 .brand-text {
   display: flex;
   flex-direction: column;
-  line-height: 1.2;
+  line-height: 1.16;
 }
 
+/* 宋体站名：品牌气质靠它；21px 下 SimSun 渲染正常（16px 以下才会糊） */
 .brand-text strong {
-  font-size: 16px;
-  letter-spacing: 0.01em;
+  font-family: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'SimSun', serif;
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--zw-ink);
 }
 
 .brand-text em {
   font-style: normal;
-  font-size: 11px;
-  color: var(--zw-muted);
-  letter-spacing: 0.08em;
+  font-size: 11.5px;
+  color: var(--zw-faint);
+  letter-spacing: 0.12em;
 }
 
 /* 桌面项间距统一 32px：左项右内边距 12 + 项间 8 + 右项左内边距 12 = 相邻两项文字间空白 32px。
@@ -271,16 +295,15 @@ onMounted(() => {
   background: var(--zw-mint);
 }
 
-/* 「AI 问答」的默认态视觉标记：标签左侧一个小圆点（不依赖 hover / 选中态） */
-.nav-link.has-dot::before {
-  content: '';
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-right: 6px;
-  vertical-align: middle;
-  border-radius: 50%;
-  background: var(--zw-green);
+/* QA-ALL-01：全站键盘可达。导航是键盘用户的第一站，焦点环从这层开始。
+   放在公共组件，覆盖整站每一页的导航与汉堡。 */
+.nav-link:focus-visible,
+.hamburger:focus-visible,
+.mobile-link:focus-visible,
+.login-link:focus-visible,
+.bar-btn:focus-visible {
+  outline: 2px solid var(--zw-green);
+  outline-offset: 2px;
 }
 
 /* 汉堡按钮：只在手机端出现（桌面端 display: none） */
@@ -380,9 +403,33 @@ onMounted(() => {
   .inner {
     flex-wrap: nowrap;
     gap: 10px;
+    /* 手机端顶栏回到 64px */
+    min-height: 64px;
   }
 
-  /* 副标题「六尺巷基金会」窄屏隐去，顶栏保持单行 64px */
+  .brand {
+    gap: 9px;
+  }
+
+  .brand-mark {
+    width: 34px;
+    height: 34px;
+  }
+
+  /* 窄屏横向紧张，竖线隐去 */
+  .brand-vline {
+    display: none;
+  }
+
+  /* 小字号用无衬线：17px 的宋体只能落到 SimSun 合成粗体，笔画会糊 */
+  .brand-text strong {
+    font-family: 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+    font-size: 17px;
+    font-weight: 650;
+    letter-spacing: 0.005em;
+  }
+
+  /* 副标题「六尺巷基金会」窄屏隐去，顶栏保持单行 */
   .brand-text em {
     display: none;
   }

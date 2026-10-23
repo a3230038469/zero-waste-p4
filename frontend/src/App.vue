@@ -70,8 +70,9 @@ const isConsole = computed(() => route.path.startsWith('/admin'))
 }
 
 /**
- * 全屏页（问答页）：去掉容器宽度上限与四周留白，高度只留顶部导航那 65px
- * （64px 内容高 + 1px 下边线），剩下的全部交给页面自己铺满。
+ * 全屏页（问答页）：去掉容器宽度上限与四周留白，高度只留顶部导航那 77px
+ * （76px 内容高 + 1px 下边线；手机端顶栏是 65px，见下面的 @media），
+ * 剩下的全部交给页面自己铺满。
  * 这里给的是**确定高度**，页面内就可以用 `height: 100%` 拿到它 ——
  * 比页面自己再算一次 `100vh` 稳（各页导航高度一旦变，只需改这一处）。
  * dvh 是移动端地址栏收放时更准的视口高度，不支持的浏览器退回 vh。
@@ -83,12 +84,20 @@ const isConsole = computed(() => route.path.startsWith('/admin'))
   max-width: none;
   margin: 0;
   padding: 0;
-  height: calc(100vh - 65px);
-  height: calc(100dvh - 65px);
+  height: calc(100vh - 77px);
+  height: calc(100dvh - 77px);
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* 手机端顶栏换回 64px 紧凑版 logo，全屏页要把高度让回来 */
+@media (max-width: 720px) {
+  .app-main.is-flush {
+    height: calc(100vh - 65px);
+    height: calc(100dvh - 65px);
+  }
 }
 
 /* 管理台没有公众顶部导航，整屏高度全给控制台 */

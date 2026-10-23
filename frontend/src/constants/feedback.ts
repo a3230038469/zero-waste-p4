@@ -53,8 +53,15 @@ const KIND_BY_SITE_REASON: Record<string, 'recommend' | 'other'> = {
   other: 'other'
 }
 
-/** 留言上限（后端正文上限 2000 字，这里先拦一道，省一次往返） */
-export const FEEDBACK_TEXT_MAX = 300
+/**
+ * 留言上限。
+ *
+ * ⚠️ 2026-10-21（T3 · P2-8）：原来这里是 300 字，后端 `api/feedback.ts`
+ *   的 FEEDBACK_MAX_MESSAGE_CHARS 是 2000 —— 两边不一致，用户写满 300 字就被
+ *   前端**静默截断**（提交函数里直接 .slice），反馈内容丢了还不告诉他。
+ *   现在以**后端 2000 字**为准，前端同一套上限，超长时明确报错而不是悄悄截断。
+ */
+export const FEEDBACK_TEXT_MAX = 2000
 
 /** 站点级反馈的必填提示语（弹窗与页面共用同一句，避免两处口径不一致） */
 export const SITE_FEEDBACK_HINT =
@@ -88,9 +95,15 @@ export async function submitFeedback(input: FeedbackInput): Promise<void> {
     ? (KIND_BY_DOC_REASON[input.reason] ?? 'other')
     : (KIND_BY_SITE_REASON[input.reason] ?? 'other')
 
+  const text = input.text.trim()
+  // 超长**明确报错**，不再静默截断（静默截断 = 用户以为提交了完整内容）
+  if (text.length > FEEDBACK_TEXT_MAX) {
+    throw new Error('留言最长 ' + FEEDBACK_TEXT_MAX + ' 字，请删掉超出部分再提交。')
+  }
+
   await postFeedback({
     kind,
-    message: input.text.trim().slice(0, FEEDBACK_TEXT_MAX),
+    message: text,
     contact: input.contact.trim(),
     reason: input.reason,
     scope: input.scope,

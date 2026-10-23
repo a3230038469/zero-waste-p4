@@ -68,3 +68,8 @@ backend/data/guest-ask-usage.json
 .agent/audit/**/_*
 # 第 3 批的验证截图目录（shots-verify / shots-b3 / shots-chat* …）同属过程产物，一并用通配收掉
 .agent/audit/shots-*/
+
+# ��ʱ��ͼĿ¼�������ã�����⣩
+.shots/
+
+frontend/_shot/

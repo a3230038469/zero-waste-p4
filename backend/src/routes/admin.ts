@@ -22,14 +22,18 @@
  *         行为分析 GET /analytics + 单账号明细 GET /user-activity（2026-10-19）。
  */
 import { PrismaClient } from '@prisma/client'
+import bcrypt from 'bcryptjs'
 import express, { Router, type Request, type Response } from 'express'
 import { requireAdmin, requireAdminGuard } from '../admin/guard.js'
 
 import {
   contentDisposition,
+  fetchKnowledgeBaseBindings,
   invalidateEngineListCache,
   listFiles,
   listQaModels,
+  normalizeParseState,
+  updateKnowledgeBaseSummaryModel,
   type KbDocInternal,
   type QaModelOption
 } from '../weknora/index.js'
@@ -47,6 +51,7 @@ import {
   type AgentConfigPatch,
   type AgentConfigView
 } from '../weknora/agent-config.js'
+import { getModelSettingsView, saveModelSettings } from '../weknora/model-settings.js'
 import {
   SELFCHECK_ENGINE_TIMEOUT_MS,
   getParserConfigView,
@@ -106,6 +111,160 @@ function env(name: string): string {
   return value
 }
 
+/**
+ * 引擎地址（T5 / P2-12）
+ *
+ * 原来这行字面量在文件里出现了四次（列表 / 上传 / 重传 / 删除），改环境变量要改四处，
+ * 漏一处就又是一条硬编码。现在收敛成两个函数：环境变量优先，兜底值只写这一处。
+ */
+function engineBaseUrl(): string {
+  return (env('WEKNORA_BASE_URL') || 'http://localhost:8080').replace(/\/+$/, '')
+}
+
+/** 向量服务（Ollama）地址 —— 同样收敛成一处 */
+function ollamaBaseUrl(): string {
+  return (env('OLLAMA_BASE_URL') || 'http://127.0.0.1:11434').replace(/\/+$/, '')
+}
+
+/* ------------------------------------------------------------------ *
+ * AI 可用性探针（契约 C3，公开只读）
+ * ------------------------------------------------------------------ *
+ *
+ * 给 GET /api/ai/status 用：只回答三件事 —— 能不能问 AI、为什么、给公众看的中文说明。
+ * 刻意不返回任何内部地址（引擎、向量服务的 IP 与端口都不外泄），也不返回堆栈；
+ * 公网能拿到的只有 available / reason / messageZh 三个字段。
+ */
+export interface AiAvailability {
+  /** 现在能不能用 AI 问答 */
+  available: boolean
+  /** 机器可读的判定码：ok / not_configured / engine_unreachable / vector_unavailable */
+  reason: string
+  /** 给公众看的中文说明 */
+  messageZh: string
+}
+
+/**
+ * 探一次 AI 问答能不能用。
+ * 顺序：配置齐不齐 → 引擎通不通 → 向量服务通不通。
+ * 任何一步失败都返回「不可用 + 一句人话」，不抛异常（这是给前端置灰按钮用的）。
+ */
+export async function probeAiAvailability(): Promise<AiAvailability> {
+  // 1) 配置：缺地址 / 缺 Key / 缺知识库 ID，都算「还没配好」
+  if (!env('WEKNORA_BASE_URL') || !env('WEKNORA_API_KEY') || !env('WEKNORA_KB_ID')) {
+    return {
+      available: false,
+      reason: 'not_configured',
+      messageZh: 'AI 问答服务还没有配置好，暂时用不了'
+    }
+  }
+
+  // 2) 引擎：读一次解析引擎清单（只读，不改任何东西）
+  try {
+    await listParserEngines(SELFCHECK_ENGINE_TIMEOUT_MS)
+  } catch {
+    return {
+      available: false,
+      reason: 'engine_unreachable',
+      messageZh: '资料库引擎暂时连不上，AI 问答暂时用不了'
+    }
+  }
+
+  // 3) 向量服务（Ollama）：问答检索要用它
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 3000)
+    try {
+      const vectorUrl = ollamaBaseUrl() + '/api/version'
+      const upstream = await fetch(vectorUrl, { signal: controller.signal })
+      if (!upstream.ok) throw new Error('HTTP ' + upstream.status)
+    } finally {
+      clearTimeout(timer)
+    }
+  } catch {
+    return {
+      available: false,
+      reason: 'vector_unavailable',
+      messageZh: '向量服务暂时连不上，AI 问答暂时用不了'
+    }
+  }
+
+  return {
+    available: true,
+    reason: 'ok',
+    messageZh: 'AI 问答服务正常，可以直接提问'
+  }
+}
+
+/** 引擎知识条目 → 管理台用的行 */
+function toEngineKnowledgeRow(raw: EngineKnowledge): Record<string, unknown> {
+  const cm = isRecordLike(raw.custom_metadata) ? raw.custom_metadata : {}
+  return {
+    id: str(raw.id),
+    title: str(raw.title) || str(raw.file_name),
+    fileName: str(raw.file_name),
+    fileType: str(raw.file_type),
+    size: num(raw.file_size),
+    // 契约 C5：解析状态统一 6 值（success→completed / error→failed / parsing→processing / deleting→deleted）
+    parseStatus: normalizeParseState(str(raw.parse_status)),
+    summaryStatus: str(raw.summary_status),
+    enabled: str(raw.enable_status) === 'enabled',
+    createdAt: str(raw.created_at),
+    folderPath: str(raw.folder_path),
+    meta: {
+      org: str(cm['org']),
+      year: str(cm['year']),
+      type: str(cm['type']),
+      tags: str(cm['tags'])
+    }
+  }
+}
+
+/** 一条管理行有没有机构/年份/类型标签（「无标签」筛选用） */
+function hasBusinessMeta(row: Record<string, unknown>): boolean {
+  const meta = isRecordLike(row['meta']) ? row['meta'] : {}
+  return Boolean(str(meta['org']) || str(meta['year']) || str(meta['type']))
+}
+
+/**
+ * 状态分组：必须和前端 AdminKnowledgeView 的 rowState 同一口径，否则页面数字和筛选结果对不上。
+ *   - 解析失败 → failed（真要重传的那种）
+ *   - 解析成功但摘要没生成 → nosummary（2026-10-22 拆出来的：多数是扫描件/纯图片 PDF
+ *     没有可读正文，引擎主动跳过摘要，不算故障；不能和解析失败混在一起报成「失败」）
+ *   - 解析或摘要还在跑 → processing
+ *   - 解析完成 且 摘要完成 → completed
+ */
+function knowledgeGroupStateOf(row: Record<string, unknown>): string {
+  const parse = str(row['parseStatus'])
+  const summary = str(row['summaryStatus'])
+  if (parse === 'failed') return 'failed'
+  if (summary === 'failed') return 'nosummary'
+  if (parse === 'processing' || parse === 'pending' || summary === 'processing' || summary === 'pending') {
+    return 'processing'
+  }
+  if (parse === 'completed' && summary === 'completed') return 'completed'
+  return 'unknown'
+}
+
+/** 拉引擎的一页资料 */
+async function fetchEngineKnowledgePage(
+  base: string,
+  apiKey: string,
+  kbId: string,
+  page: number,
+  pageSize: number
+): Promise<{ rows: EngineKnowledge[]; total: number }> {
+  const url =
+    `${base}/api/v1/knowledge-bases/${encodeURIComponent(kbId)}/knowledge` +
+    `?page=${page}&page_size=${pageSize}`
+  const upstream = await fetch(url, { headers: { 'X-API-Key': apiKey } })
+  if (!upstream.ok) {
+    throw new Error(`引擎返回 HTTP ${upstream.status}`)
+  }
+  const payload = (await upstream.json()) as { data?: EngineKnowledge[]; total?: unknown }
+  const rows = Array.isArray(payload.data) ? payload.data : []
+  return { rows, total: num(payload.total) }
+}
+
 interface EngineKnowledge {
   id?: unknown
   title?: unknown
@@ -163,7 +322,7 @@ function extractCreatedId(payload: unknown): string {
 router.get('/knowledge', async (req: Request, res: Response) => {
   if (!(await requireAdminGuard(req, res))) return
 
-  const base = (env('WEKNORA_BASE_URL') || 'http://localhost:8080').replace(/\/+$/, '')
+  const base = engineBaseUrl()
   const apiKey = env('WEKNORA_API_KEY')
   const kbId = env('WEKNORA_KB_ID')
   if (!apiKey || !kbId) {
@@ -178,50 +337,102 @@ router.get('/knowledge', async (req: Request, res: Response) => {
   }
 
   try {
-    const items: Array<Record<string, unknown>> = []
+    /**
+     * 真分页（T5 / 验收项 操-4）
+     *
+     * 原来这个接口不管前端传不传 page/pageSize，都把引擎的全量（600+ 条、200KB+）一次吐回来。
+     * 现在：
+     *   - 不带关键词/状态筛选 → 直接按 page/pageSize 问引擎要一页（快，流量小）；
+     *   - 带了关键词/状态筛选 → 先把引擎的页拉完再筛再切（筛选结果必须跨页才准）。
+     * 两种情况都回 { success, total, page, pageSize, items }，
+     * 前端拿到 total 大于 items 长度就知道要按服务端分页翻页。
+     */
+    const page = Math.max(1, Number(req.query.page) || 1)
+    const pageSize = Math.min(200, Math.max(1, Number(req.query.pageSize) || 20))
+    const keyword = String(req.query.keyword ?? '').trim().toLowerCase()
+    const statusFilter = String(req.query.status ?? '').trim().toLowerCase()
+
+    /**
+     * facets=1：除了当前页，还要回**全库**的状态分布（页面顶部那排数字）。
+     * 以前前端拿「当前页 20 条」去算，于是出现「全部 20 / 已入库 0 / 失败 20」——
+     * 库里明明 603 份，读起来像只有 20 份而且全废了（2026-10-21 老师反馈）。
+     */
+    // 前端 axios 传布尔 true 会被序列化成 "true"，手工测试习惯写 "1" —— 两种都认
+    const facetsRaw = String(req.query.facets ?? '').toLowerCase()
+    const wantFacets = facetsRaw === '1' || facetsRaw === 'true' || facetsRaw === 'yes'
+
     let total = 0
-    // 引擎按页返回（默认每页 20），这里翻页取全量；上限 10 页 × 200 = 2000 条
-    for (let page = 1; page <= 10; page += 1) {
-      const url =
-        `${base}/api/v1/knowledge-bases/${encodeURIComponent(kbId)}/knowledge` +
-        `?page=${page}&page_size=200`
-      const upstream = await fetch(url, { headers: { 'X-API-Key': apiKey } })
-      if (!upstream.ok) {
-        throw new Error(`引擎返回 HTTP ${upstream.status}`)
+    let items: Record<string, unknown>[] = []
+    let facets:
+      | { all: number; completed: number; processing: number; failed: number; nosummary: number; untagged: number }
+      | undefined
+
+    if (!keyword && !statusFilter && !wantFacets) {
+      // 快路径：只要一页
+      const one = await fetchEngineKnowledgePage(base, apiKey, kbId, page, pageSize)
+      items = one.rows.map(toEngineKnowledgeRow)
+      total = one.total
+    } else {
+      // 全量路径：拉全量（上限 10 页 × 200 = 2000 条）→ 算全库分布 → 筛 → 切页
+      const all: EngineKnowledge[] = []
+      for (let p = 1; p <= 10; p += 1) {
+        const one = await fetchEngineKnowledgePage(base, apiKey, kbId, p, 200)
+        all.push(...one.rows)
+        total = one.total
+        if (one.rows.length === 0 || (total > 0 && all.length >= total)) break
       }
-      const payload = (await upstream.json()) as { data?: EngineKnowledge[]; total?: unknown }
-      const rows = Array.isArray(payload.data) ? payload.data : []
-      total = num(payload.total)
-      for (const raw of rows) {
-        const cm = isRecordLike(raw.custom_metadata) ? raw.custom_metadata : {}
-        items.push({
-          id: str(raw.id),
-          title: str(raw.title) || str(raw.file_name),
-          fileName: str(raw.file_name),
-          fileType: str(raw.file_type),
-          size: num(raw.file_size),
-          parseStatus: str(raw.parse_status),
-          summaryStatus: str(raw.summary_status),
-          enabled: str(raw.enable_status) === 'enabled',
-          createdAt: str(raw.created_at),
-          folderPath: str(raw.folder_path),
-          meta: {
-            org: str(cm['org']),
-            year: str(cm['year']),
-            type: str(cm['type']),
-            tags: str(cm['tags'])
-          }
-        })
+      const mapped = all.map(toEngineKnowledgeRow)
+
+      facets = { all: mapped.length, completed: 0, processing: 0, failed: 0, nosummary: 0, untagged: 0 }
+      for (const row of mapped) {
+        const group = knowledgeGroupStateOf(row)
+        if (group === 'completed') facets.completed += 1
+        else if (group === 'processing') facets.processing += 1
+        else if (group === 'failed') facets.failed += 1
+        else if (group === 'nosummary') facets.nosummary += 1
+        if (!hasBusinessMeta(row)) facets.untagged += 1
       }
-      if (rows.length === 0 || (total > 0 && items.length >= total)) break
+
+      const filtered = mapped.filter((row) => {
+        if (keyword) {
+          const meta = isRecordLike(row['meta']) ? row['meta'] : {}
+          const haystack = [
+            str(row['title']),
+            str(row['fileName']),
+            str(row['fileType']),
+            str(meta['org']),
+            str(meta['year']),
+            str(meta['type']),
+            str(meta['tags'])
+          ]
+            .join(' ')
+            .toLowerCase()
+          if (!haystack.includes(keyword)) return false
+        }
+        if (statusFilter && statusFilter !== 'all') {
+          if (statusFilter === 'untagged') return !hasBusinessMeta(row)
+          return knowledgeGroupStateOf(row) === statusFilter
+        }
+        return true
+      })
+      total = filtered.length
+      items = filtered.slice((page - 1) * pageSize, page * pageSize)
     }
 
-    res.json({ success: true, total: total || items.length, items })
+    res.json({
+      success: true,
+      total: total || items.length,
+      page,
+      pageSize,
+      items,
+      ...(wantFacets && facets ? { facets } : {})
+    })
   } catch (err) {
-    const message = err instanceof Error ? err.message : '未知错误'
+    // 内部细节（引擎地址、HTTP 原文）只进日志，对外只给中文（契约 C6）
+    console.error(`[admin] 取资料列表失败：${err instanceof Error ? err.stack ?? err.message : '未知错误'}`)
     res.status(502).json({
       success: false,
-      error: { code: 'ENGINE_UNREACHABLE', message: `取资料列表失败：${message}` }
+      error: { code: 'ENGINE_UNAVAILABLE', message: '资料库引擎暂时不可用，请稍后重试' }
     })
   }
 })
@@ -250,7 +461,7 @@ async function handleKnowledgeUpload(
 ): Promise<void> {
   // 这一层花括号只是保留原正文的缩进，避免为抽函数产生两百行纯缩进 diff
   {
-    const base = (env('WEKNORA_BASE_URL') || 'http://localhost:8080').replace(/\/+$/, '')
+    const base = engineBaseUrl()
     const apiKey = env('WEKNORA_API_KEY')
     const kbId = env('WEKNORA_KB_ID')
     if (!apiKey || !kbId) {
@@ -321,14 +532,17 @@ async function handleKnowledgeUpload(
 
       // 文件传上去了，但业务元数据要单独写一次 —— 引擎上传接口的 metadata
       // 字段存的是「处理配置」，不是机构/年份这类业务标签（2026-10-08 实测确认）。
+      //
+      // 契约 C7（2026-10-21 用户拍板）：**上传即公开**，不做草稿中间态；
+      // 需要下架就直接删除文件。引擎的 custom_metadata 只吃字符串/数字/布尔，标记写字符串。
       const meta = collectMeta(req)
+      const hasBusinessMeta = Object.keys(meta).length > 0
+      meta['publish'] = 'true'
       const createdId = extractCreatedId(payload)
       let metaSaved = false
       let metaNote = ''
 
-      if (Object.keys(meta).length === 0) {
-        metaNote = '这次没填机构/年份/类型，这份资料暂时没有标签'
-      } else if (!createdId) {
+      if (!createdId) {
         metaNote = '文件已上传，但引擎没返回新条目编号，标签没能写上去'
       } else {
         const put = await fetch(`${base}/api/v1/knowledge/${encodeURIComponent(createdId)}`, {
@@ -338,6 +552,7 @@ async function handleKnowledgeUpload(
         })
         metaSaved = put.ok
         if (!put.ok) metaNote = `文件已上传，但标签写入失败（引擎返回 ${put.status}）`
+        else if (!hasBusinessMeta) metaNote = '这次没填机构/年份/类型，这份资料暂时没有标签'
       }
 
       // 新资料进来了，让书架的列表缓存立刻失效，否则要等最多 60 秒才看得见
@@ -345,7 +560,9 @@ async function handleKnowledgeUpload(
 
       res.json({
         success: true,
-        message: metaSaved ? '已上传，标签也写好了；引擎正在后台解析' : '已上传，引擎正在后台解析',
+        message: metaSaved
+          ? '已上传，标签也写好了；引擎正在后台解析'
+          : '已上传；引擎正在后台解析',
         metaSaved,
         metaNote,
         // 本次用的哪个引擎（信-31 问 2）：老师在页面上看得见，排查「慢 / 质量差异」时有据可查
@@ -514,7 +731,7 @@ function sanitizeCustomMeta(raw: unknown): Record<string, string | number | bool
  */
 router.post('/knowledge/:id/reupload', requireAdmin, async (req: Request, res: Response) => {
   const useLocalEngine = String(req.query.engine ?? '').toLowerCase() === 'local'
-  const base = (env('WEKNORA_BASE_URL') || 'http://localhost:8080').replace(/\/+$/, '')
+  const base = engineBaseUrl()
   const apiKey = env('WEKNORA_API_KEY')
   const kbId = env('WEKNORA_KB_ID')
   if (!apiKey || !kbId) {
@@ -780,7 +997,7 @@ function parseTopics(raw: string): string[] {
 router.delete('/knowledge/:id', async (req: Request, res: Response) => {
   if (!(await requireAdminGuard(req, res))) return
 
-  const base = (env('WEKNORA_BASE_URL') || 'http://localhost:8080').replace(/\/+$/, '')
+  const base = engineBaseUrl()
   const apiKey = env('WEKNORA_API_KEY')
   if (!apiKey) {
     res.status(503).json({
@@ -856,14 +1073,179 @@ router.get('/users', async (req: Request, res: Response) => {
       occupation: user.occupation,
       topics: parseTopics(user.topics),
       phone: user.phone,
+      // 身份（P1-9）：schema 里 role 默认 'user'（2026-10-19 加的），老数据没有时按 'user' 兜底
+      role: user.role === 'admin' ? 'admin' : 'user',
+      // 账号状态：**派生值**，不是库里的一列。
+      // 原因：prisma/schema.prisma 不在本次改动范围（禁改），也没有 status 列；
+      //       真要做「停用账号」需要先做 schema 迁移。现在一律 active，
+      //       将来加列时只改这一处即可（见报告「遗留风险」）。
+      status: 'active',
       createdAt: user.createdAt.toISOString()
     }))
     res.json({ success: true, total: items.length, items })
   } catch (err) {
-    const message = err instanceof Error ? err.message : '未知错误'
+    // 内部细节（数据库原文）只进日志，对外只给中文（契约 C6）
+    console.error(`[admin] 读用户列表失败：${err instanceof Error ? err.stack ?? err.message : '未知错误'}`)
     res.status(500).json({
       success: false,
-      error: { code: 'USERS_QUERY_FAILED', message: `读用户列表失败：${message}` }
+      error: { code: 'USERS_QUERY_FAILED', message: '读用户列表失败，请稍后重试' }
+    })
+  }
+})
+
+/**
+ * PATCH /api/admin/users/:id —— 管理员改某个注册用户的资料（契约 P1-9）
+ *
+ * 可改：name / org / occupation / topics / role。
+ * ⚠️ **不含「停用」**：prisma/schema.prisma 里没有 status 列（该文件不在本次改动范围），
+ *    真要停用账号得先做 schema 迁移。所以列表里的 status 现在是**派生值**（见 GET /users）。
+ *
+ * 鉴权用 requireAdmin（express 中间件）—— 改别人资料必须是管理员。
+ */
+router.patch('/users/:id', requireAdmin, async (req: Request, res: Response) => {
+  const id = String(req.params.id ?? '').trim()
+  if (!id) {
+    res.status(400).json({ success: false, error: { code: 'BAD_USER_ID', message: '没给用户编号' } })
+    return
+  }
+
+  const body = isRecordLike(req.body) ? (req.body as Record<string, unknown>) : {}
+  const patch: { name?: string; org?: string; occupation?: string; topics?: string; role?: string } = {}
+
+  for (const key of ['name', 'org', 'occupation'] as const) {
+    if (body[key] === undefined) continue
+    const value = typeof body[key] === 'string' ? body[key].trim() : ''
+    if (!value) {
+      res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_USER_FIELD', message: '姓名、机构、职业都不能留空' }
+      })
+      return
+    }
+    patch[key] = value
+  }
+
+  if (body['topics'] !== undefined) {
+    const raw = body['topics']
+    if (!Array.isArray(raw) || raw.some((item) => typeof item !== 'string')) {
+      res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_USER_FIELD', message: '关注议题要是文字列表' }
+      })
+      return
+    }
+    const topics = raw.map((item) => String(item).trim()).filter(Boolean)
+    patch.topics = JSON.stringify(topics)
+  }
+
+  if (body['role'] !== undefined) {
+    const role = typeof body['role'] === 'string' ? body['role'].trim() : ''
+    // 只认固定两个值，不接受自由文本（不然能凭空造出第三种身份）
+    if (role !== 'user' && role !== 'admin') {
+      res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_USER_ROLE', message: '身份只能是普通用户或管理员' }
+      })
+      return
+    }
+
+    // 角色变更保护：如果目标是 admin、新角色是 user，且全库 admin 总数 ≤ 1，拦截
+    if (role === 'user') {
+      const targetUser = await prisma.user.findUnique({ where: { id }, select: { role: true } })
+      if (targetUser?.role === 'admin') {
+        const adminCount = await prisma.user.count({ where: { role: 'admin' } })
+        if (adminCount <= 1) {
+          res.status(400).json({
+            success: false,
+            error: { code: 'LAST_ADMIN_PROTECTED', message: '不能撤销最后一位管理员，否则管理台将没人能进' }
+          })
+          return
+        }
+      }
+    }
+
+    patch.role = role
+  }
+
+  if (Object.keys(patch).length === 0) {
+    res.status(400).json({
+      success: false,
+      error: { code: 'NO_CHANGE', message: '没有要改的内容' }
+    })
+    return
+  }
+
+  try {
+    const user = await prisma.user.update({ where: { id }, data: patch })
+    res.json({
+      success: true,
+      message: '已保存',
+      user: {
+        id: user.id,
+        name: user.name,
+        org: user.org,
+        occupation: user.occupation,
+        topics: parseTopics(user.topics),
+        phone: user.phone,
+        role: user.role === 'admin' ? 'admin' : 'user',
+        status: 'active',
+        createdAt: user.createdAt.toISOString()
+      }
+    })
+  } catch (err) {
+    // P2025 = prisma 的「记录不存在」
+    if (err instanceof Error && (err as { code?: unknown }).code === 'P2025') {
+      res.status(404).json({ success: false, error: { code: 'USER_NOT_FOUND', message: '找不到这个用户' } })
+      return
+    }
+    console.error(`[admin] 改用户资料失败：${err instanceof Error ? err.stack ?? err.message : '未知错误'}`)
+    res.status(500).json({
+      success: false,
+      error: { code: 'USER_UPDATE_FAILED', message: '保存失败，请稍后重试' }
+    })
+  }
+})
+
+/**
+ * POST /api/admin/users/:id/reset-password —— 管理员把用户密码重置为初始密码
+ *
+ * 为什么不是「查看密码」：库里只有 bcrypt 单向哈希，无法反推原文（见 routes/auth.ts）。
+ * 用户忘记密码时只能重置。初始密码统一为 123456，重置后原密码立即失效。
+ * ⚠️ 初始密码较弱，页面要提醒管理员转告用户登录后尽快修改。
+ */
+const INITIAL_PASSWORD = '123456'
+
+router.post('/users/:id/reset-password', requireAdmin, async (req: Request, res: Response) => {
+  const id = String(req.params.id ?? '').trim()
+  if (!id) {
+    res.status(400).json({ success: false, error: { code: 'BAD_USER_ID', message: '没给用户编号' } })
+    return
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: { id: true, name: true, phone: true }
+    })
+    if (!user) {
+      res.status(404).json({ success: false, error: { code: 'USER_NOT_FOUND', message: '找不到这个用户' } })
+      return
+    }
+
+    const passwordHash = await bcrypt.hash(INITIAL_PASSWORD, 10)
+    await prisma.user.update({ where: { id }, data: { passwordHash } })
+    console.log(`[admin] 重置用户密码：userId=${id}`)
+
+    res.json({
+      success: true,
+      message: `密码已重置为初始密码 ${INITIAL_PASSWORD}`,
+      user
+    })
+  } catch (err) {
+    console.error(`[admin] 重置用户密码失败：${err instanceof Error ? err.stack ?? err.message : '未知错误'}`)
+    res.status(500).json({
+      success: false,
+      error: { code: 'PASSWORD_RESET_FAILED', message: '重置密码失败，请稍后重试' }
     })
   }
 })
@@ -1223,13 +1605,23 @@ function sendEngineFailure(res: Response, err: unknown, prefix: string): void {
   res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: `${prefix}：${message}` } })
 }
 
-/** GET /api/admin/agent —— 读智能体关键配置（6 个可改 + 4 组只读） */
+/** GET /api/admin/agent —— 读智能体关键配置（可改字段 + 4 组只读 + 知识库摘要模型） */
 router.get('/agent', async (req: Request, res: Response) => {
   if (!(await requireAdminGuard(req, res))) return
 
   const { models, modelsError } = await agentModels()
   try {
-    res.json(await getAgentConfig(models, modelsError))
+    // 摘要模型是**知识库级**的，不在智能体 config 里（2026-10-22 加进设置页）。
+    // 读不到知识库不影响智能体设置本身：空串 + 单独一句提示，页面照常能看能改别的。
+    let summaryModelId = ''
+    let summaryModelError = ''
+    try {
+      summaryModelId = (await fetchKnowledgeBaseBindings()).summaryModelId
+    } catch (err) {
+      summaryModelError = err instanceof EngineError ? err.message : '读知识库的摘要模型失败'
+    }
+    const view = await getAgentConfig(models, modelsError, summaryModelId)
+    res.json({ ...view, summaryModelError })
   } catch (err) {
     sendEngineFailure(res, err, '读智能体配置失败')
   }
@@ -1239,7 +1631,9 @@ router.get('/agent', async (req: Request, res: Response) => {
 function parseAgentPatch(raw: unknown): AgentConfigPatch {
   const obj: Record<string, unknown> = isRecordLike(raw) ? raw : {}
 
-  const strField = (key: 'system_prompt' | 'model_id' | 'fallback_strategy' | 'fallback_response') => {
+  const strField = (
+    key: 'system_prompt' | 'model_id' | 'fallback_strategy' | 'fallback_response' | 'vlm_model_id' | 'rerank_model_id'
+  ) => {
     if (!(key in obj)) return
     const value = obj[key]
     if (value === null) {
@@ -1293,6 +1687,8 @@ function parseAgentPatch(raw: unknown): AgentConfigPatch {
   strField('model_id')
   strField('fallback_strategy')
   strField('fallback_response')
+  strField('vlm_model_id')
+  strField('rerank_model_id')
   numField('temperature')
   numField('max_completion_tokens')
   boolField('thinking')
@@ -1333,7 +1729,9 @@ function parseAgentPatch(raw: unknown): AgentConfigPatch {
     'max_completion_tokens',
     'fallback_strategy',
     'fallback_response',
-    'thinking'
+    'thinking',
+    'vlm_model_id',
+    'rerank_model_id'
   ])
   const patch: AgentConfigPatch = {}
   for (const key of allowed) {
@@ -1358,6 +1756,12 @@ function parseAgentPatch(raw: unknown): AgentConfigPatch {
         case 'thinking':
           patch.thinking = obj['thinking'] as boolean
           break
+        case 'vlm_model_id':
+          patch.vlm_model_id = obj['vlm_model_id'] as string
+          break
+        case 'rerank_model_id':
+          patch.rerank_model_id = obj['rerank_model_id'] as string
+          break
         default:
           patch.max_completion_tokens = obj['max_completion_tokens'] as number
       }
@@ -1374,16 +1778,33 @@ function parseAgentPatch(raw: unknown): AgentConfigPatch {
  *    不校验的话老师选了却完全不知道没生效 —— 与 /qa-settings 同一教训。
  */
 router.put('/agent', requireAdmin, async (req: Request, res: Response) => {
+  // 🔴 summary_model_id 是**知识库级**设置（引擎智能体 config 里根本没有这个键）：
+  //    先从这里摘出来，剩下的才交给 parseAgentPatch —— 否则它会被当成未知字段丢掉。
+  const rawBody: Record<string, unknown> = isRecordLike(req.body) ? { ...req.body } : {}
+  let summaryModelId = ''
+  if ('summary_model_id' in rawBody) {
+    const value = rawBody['summary_model_id']
+    delete rawBody['summary_model_id']
+    if (typeof value === 'string') {
+      summaryModelId = value.trim()
+    } else if (value !== null && value !== undefined) {
+      sendEngineFailure(res, new EngineError('INVALID_AGENT_FIELD', 'summary_model_id 得是字符串', 400), '参数不合法')
+      return
+    }
+  }
+
   let patch: AgentConfigPatch
   try {
-    patch = parseAgentPatch(req.body)
+    patch = parseAgentPatch(rawBody)
   } catch (err) {
     sendEngineFailure(res, err, '参数不合法')
     return
   }
 
-  if (patch.model_id) {
-    const { models, modelsError } = await agentModels()
+  const { models, modelsError } = await agentModels()
+  // 回答模型与摘要模型都得是引擎里真实存在、类型对得上的模型（引擎对瞎编 id 是静默回退，必须自己拦）
+  const needsModelCheck = Boolean(patch.model_id) || Boolean(summaryModelId)
+  if (needsModelCheck) {
     if (modelsError) {
       res.status(502).json({
         success: false,
@@ -1391,7 +1812,8 @@ router.put('/agent', requireAdmin, async (req: Request, res: Response) => {
       })
       return
     }
-    if (!models.some((m) => m.id === patch.model_id)) {
+    const missing = [patch.model_id, summaryModelId].filter((id) => id && !models.some((m) => m.id === id))
+    if (missing.length > 0) {
       res.status(400).json({
         success: false,
         error: { code: 'MODEL_NOT_AVAILABLE', message: '引擎里没有这个模型（可能已被删除），请重新选一个' }
@@ -1400,12 +1822,60 @@ router.put('/agent', requireAdmin, async (req: Request, res: Response) => {
     }
   }
 
-  const { models, modelsError } = await agentModels()
   try {
-    const result = await updateAgentConfig(patch, models)
-    res.json({ ...result, models, modelsError })
+    // 顺序：先写知识库摘要模型（它自带回读校验与回滚），再写智能体配置；
+    // 任一步失败都会明确报错，不会出现「页面说已保存、其实只存了一半」。
+    const summaryModel = summaryModelId ? await updateKnowledgeBaseSummaryModel(summaryModelId) : null
+    const agentResult = Object.keys(patch).length > 0 ? await updateAgentConfig(patch, models) : null
+    // 写完后重新读一遍：页面以后端回显为准（摘要模型也从知识库重新取）
+    let summaryNow = summaryModelId
+    if (!summaryNow) {
+      summaryNow = await fetchKnowledgeBaseBindings()
+        .then((kb) => kb.summaryModelId)
+        .catch(() => '')
+    }
+    const view = await getAgentConfig(models, modelsError, summaryNow)
+    res.json({
+      success: true,
+      message: [agentResult?.message, summaryModel?.message].filter(Boolean).join('；') || '没有要改的字段',
+      changed: agentResult?.changed ?? [],
+      ignored: agentResult?.ignored ?? [],
+      before: agentResult?.before ?? view,
+      after: view,
+      checks: agentResult?.checks ?? [],
+      summaryModel,
+      models,
+      modelsError
+    })
   } catch (err) {
     sendEngineFailure(res, err, '保存智能体设置失败')
+  }
+})
+
+/* ------------------------------------------------------------------ *
+ * 模型选择（2026-10-21 新增：系统设置页把引擎里的模型摆出来）
+ * ------------------------------------------------------------------ *
+ *
+ *   GET  /api/admin/model-settings   模型清单（按类型分组）+ 当前绑定
+ *   PUT  /api/admin/model-settings   只改三项：回答 / 看图 / 重排（写智能体配置）
+ *
+ * 🔴 向量 / 摘要 / 解析引擎三项**只读**：引擎没有可安全调用的更新接口
+ *    （实测依据见 weknora/model-settings.ts 文件头），这里不要加写入。
+ */
+router.get('/model-settings', async (req: Request, res: Response) => {
+  if (!(await requireAdminGuard(req, res))) return
+  try {
+    res.json(await getModelSettingsView())
+  } catch (err) {
+    sendEngineFailure(res, err, '读模型设置失败')
+  }
+})
+
+router.put('/model-settings', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    res.json(await saveModelSettings(req.body))
+  } catch (err) {
+    sendEngineFailure(res, err, '保存模型设置失败')
   }
 })
 
@@ -1780,7 +2250,7 @@ router.post('/selfcheck', requireAdmin, async (_req: Request, res: Response) => 
   /* 3. 向量服务（Ollama）-------------------------------------------------- */
   {
     const started = Date.now()
-    const base = (env('OLLAMA_BASE_URL') || 'http://127.0.0.1:11434').replace(/\/+$/, '')
+    const base = ollamaBaseUrl()
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 3000)
     try {
@@ -1807,7 +2277,7 @@ router.post('/selfcheck', requireAdmin, async (_req: Request, res: Response) => 
         key: 'vector',
         label: '向量服务',
         ok: false,
-        message: `向量服务没启动：请先运行 Ollama（默认地址 127.0.0.1:11434）；AI 问答会暂时不可用`,
+        message: `向量服务没启动：请确认 Ollama 已经启动；AI 问答会暂时不可用`,
         ms: Date.now() - started,
         detail: aborted ? '超时' : err instanceof Error ? err.message : '未知错误'
       })

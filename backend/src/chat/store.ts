@@ -8,6 +8,9 @@
  *   - 密钥永不进代码：engineSessionId 只落库、不出接口（铁律 1）
  *   - 前端不直连引擎：全部经 weknora 层，密钥留在服务端（铁律 2）
  *   - 不改 WeKnora 源码：只调它的 HTTP 接口（铁律 3）
+ *
+ * 2026-10-21（T1 会话鉴权）：会话开始记归属（ownerId），
+ * 列表与新建都按归属过滤；归属怎么算、怎么比对在 ./owner.ts。
  */
 import { PrismaClient } from '@prisma/client'
 
@@ -120,6 +123,13 @@ interface ConversationRow {
   id: string
   title: string
   engineSessionId: string | null
+  /**
+   * 归属（2026-10-21 加 · T1 会话鉴权）：
+   *   'u:'+userId = 登录用户的会话；'t:'+令牌 = 匿名访客的会话；
+   *   null = 这个字段加之前的历史会话（谁都不属于）。
+   * 归属的判定与比对在 ./owner.ts，这里只负责存取。
+   */
+  ownerId: string | null
   createdAt: Date
   updatedAt: Date
 }
@@ -156,18 +166,30 @@ export class ConversationNotFoundError extends Error {
   }
 }
 
-/** 建一条空会话 */
-export async function createConversation(title?: string): Promise<ConversationSummary> {
+/**
+ * 建一条空会话。
+ *
+ * ⚠️ ownerId 必填：会话从这一刻起就有主了。
+ *    没有归属的会话谁都能读、谁都能删 —— 那正是这次要修的漏洞（P0-3）。
+ */
+export async function createConversation(ownerId: string, title?: string): Promise<ConversationSummary> {
   const clean = (title ?? '').trim().slice(0, 40)
   const row = await prisma.conversation.create({
-    data: { ...(clean ? { title: clean } : {}) }
+    data: { ownerId, ...(clean ? { title: clean } : {}) }
   })
   return toSummary(row, 0, null)
 }
 
-/** 会话列表：按最近活动倒序，带最后一条摘要与消息条数 */
-export async function listConversations(): Promise<ConversationSummary[]> {
+/**
+ * 会话列表：按最近活动倒序，带最后一条摘要与消息条数。
+ *
+ * ⚠️ 只列**这个归属**的会话（ownerId 精确匹配）：
+ *    以前这里是全表返回，库里 31 条历史会话互相全可见。
+ *    ownerId 为 null 的历史会话不匹配任何人，因此谁都列不出来。
+ */
+export async function listConversations(ownerId: string): Promise<ConversationSummary[]> {
   const rows = await prisma.conversation.findMany({
+    where: { ownerId },
     orderBy: { updatedAt: 'desc' },
     take: MAX_LIST,
     include: {

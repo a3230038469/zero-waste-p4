@@ -249,11 +249,13 @@ async function engineFetch(path: string, init: RequestInit = {}): Promise<Respon
     })
   } catch (err) {
     const aborted = err instanceof Error && err.name === 'AbortError'
+    // ⚠️ 契约 C6：对外的消息不许带内部地址（引擎 URL、路径、堆栈）。
+    //    内部细节只留在服务端日志里，这里只给一句中文。
     throw new EngineError(
       aborted ? 'ENGINE_TIMEOUT' : 'ENGINE_UNREACHABLE',
       aborted
-        ? `引擎响应超时（${ENGINE_TIMEOUT_MS / 1000}s）：${url}`
-        : `连不上引擎 ${url}，请确认引擎已启动、地址正确`,
+        ? `引擎响应超时（${ENGINE_TIMEOUT_MS / 1000}s），请稍后重试`
+        : '连不上资料库引擎，请确认引擎已启动',
       504
     )
   } finally {
@@ -263,10 +265,59 @@ async function engineFetch(path: string, init: RequestInit = {}): Promise<Respon
   if (res.status === 401 || res.status === 403) {
     throw new EngineError('ENGINE_UNAUTHORIZED', '引擎拒绝：API Key 无效或无权限', 502)
   }
+  if (res.status === 404) {
+    // 引擎明确说「没有这条」→ 归到 404 类错误，调用方（getDoc）再翻成 DOC_NOT_FOUND
+    throw new EngineError('ENGINE_NOT_FOUND', '引擎里没有这条记录', 404)
+  }
   if (!res.ok) {
-    throw new EngineError('ENGINE_BAD_STATUS', `引擎返回 ${res.status}：${url}`, 502)
+    throw new EngineError('ENGINE_BAD_STATUS', `引擎返回异常状态（${res.status}）`, 502)
   }
   return res
+}
+
+/**
+ * 引擎请求（管理台用）：与 engineFetch 的区别是**不把非 2xx 直接抛掉**，
+ * 而是把状态码、解析后的 JSON 和原始文本一起回给调用方 ——
+ * 「模型管理」要把「为什么建不了」如实告诉老师（比如引擎的校验报错）。
+ *
+ * 密钥仍然只在服务端使用：X-API-Key 由这里统一加，调用方拿不到。
+ */
+export async function engineRequest(
+  path: string,
+  init: RequestInit = {},
+  timeoutMs = ENGINE_TIMEOUT_MS
+): Promise<{ status: number; payload: unknown; text: string }> {
+  const apiKey = readEnv('WEKNORA_API_KEY')
+  if (!apiKey) {
+    throw new EngineError('ENGINE_NOT_CONFIGURED', '未配置 WEKNORA_API_KEY，无法访问引擎', 503)
+  }
+  const url = `${engineBaseUrl().replace(/\/+$/, '')}${path}`
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const res = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+      headers: { 'X-API-Key': apiKey, Accept: 'application/json', ...(init.headers ?? {}) }
+    })
+    const text = await res.text()
+    let payload: unknown = null
+    try {
+      payload = text ? (JSON.parse(text) as unknown) : null
+    } catch {
+      // 非 JSON（代理页 / 纯文本报错）→ payload 留 null，调用方看 text
+    }
+    return { status: res.status, payload, text }
+  } catch (err) {
+    const aborted = err instanceof Error && err.name === 'AbortError'
+    throw new EngineError(
+      aborted ? 'ENGINE_TIMEOUT' : 'ENGINE_UNREACHABLE',
+      aborted ? '引擎响应超时，请稍后重试' : '连不上资料库引擎，请确认引擎已启动',
+      504
+    )
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 function pickString(source: Record<string, unknown>, keys: string[]): string {
@@ -401,7 +452,9 @@ async function fetchEngineDocs(): Promise<KbDocInternal[]> {
     )
     const rows = extractArray(payload)
     if (rows.length === 0) break
-    for (const row of rows) all.push(toEngineDoc(row))
+    for (const row of rows) {
+      all.push(toEngineDoc(row))
+    }
     const total = isRecord(payload) ? pickNumber(payload, ['total']) : 0
     if (total > 0 && all.length >= total) break
   }
@@ -414,8 +467,10 @@ async function fetchEngineDocs(): Promise<KbDocInternal[]> {
  * ⚠️ 引擎的列表接口是 `/knowledge-bases/{id}/knowledge`。
  * 不要用 `/knowledge-bases/{id}/files` —— 那是文件代理路由，需要 `file_path`
  * 参数，用在这会 400（2026-10-08 实测）。
+ *
+ * 契约 C7（2026-10-21 用户拍板）：**上传即公开**，不再按 publish 标记隐藏任何资料；
+ * 需要下架就直接删除文件。引擎返回什么就返回什么。
  */
-/** 取知识库文件列表。 */
 export async function listFiles(): Promise<KbDocInternal[]> {
   const source = getDataSource()
   if (source === 'snapshot') return loadSnapshotDocs()
@@ -461,7 +516,8 @@ export async function hybridSearch(query: string): Promise<KbDocInternal[]> {
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: keyword })
+      // 引擎的混合检索只认 query_text；写 query 会稳定返回 400 {"error":{"code":1000,"message":"query_text is required"}}
+      body: JSON.stringify({ query_text: keyword })
     }
   )
   return extractArray(payload).map(toEngineDoc)
@@ -478,9 +534,81 @@ export async function getDoc(id: string): Promise<KbDocInternal> {
   }
   // 引擎单条接口外面包了一层：{"success":true,"data":{…}}，必须解开再归一化，
   // 否则拿到的是外壳对象（id/title 全空）。2026-10-08 实测踩中。
-  const payload = await engineJson(`/api/v1/knowledge/${encodeURIComponent(id)}`)
+  let payload: unknown
+  try {
+    payload = await engineJson(`/api/v1/knowledge/${encodeURIComponent(id)}`)
+  } catch (err) {
+    // 引擎回 404 = 这份资料不存在，对外必须是 404 + DOC_NOT_FOUND，不能变成 502
+    if (err instanceof EngineError && err.code === 'ENGINE_NOT_FOUND') {
+      throw new EngineError('DOC_NOT_FOUND', `没有这份资料：${id}`, 404)
+    }
+    throw err
+  }
   const raw = isRecord(payload) && isRecord(payload['data']) ? payload['data'] : payload
   return toEngineDoc(raw)
+}
+
+/**
+ * 解析进度（2026-10-21 新增）
+ *
+ * 为什么需要：投稿审核通过后会立刻变成「已通过」，但引擎那边其实还在解析
+ * （实测：小 txt 约 9 秒，0.6MB PDF 约 1 分钟才 completed）。审核通过 ≠ 已入库，
+ * 中间这段要能对用户说清楚「正在解析中」。
+ *
+ * 返回值刻意做成有限枚举：前端只按这六个值出标签，不在各处抄引擎原始状态串。
+ */
+/**
+ * 解析状态统一口径（契约 C5，2026-10-21）
+ *
+ * 只认 6 个值：completed / failed / processing / pending / deleted / unknown。
+ * 引擎那边的原始状态词（success、error、parsing、finalizing、deleting…）都在这里翻译，
+ * 后面对外只出现这 6 个值，前端拿同一张表做映射。
+ */
+export type ParseState = 'completed' | 'failed' | 'processing' | 'pending' | 'deleted' | 'unknown'
+
+/** 引擎状态 → 本站枚举（认不出来的算 unknown，不猜「已完成」） */
+const PARSE_STATE_MAP: Record<string, ParseState> = {
+  pending: 'pending',
+  processing: 'processing',
+  parsing: 'processing',
+  finalizing: 'processing',
+  completed: 'completed',
+  success: 'completed',
+  failed: 'failed',
+  error: 'failed',
+  deleting: 'deleted',
+  deleted: 'deleted'
+}
+
+/**
+ * 把引擎给的原始状态词翻译成 6 值口径（契约 C5）。
+ * 认不出来的词一律记 unknown —— 宁可说「不知道」，不编一个看着像成功的状态。
+ */
+export function normalizeParseState(raw: string): ParseState {
+  const key = raw.trim().toLowerCase()
+  if (!key) return 'unknown'
+  return PARSE_STATE_MAP[key] ?? 'unknown'
+}
+
+/**
+ * 查一份资料的解析进度。
+ *
+ * 只有 engine 数据源才有真实进度；local / snapshot 是静态资料包，返回 unknown
+ * （前端遇到 unknown 就只显示「已通过」，不编造进度）。查询失败也返回 unknown ——
+ * 进度是附加信息，不能因为它让整张投稿列表报错。
+ */
+export async function getDocParseState(id: string): Promise<ParseState> {
+  const docId = id.trim()
+  if (!docId) return 'unknown'
+  if (getDataSource() !== 'engine') return 'unknown'
+  try {
+    const payload = await engineJson(`/api/v1/knowledge/${encodeURIComponent(docId)}`)
+    const raw = isRecord(payload) && isRecord(payload['data']) ? payload['data'] : payload
+    const status = isRecord(raw) ? pickString(raw, ['parse_status', 'parseStatus']) : ''
+    return normalizeParseState(status)
+  } catch {
+    return 'unknown'
+  }
 }
 
 /**
@@ -601,34 +729,293 @@ export interface QaModelOption {
   status: string
 }
 
+/** 引擎里的任意类型模型（原样带上 type，由调用方按类型分组） */
+export interface EngineModelOption {
+  id: string
+  name: string
+  /** KnowledgeQA / VLLM / Embedding / Rerank —— 引擎的类型枚举 */
+  type: string
+  /** active / downloading / download_failed */
+  status: string
+}
+
 /**
- * 列引擎当前可用的**知识问答模型**（老师后台「问答设置」用）。
+ * 列引擎里的**全部模型**（2026-10-21 新增：系统设置页「模型选择」要把各类模型都摆出来）。
  *
  * ⚠️ 引擎的 `GET /api/v1/models` **不支持 `?type=` 过滤参数** ——
  * 它后端一个 query 都不读（WeKnora 前端那个 `listModels(type)` 是在浏览器里
- * 过滤的，纯客户端行为）。所以这里必须自己按 type 过滤。
+ * 过滤的，纯客户端行为）。所以这里一次拉全，调用方自己按 type 分组。
  *
  * ⚠️ name 优先取 `name` 而不是 `display_name`：前者是模型真实身份
  * （如 LongCat-2.5-Preview），后者可能只是运营随手起的标签（如「测试」），
  * 老师选模型时看真实名字更有用。
  */
-export async function listQaModels(): Promise<QaModelOption[]> {
+export async function listEngineModels(): Promise<EngineModelOption[]> {
   const payload = await engineJson('/api/v1/models')
   const rows = extractArray(payload)
-  const models: QaModelOption[] = []
+  const models: EngineModelOption[] = []
   for (const raw of rows) {
     if (!isRecord(raw)) continue
-    if (pickString(raw, ['type']) !== 'KnowledgeQA') continue
     const id = pickString(raw, ['id'])
     if (!id) continue
     models.push({
       id,
       name: pickString(raw, ['name', 'display_name']) || id,
-      type: 'KnowledgeQA',
+      type: pickString(raw, ['type']),
       status: pickString(raw, ['status'])
     })
   }
   return models
+}
+
+/**
+ * 列引擎当前可用的**知识问答模型**（老师后台「问答设置」用）。
+ * 实现改为从 listEngineModels() 里筛 type，返回值形状与以前完全一致。
+ */
+export async function listQaModels(): Promise<QaModelOption[]> {
+  const all = await listEngineModels()
+  return all
+    .filter((m) => m.type === 'KnowledgeQA')
+    .map((m) => ({ id: m.id, name: m.name, type: 'KnowledgeQA', status: m.status }))
+}
+
+/**
+ * 知识库上绑定的模型。
+ *
+ * 🔴 向量模型（embedding_model_id）**只读**：库里有 603 份资料的向量后换掉它，
+ *    检索会悄悄变差（新问题用新模型算向量，跟老向量不在一个空间），只能重建库时改。
+ *
+ * ✅ 摘要模型（summary_model_id）**可改**（2026-10-22 实测打通），但走的是另一条路：
+ *    PUT /api/v1/initialization/config/{kbId}（**camelCase** body，llmModelId 必填）。
+ *    ⚠️ 这条路是整体替换：body 缺哪块，引擎就把哪块清零（vlm_config、chunking_config
+ *    的 parent/child、overlap 都会被清掉）。所以必须先 GET 当前全量、重建完整 payload、
+ *    只换 llmModelId 再发（见下面 buildKbConfigPayload / updateKnowledgeBaseSummaryModel）。
+ *    🔴 不要用 PUT /api/v1/knowledge-bases/{id} 改这些：它只认 name / description，
+ *    带 config 反而会把 chunking_config 清成 0（2026-10-22 临时库实测）。
+ */
+export interface EngineKbBindings {
+  id: string
+  name: string
+  /** 向量模型 id（决定能检索到什么，已有向量后不能换） */
+  embeddingModelId: string
+  /** 摘要模型 id（资料卡片摘要 / profile 用） */
+  summaryModelId: string
+  /** 图片理解模型 id（vlm_config.model_id） */
+  vlmModelId: string
+  vlmEnabled: boolean
+  /** 解析引擎规则：文件类型 → 解析器 */
+  parserRules: Array<{ fileTypes: string; engine: string }>
+}
+
+/** 读知识库**原始记录**（GET /api/v1/knowledge-bases/{id} 的 data 层，一个字不裁剪） */
+export async function fetchKnowledgeBaseRaw(): Promise<Record<string, unknown>> {
+  const id = engineKbId()
+  const payload = await engineJson(`/api/v1/knowledge-bases/${encodeURIComponent(id)}`)
+  // 引擎单条接口外层包了一层 {success, data:{…}}（与 /knowledge/{id} 同一套路）
+  const data = isRecord(payload) && isRecord(payload['data']) ? payload['data'] : payload
+  if (!isRecord(data)) {
+    throw new EngineError('ENGINE_BAD_PAYLOAD', '引擎返回的知识库格式不符合预期', 502)
+  }
+  return data
+}
+
+/** 读知识库当前绑定的模型（见上面 EngineKbBindings 的说明） */
+export async function fetchKnowledgeBaseBindings(): Promise<EngineKbBindings> {
+  const id = engineKbId()
+  const data = await fetchKnowledgeBaseRaw()
+  const vlm = isRecord(data['vlm_config']) ? data['vlm_config'] : {}
+  const chunking = isRecord(data['chunking_config']) ? data['chunking_config'] : {}
+  // 引擎实际形状是**数组**：[{ engine:'mineru_cloud', file_types:['pdf'] }, …]（2026-10-21 实测）。
+  // 老版本/别的部署可能是 { pdf: 'mineru_cloud' } 这种映射，两种都认，别只写死一种。
+  const parserRules: Array<{ fileTypes: string; engine: string }> = []
+  const rawRules = chunking['parser_engine_rules']
+  if (Array.isArray(rawRules)) {
+    for (const item of rawRules) {
+      if (!isRecord(item)) continue
+      const engine = pickString(item, ['engine'])
+      const types = Array.isArray(item['file_types'])
+        ? item['file_types'].filter((t): t is string => typeof t === 'string')
+        : []
+      if (!engine) continue
+      parserRules.push({ fileTypes: types.join('/') || '—', engine })
+    }
+  } else if (isRecord(rawRules)) {
+    for (const [fileTypes, engine] of Object.entries(rawRules)) {
+      if (typeof engine === 'string' && engine.trim()) parserRules.push({ fileTypes, engine })
+    }
+  }
+  return {
+    id: pickString(data, ['id']) || id,
+    name: pickString(data, ['name']),
+    embeddingModelId: pickString(data, ['embedding_model_id']),
+    summaryModelId: pickString(data, ['summary_model_id']),
+    vlmModelId: pickString(vlm, ['model_id']) || pickString(vlm, ['modelId']),
+    vlmEnabled: vlm['enabled'] === true,
+    parserRules
+  }
+}
+
+/**
+ * 把「知识库当前全量配置」重建成引擎要的模型配置 payload（**camelCase**）。
+ *
+ * 字段形状是 2026-10-22 从引擎自己前端的 KnowledgeBaseEditorModal 里逆向出来的
+ * （它保存知识库时会发这一整份），逐个字段都在生产库上做过「原样写回 → 回读比对」。
+ *
+ * 🔴 为什么必须发全量：PUT /api/v1/initialization/config/{kbId} 是**整体替换**。
+ *    只发 {llmModelId, embeddingModelId} 虽然也 200，但 vlm_config 会被关掉、
+ *    chunking 的 chunk_overlap 归零、parent/child 开关丢失（临时库实测）。
+ */
+function buildKbConfigPayload(raw: Record<string, unknown>, summaryModelId: string): Record<string, unknown> {
+  const record = (value: unknown): Record<string, unknown> => (isRecord(value) ? value : {})
+  const vlm = record(raw['vlm_config'])
+  const asr = record(raw['asr_config'])
+  const chunking = record(raw['chunking_config'])
+  const storage = record(raw['storage_config'])
+  const extract = record(raw['extract_config'])
+  const questionGen = record(raw['question_generation_config'])
+  const parserRules = Array.isArray(chunking['parser_engine_rules']) ? chunking['parser_engine_rules'] : []
+  return {
+    llmModelId: summaryModelId,
+    embeddingModelId: pickString(raw, ['embedding_model_id']),
+    vlm_config: vlm,
+    asr_config: asr,
+    documentSplitting: {
+      chunkSize: pickNumber(chunking, ['chunk_size']),
+      chunkOverlap: pickNumber(chunking, ['chunk_overlap']),
+      separators: Array.isArray(chunking['separators']) ? chunking['separators'] : [],
+      // 引擎只在有这个字段时才收；空数组会被当成「没配」→ 干脆不发，保持引擎原样
+      ...(parserRules.length > 0 ? { parserEngineRules: parserRules } : {}),
+      enableParentChild: chunking['enable_parent_child'] === true,
+      parentChunkSize: pickNumber(chunking, ['parent_chunk_size']) || 4096,
+      childChunkSize: pickNumber(chunking, ['child_chunk_size']) || 384,
+      strategy: pickString(chunking, ['strategy']),
+      tokenLimit: pickNumber(chunking, ['token_limit']),
+      languages: Array.isArray(chunking['languages']) ? chunking['languages'] : [],
+      tableMetadataInstructions: pickString(chunking, ['table_metadata_instructions'])
+    },
+    multimodal: { enabled: vlm['enabled'] === true },
+    storageBackendId: pickString(raw, ['storage_backend_id']),
+    storageProvider: pickString(storage, ['provider']) || 'local',
+    nodeExtract: {
+      enabled: extract['enabled'] === true,
+      text: pickString(extract, ['text']),
+      tags: Array.isArray(extract['tags']) ? extract['tags'] : [],
+      nodes: Array.isArray(extract['nodes']) ? extract['nodes'] : [],
+      relations: Array.isArray(extract['relations']) ? extract['relations'] : [],
+      customInstructions: pickString(extract, ['custom_instructions'])
+    },
+    questionGeneration: {
+      enabled: questionGen['enabled'] === true,
+      questionCount: pickNumber(questionGen, ['question_count']) || 3,
+      customInstructions: pickString(questionGen, ['custom_instructions'])
+    }
+  }
+}
+
+/** 键序无关的 JSON 串：用来比「写入前后是不是真的一字未变」（直接 JSON.stringify 会被键序骗） */
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (isRecord(value)) {
+    const keys = Object.keys(value).sort()
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value ?? null)
+}
+
+export interface KbSummaryModelUpdateResult {
+  /** false = 本来就是它，一个字都没写 */
+  changed: boolean
+  message: string
+  before: string
+  after: string
+  /** 回读校验：除摘要模型外，这几块必须一字未变 */
+  preserved: Array<{ key: string; ok: boolean }>
+}
+
+/** 写入失败/校验失败时，拿写入前那份配置再发一次（尽力回滚，失败只记日志不抛） */
+async function rollbackKbConfig(beforeRaw: Record<string, unknown>): Promise<void> {
+  try {
+    const id = engineKbId()
+    await engineJson(`/api/v1/initialization/config/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildKbConfigPayload(beforeRaw, pickString(beforeRaw, ['summary_model_id'])))
+    })
+  } catch (err) {
+    console.error('[weknora] 摘要模型写入失败后，回滚也失败了：', err)
+  }
+}
+
+/**
+ * 改知识库的**摘要模型**（2026-10-22 新增，系统设置页「摘要模型」下拉用）。
+ *
+ * 步骤：
+ *   1. GET 知识库全量配置
+ *   2. 重建完整 payload，只把 llmModelId 换成目标模型
+ *   3. PUT /api/v1/initialization/config/{kbId}
+ *   4. 回读：摘要模型确实变了 + embedding / chunking / vlm / indexing **一字未变**
+ *   5. 任一条不满足 → 用写入前那份配置回滚，然后抛错（绝不假装成功）
+ *
+ * 为什么值得这么谨慎：这套配置里有 603 份资料的向量模型与分块规则，
+ * 写坏一项检索就会悄悄变差 —— 宁可保存失败，也不能悄悄改坏。
+ */
+export async function updateKnowledgeBaseSummaryModel(modelId: string): Promise<KbSummaryModelUpdateResult> {
+  const target = modelId.trim()
+  if (!target) {
+    throw new EngineError('INVALID_SUMMARY_MODEL', '摘要模型 id 不能是空串', 400)
+  }
+  const id = engineKbId()
+  const beforeRaw = await fetchKnowledgeBaseRaw()
+  const before = pickString(beforeRaw, ['summary_model_id'])
+  if (before === target) {
+    return {
+      changed: false,
+      message: '摘要模型没变，什么都没写（引擎那边的配置保持原样）',
+      before,
+      after: before,
+      preserved: []
+    }
+  }
+
+  await engineJson(`/api/v1/initialization/config/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(buildKbConfigPayload(beforeRaw, target))
+  })
+
+  const afterRaw = await fetchKnowledgeBaseRaw()
+  const after = pickString(afterRaw, ['summary_model_id'])
+  const preserved = [
+    { key: 'embedding_model_id', ok: stableJson(beforeRaw['embedding_model_id']) === stableJson(afterRaw['embedding_model_id']) },
+    { key: 'chunking_config', ok: stableJson(beforeRaw['chunking_config']) === stableJson(afterRaw['chunking_config']) },
+    { key: 'vlm_config', ok: stableJson(beforeRaw['vlm_config']) === stableJson(afterRaw['vlm_config']) },
+    { key: 'indexing_strategy', ok: stableJson(beforeRaw['indexing_strategy']) === stableJson(afterRaw['indexing_strategy']) }
+  ]
+
+  if (after !== target) {
+    await rollbackKbConfig(beforeRaw)
+    throw new EngineError(
+      'KB_SUMMARY_MODEL_NOT_APPLIED',
+      `摘要模型没写进去（引擎回读还是「${after || '空'}」），已回滚成原来的配置`,
+      502
+    )
+  }
+  const broken = preserved.filter((item) => !item.ok).map((item) => item.key)
+  if (broken.length > 0) {
+    await rollbackKbConfig(beforeRaw)
+    throw new EngineError(
+      'KB_CONFIG_NOT_PRESERVED',
+      `改摘要模型时把别的配置也动了（${broken.join('、')}），已回滚成原来的配置`,
+      502
+    )
+  }
+  return {
+    changed: true,
+    message: '摘要模型已更新，其余配置回读一字未变',
+    before,
+    after,
+    preserved
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -637,6 +1024,16 @@ export async function listQaModels(): Promise<QaModelOption[]> {
 
 /** 流式问答的总时长上限：流式不能沿用 15s 非流式超时，否则长答案必被掐断 */
 const ASK_TIMEOUT_MS = 180_000
+
+/**
+ * 兜底链路（knowledge-chat）的超时上限：T5 起与智能体链路分开收短。
+ *
+ * 为什么单独收短：实测当前引擎版本的 knowledge-chat 兜底链路**必然超时**
+ * （带库字段 120s 不回、不带库字段 90s 不回），而智能体链路正常（50–79s 出答案）。
+ * 沿用 180s 的话，公众点一次提问最多要干等 3 分钟才看到降级提示。
+ * 这里给兜底链路 25s：超时就立刻按中文降级文案回「问答服务暂时不可用，请稍后重试」。
+ */
+const KNOWLEDGE_CHAT_TIMEOUT_MS = 25_000
 
 /** 未配密钥就明确抛 ENGINE_NOT_CONFIGURED（路由据此降级，不让服务崩） */
 function requireEngineApiKey(): string {
@@ -688,7 +1085,7 @@ export async function createAskSession(title: string): Promise<string> {
  * ⚠️ **T7：优先走引擎里的智能体**（`agent-chat`），失败自动回退 `knowledge-chat`。
  *   两条链路的事件形状**完全一致**（都产 AskEvent），所以路由层与前端都无感：
  *     智能体链路：POST /api/v1/agent-chat/{sessionId}
- *       body = {query: 原始问题, agent_id, agent_enabled: true[, knowledge_base_ids]}
+ *       body = {query: 原始问题, agent_id, agent_enabled: true}（**不下发库 id**）
  *       🔴 **不拼风格前缀**（提示词由智能体的 system_prompt 提供，再拼一遍会打架）
  *       🔴 **不下发 summary_model_id / reasoning_effort**（智能体有自己的 model_id / temperature，
  *          下发会和智能体配置冲突）
@@ -704,7 +1101,6 @@ export async function createAskSession(title: string): Promise<string> {
 export async function askKnowledgeBase(params: {
   sessionId: string
   query: string
-  knowledgeBaseIds?: string[]
   /**
    * T7：走哪个智能体。**不传 = 从 .env 的 WEKNORA_AGENT_ID 读**；
    * 传空串 = 明确走兜底的 knowledge-chat（留个口子给将来做 A/B 对照）。
@@ -719,16 +1115,23 @@ export async function askKnowledgeBase(params: {
     throw new EngineError('ENGINE_NOT_CONFIGURED', 'AI 问答暂未开放（当前为演示版，引擎未接入）', 503)
   }
   const apiKey = requireEngineApiKey()
-  const kbIds =
-    params.knowledgeBaseIds && params.knowledgeBaseIds.length > 0
-      ? params.knowledgeBaseIds
-      : [engineKbId()]
+  /**
+   * 兜底链路（knowledge-chat）用的**引擎集成默认库**。
+   *
+   * 🔴 这是引擎集成的默认库，不是用户可选的检索范围 —— 它是内部集成细节；
+   *    面向访客的那层「由访客指定要检索哪些资料」的能力已于 2026-10-21 下线。
+   *
+   * ⚠️ 这份默认库**只给兜底链路用**：智能体链路（agent-chat）一律不下发库 id ——
+   *    实测下发 knowledge_base_ids 会**覆盖智能体自己配置的库**（智能体按自己的
+   *    knowledge_bases + kb_selection_mode: selected 走），那正是 T7-b 要修掉的「单库覆盖」。
+   */
+  const defaultLibraryIds: string[] = [engineKbId()]
 
   /* ── T7：先试智能体，失败自动回退 knowledge-chat ────────────────────── */
   const agentId = (params.agentId ?? getAgentId()).trim()
   if (agentId) {
     try {
-      return await askAgentKnowledgeBase({ ...params, apiKey, agentId, kbIds })
+      return await askAgentKnowledgeBase({ ...params, apiKey, agentId })
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
       console.warn(
@@ -744,12 +1147,14 @@ export async function askKnowledgeBase(params: {
   const qaSettings = loadQaSettings()
   const askBody: Record<string, unknown> = {
     query: buildStyledQuery(params.query, qaSettings.style),
-    knowledge_base_ids: kbIds,
+    // 这是引擎集成的默认库，不是用户可选的检索范围（内部集成细节，仅兜底链路用）。
+    knowledge_base_ids: defaultLibraryIds,
     ...buildEngineOverrides(qaSettings)
   }
 
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), ASK_TIMEOUT_MS)
+  // 兜底链路用短超时：不让公众干等 3 分钟（T5）
+  const timer = setTimeout(() => controller.abort(), KNOWLEDGE_CHAT_TIMEOUT_MS)
   const onExternalAbort = (): void => controller.abort()
   if (params.signal) {
     if (params.signal.aborted) controller.abort()
@@ -775,11 +1180,10 @@ export async function askKnowledgeBase(params: {
   } catch (err) {
     cleanup()
     const aborted = err instanceof Error && err.name === 'AbortError'
+    // 对外只给中文降级文案：内部地址、引擎原文都不外泄（T5 契约 C6）
     throw new EngineError(
       aborted ? 'ENGINE_TIMEOUT' : 'ENGINE_UNREACHABLE',
-      aborted
-        ? `引擎问答超时（${ASK_TIMEOUT_MS / 1000}s）：${url}`
-        : `连不上引擎 ${url}，请确认引擎已启动、地址正确`,
+      '问答服务暂时不可用，请稍后重试',
       504
     )
   }
@@ -790,7 +1194,14 @@ export async function askKnowledgeBase(params: {
   }
   if (!res.ok) {
     cleanup()
-    throw new EngineError('ENGINE_BAD_STATUS', `引擎问答返回 ${res.status}：${url}`, 502)
+    // 状态码与内部地址都不外泄（T5 契约 C6）
+    // message 里带上状态码：仅用于**内部错误分类**（ask.ts 的 publicEngineError 据此识别 429，
+    // 换成额度专用文案），对外信封不直接透出 message —— 引擎 URL / API Key / 上游 body 一律不进 message。
+    throw new EngineError(
+      'ENGINE_BAD_STATUS',
+      `问答服务暂时不可用（引擎返回 ${res.status}），请稍后重试`,
+      502
+    )
   }
   if (!res.body) {
     cleanup()
@@ -800,7 +1211,8 @@ export async function askKnowledgeBase(params: {
   const body = res.body
   return (async function* iterate(): AsyncGenerator<AskEvent, void, void> {
     try {
-      yield* parseSseStream(body, url)
+      // 传脱敏标识而不是引擎地址：断流错误消息里不能出现内部地址（T5 契约 C6）
+      yield* parseSseStream(body, '引擎问答流')
     } finally {
       cleanup()
     }
@@ -818,10 +1230,9 @@ export async function askKnowledgeBase(params: {
  *   1. `query` 是**原始问题**，不拼 T3 的风格前缀 —— 提示词由智能体的 system_prompt 提供
  *   2. **不下发** summary_model_id / reasoning_effort —— 智能体自己带 model_id / temperature，
  *      再下发会和智能体配置打架
- *   3. `knowledge_base_ids` **只在调用方显式给了才发**（本轮前端没给）。
- *      不发时智能体按自己的 `knowledge_bases` + `kb_selection_mode: selected` 走。
- *      ⚠️ 实测：请求里传 knowledge_base_ids 会**覆盖**智能体配置的库；
- *         「将来的全选档」要用这个字段传多个库 id，**绝不能**把 kb_selection_mode 改成 all。
+ *   3. **不下发** `knowledge_base_ids` —— 下发会**覆盖**智能体自己配置的库，
+ *      智能体按自己的 `knowledge_bases` + `kb_selection_mode: selected` 走。
+ *      （引擎集成的默认库，不是用户可选的检索范围，只在兜底链路 knowledge-chat 用 —— 见 askKnowledgeBase）
  *
  * 抛错 = 开流前失败（网络/401/403/400/无响应体），由 askKnowledgeBase 捕获后回退 knowledge-chat。
  * 开流之后的异常不在这里处理（那时已经吐过字了，回退会造成重复段落）。
@@ -832,7 +1243,6 @@ async function askAgentKnowledgeBase(params: {
   signal?: AbortSignal
   apiKey: string
   agentId: string
-  kbIds: string[]
 }): Promise<AsyncGenerator<AskEvent, void, void>> {
   const url = `${engineBaseUrl().replace(/\/+$/, '')}/api/v1/agent-chat/${encodeURIComponent(
     params.sessionId
@@ -843,7 +1253,9 @@ async function askAgentKnowledgeBase(params: {
     agent_id: params.agentId,
     agent_enabled: true
   }
-  if (params.kbIds.length > 0) askBody['knowledge_base_ids'] = params.kbIds
+  // 🔴 刻意**不下发**库 id：下发 knowledge_base_ids 会覆盖智能体自己配置的库
+  //    （引擎集成的默认库不是用户可选的检索范围，只在兜底链路用），
+  //    智能体应当按自己的 knowledge_bases + kb_selection_mode: selected 走。
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), ASK_TIMEOUT_MS)
@@ -872,11 +1284,10 @@ async function askAgentKnowledgeBase(params: {
   } catch (err) {
     cleanup()
     const aborted = err instanceof Error && err.name === 'AbortError'
+    // 对外只给中文降级文案：内部地址不外泄（T5 契约 C6）
     throw new EngineError(
       aborted ? 'ENGINE_TIMEOUT' : 'ENGINE_UNREACHABLE',
-      aborted
-        ? `智能体问答超时（${ASK_TIMEOUT_MS / 1000}s）：${url}`
-        : `连不上智能体问答接口 ${url}`,
+      '问答服务暂时不可用，请稍后重试',
       504
     )
   }
@@ -888,10 +1299,14 @@ async function askAgentKnowledgeBase(params: {
   }
   if (!res.ok) {
     cleanup()
+    // 引擎正文与 agent_id 只进服务端日志，对外不给（T5 契约 C6）
     const detail = (await res.text().catch(() => '')).slice(0, 200)
+    console.warn(`[weknora] 智能体问答返回异常状态 ${res.status}：${detail}`)
+    // message 里带上状态码：仅用于**内部错误分类**（ask.ts 的 publicEngineError 据此识别 429，
+    // 换成额度专用文案），对外信封不直接透出 message —— 引擎 URL / API Key / 上游 body 一律不进 message。
     throw new EngineError(
       'ENGINE_BAD_STATUS',
-      `智能体问答返回 ${res.status}（agent_id=${params.agentId}）：${detail || '(引擎没给正文)'}`,
+      `问答服务暂时不可用（引擎返回 ${res.status}），请稍后重试`,
       502
     )
   }
@@ -903,7 +1318,8 @@ async function askAgentKnowledgeBase(params: {
   const body = res.body
   const raw = (async function* iterate(): AsyncGenerator<AskEvent, void, void> {
     try {
-      yield* parseSseStream(body, url)
+      // 传脱敏标识而不是引擎地址：断流错误消息里不能出现内部地址（T5 契约 C6）
+      yield* parseSseStream(body, '引擎问答流')
     } finally {
       cleanup()
     }
@@ -1179,8 +1595,24 @@ export function buildDownloadName(doc: { year: number; org: string; title: strin
   return `${year}-${clean(doc.org) || '机构待补'}-${stem}${ext}`
 }
 
-/** 组装 Content-Disposition，中文名走 RFC 5987，避免浏览器乱码 */
+/**
+ * 组装 Content-Disposition，中文名走 RFC 5987，避免浏览器乱码。
+ *
+ * 同时给一个「能看懂的」ASCII 兜底名：老写法把每个非 ASCII 字符都换成下划线，
+ * 浏览器不支持 filename* 时就下载成 "2026______-_____________.pdf"，人根本认不出是什么。
+ * 现在保留文件名里的 ASCII 片段（年份、英文、扩展名），中文段落折成一个短横线，
+ * 实在没有 ASCII 内容时用 document 兜底。
+ */
 export function contentDisposition(fileName: string, mode: 'inline' | 'attachment'): string {
-  const ascii = fileName.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_')
+  const extMatch = /\.[A-Za-z0-9]{1,8}$/.exec(fileName)
+  const ext = extMatch ? extMatch[0] : ''
+  const stem = ext ? fileName.slice(0, fileName.length - ext.length) : fileName
+  const asciiStem = stem
+    .replace(/[^\x20-\x7e]+/g, '-')
+    .replace(/["\\]/g, '_')
+    .replace(/-{2,}/g, '-')
+    .replace(/^[-. ]+|[-. ]+$/g, '')
+  const safeStem = asciiStem.length > 0 ? asciiStem : 'document'
+  const ascii = `${safeStem}${ext}`.replace(/[^\x20-\x7e]/g, '_')
   return `${mode}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`
 }

@@ -50,6 +50,12 @@ export interface GuestPermissionsPayload {
   switches: GuestSwitchItem[]
   values: GuestPermissionValues
   updatedAt: string
+  /**
+   * 2026-10-21（T3 · P1-14）：**这份开关是不是兜底值**。
+   * true = 接口没读通，现在用的是默认口径（后端仍会真拦）。
+   * 页面据此提示「开关状态暂时读不到」，而不是假装一切正常。
+   */
+  degraded?: boolean
 }
 
 /** 读不到接口时的兜底值（= 后端的建议默认；详见文件头注释） */
@@ -68,7 +74,8 @@ function fallbackPayload(): GuestPermissionsPayload {
     success: false,
     switches: [],
     values: { ...GUEST_FALLBACK_VALUES },
-    updatedAt: ''
+    updatedAt: '',
+    degraded: true
   }
 }
 
@@ -83,11 +90,15 @@ export async function fetchGuestPermissions(): Promise<GuestPermissionsPayload> 
       switches: res.data.switches ?? [],
       // 后端少给字段时按默认值补齐，别让页面因为少一个键就崩
       values: { ...GUEST_FALLBACK_VALUES, ...values },
-      updatedAt: res.data.updatedAt ?? ''
+      updatedAt: res.data.updatedAt ?? '',
+      degraded: false
     }
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err)
-    console.warn(`[guest] 读游客权限失败（按默认开放处理，后端仍会真拦）：${detail}`)
+    // 2026-10-21（T3 · P1-14）：原来只 console.warn，等于**静默吞错** ——
+    // 页面与日志都看不出「游客开关读不到」。现在升级成 console.error，
+    // 并且返回的 payload 带 degraded:true，页面能区分「读到了」与「读不到」。
+    console.error('[guest] 读游客权限失败（按默认开放处理，后端仍会真拦）：' + detail)
     return fallbackPayload()
   }
 }

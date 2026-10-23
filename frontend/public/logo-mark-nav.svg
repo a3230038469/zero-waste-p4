@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <!-- 顶栏小尺寸光学版（2026-10-20）：原 logo-mark.svg 的 8 根 6px 竖条 + 6px 圆环，
+       缩到 34px 时每根只剩约 1px、间隙 1.7px，会糊成一片灰；小尺寸版改成
+       6 根 12px 竖条 + 12px 圆环，线条粗细与顶栏粗体站名的笔画重量对齐。 -->
+  <circle cx="100" cy="100" r="88" fill="none" stroke="#2A6045" stroke-width="12"/>
+  <g fill="#2A6045">
+    <rect x="38" y="50" width="12" height="100"/>
+    <rect x="58" y="62" width="12" height="76"/>
+    <rect x="78" y="74" width="12" height="52"/>
+    <rect x="110" y="74" width="12" height="52"/>
+    <rect x="130" y="62" width="12" height="76"/>
+    <rect x="150" y="50" width="12" height="100"/>
+  </g>
+</svg>

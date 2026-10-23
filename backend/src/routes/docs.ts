@@ -16,7 +16,6 @@
 import { Router, type Request, type Response } from 'express'
 
 import {
-  EngineError,
   buildDownloadName,
   contentDisposition,
   getDoc,
@@ -43,6 +42,7 @@ import {
 import { recordEvent } from '../track/store.js'
 import { userIdFromRequest } from '../guest/identity.js'
 import { loadGuestPermissions } from '../guest/permissions.js'
+import { errorEnvelope, toPublicError } from '../errors/types.js' // T5：统一错误信封（契约 C6）
 
 const router = Router()
 
@@ -52,6 +52,20 @@ const DEFAULT_PAGE_SIZE = 20
 const MAX_PAGE_SIZE = 100
 
 type Dim = 'type' | 'org' | 'year' | 'tag' | 'srcTable'
+
+/**
+ * 「未分类」方向的哨兵值（T5 修复验收项 P1-8）
+ *
+ * 为什么要它：以前 buildFacets 只按 srcTable 分桶，**没有 srcTable 的资料被直接丢掉**，
+ * 于是「全部」的方向合计（603）比接口给的总数（604）少 1，页面上同时出现两个对不上的数。
+ *
+ * 现在把没有 srcTable 的资料归进一个「未分类」方向：
+ *   - value 用哨兵值（不是空串），这样前端「全部」（value 为空）不会和它混在一起；
+ *   - filterDocs 也认这个哨兵值，点「未分类」能真的筛出这些资料（否则点了是空列表）。
+ */
+const UNCATEGORIZED_SRC_TABLE = '__uncategorized__'
+/** 对外显示名 */
+const UNCATEGORIZED_LABEL = '未分类'
 
 /* ------------------------------------------------------------------ *
  * 查询参数解析
@@ -181,12 +195,13 @@ function filterDocs(docs: KbDocInternal[], query: DocsQuery, skipDim?: Dim): KbD
     if (skipDim !== 'tag' && dimValues(query, 'tag').length) {
       if (!doc.tags.some((tag) => query.tag.includes(tag))) return false
     }
-    if (
-      skipDim !== 'srcTable' &&
-      dimValues(query, 'srcTable').length &&
-      !query.srcTable.includes(doc.srcTable)
-    ) {
-      return false
+    if (skipDim !== 'srcTable' && dimValues(query, 'srcTable').length) {
+      // T5：srcTable 为空的资料归到「未分类」哨兵值，点它能筛出来
+      const wanted = dimValues(query, 'srcTable')
+      const hit = wanted.some(
+        (value) => value === doc.srcTable || (value === UNCATEGORIZED_SRC_TABLE && !doc.srcTable)
+      )
+      if (!hit) return false
     }
     return true
   })
@@ -249,9 +264,14 @@ function buildFacets(docs: KbDocInternal[], query: DocsQuery): KbFacets {
     years: countBy(forYear, (d) => (d.year > 0 ? [String(d.year)] : [])).sort(byYearDesc),
     tags: countBy(forTag, (d) => d.tags).sort(byCountThenValue),
     // T8：所属方向。value 用数据原值（保证筛得准），label 给对外中文名。
-    // 数据源里没有方向时这里是空数组 —— 前端据此不渲染该筛选项，而不是摆一个筛不中的假选项。
-    srcTables: countBy(forSrcTable, (d) => (d.srcTable ? [d.srcTable] : []))
-      .map((item) => ({ ...item, label: srcTableLabel(item.value) }))
+    // T5（P1-8）：**没有 srcTable 的资料也要进桶**，统一归到「未分类」方向 ——
+    // 以前这些资料被直接丢掉，导致「方向合计」比接口总数少，页面上两个数对不上。
+    // 数据源里一条资料都没有时这里仍然是空数组，前端据此不渲染该筛选项。
+    srcTables: countBy(forSrcTable, (d) => [d.srcTable || UNCATEGORIZED_SRC_TABLE])
+      .map((item) => ({
+        ...item,
+        label: item.value === UNCATEGORIZED_SRC_TABLE ? UNCATEGORIZED_LABEL : srcTableLabel(item.value)
+      }))
       .sort(byCountThenValue)
   }
 }
@@ -281,13 +301,21 @@ function toPublicDoc(doc: KbDocInternal): KbDoc {
  * 统一错误出口（地基的 error 中间件未挂载，这里按同一信封自己兜）
  * ------------------------------------------------------------------ */
 
-function sendError(res: Response, err: unknown): void {
-  if (err instanceof EngineError) {
-    res.status(err.status).json({ success: false, error: { code: err.code, message: err.message } })
-    return
+/**
+ * 错误出口（T5，契约 C6）
+ *
+ * 内部细节（异常原文、堆栈、引擎地址）一律不外发：
+ *   - 资料不存在 → 404 + DOC_NOT_FOUND
+ *   - 引擎故障 → 502 + ENGINE_UNAVAILABLE（message 里没有内部 URL / 英文堆栈）
+ *   - 其它 → 500 + INTERNAL_ERROR
+ * requestId 同时写进响应体和响应头，报障时直接报这个号。
+ */
+function sendError(req: Request, res: Response, err: unknown): void {
+  const pub = toPublicError(err)
+  if (pub.status >= 500) {
+    console.error(`[docs] ${pub.detail}`)
   }
-  const message = err instanceof Error ? err.message : '服务器内部错误'
-  res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message } })
+  res.status(pub.status).json(errorEnvelope(pub.code, pub.message, req))
 }
 
 type Handler = (req: Request, res: Response) => Promise<void>
@@ -295,7 +323,7 @@ type Handler = (req: Request, res: Response) => Promise<void>
 /** 包一层 try/catch，保证任何异常都返回统一 JSON，不白屏 */
 function guard(handler: Handler): (req: Request, res: Response) => void {
   return (req, res) => {
-    handler(req, res).catch((err: unknown) => sendError(res, err))
+    handler(req, res).catch((err: unknown) => sendError(req, res, err))
   }
 }
 
@@ -315,10 +343,7 @@ function allowGuest(req: Request, res: Response, feature: 'preview' | 'download'
 
   const label = feature === 'preview' ? '在线预览' : '下载原件'
   const code = feature === 'preview' ? 'GUEST_PREVIEW_CLOSED' : 'GUEST_DOWNLOAD_CLOSED'
-  res.status(403).json({
-    success: false,
-    error: { code, message: `${label}需要登录后使用，请先登录` }
-  })
+  res.status(403).json(errorEnvelope(code, `${label}需要登录后使用，请先登录`, req))
   return false
 }
 

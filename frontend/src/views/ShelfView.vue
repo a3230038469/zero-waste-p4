@@ -44,11 +44,19 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getDocs, getFacets, type DocListQuery } from '../api/docs'
+import { getDocs, getFacets, srcTableLabel, type DocListQuery } from '../api/docs'
 import type { DocListResponse, FacetItem, FacetsResponse } from '../api/types'
 import DocCard from '../components/DocCard.vue'
 
-const PAGE_SIZE = 20
+/**
+ * 每页条数。
+ *
+ * 🔴 2026-10-22：20 → 18。卡片网格是 `auto-fill, minmax(290px, 1fr)`，版心 1160px 下
+ * 正好 3 列；20 条 = 6 整行 + 2 张，最后一行右侧会空出一格，看起来像「少了一张卡」。
+ * 18 能被 1 / 2 / 3 整除（窄屏 1 列、中屏 2 列、桌面 3 列），任何宽度下每页都能填满整行。
+ * ⚠️ 以后改这个数字，先确认它是当前列数的整数倍，否则最后一行又会空出格子。
+ */
+const PAGE_SIZE = 18
 
 const router = useRouter()
 const route = useRoute()
@@ -87,6 +95,23 @@ const items = computed(() => list.value?.items ?? [])
 const total = computed(() => list.value?.total ?? 0)
 
 /**
+ * 列表读取失败时的说明（2026-10-21 · T3 · P1-11）。
+ * 之前 fetchList 没有 catch：接口挂了会**保留上一批数据**继续显示，
+ * 用户以为看到的还是最新结果；页面也分不清「没数据」与「读不出来」。
+ */
+const listError = ref('')
+
+/**
+ * 【T12】上一次由我们自己写进地址栏的整条 fullPath。
+ *
+ * watcher 见到它就跳过 applyRouteQuery —— 状态在写地址栏时已经是对的，
+ * 再按地址栏重灌一遍只会把没进 URL 的其他筛选（关键词 / 机构 / 主题…）冲掉。
+ * 存整条 fullPath 而不是布尔标记：点了**已选中**的方向时 replace 是空操作、路由不会触发变化，
+ * 布尔标记会一直挂着，把下一次真正的导航（从首页点主题进来）也一起吞掉。
+ */
+let selfPushedPath: string | null = null
+
+/**
  * 【T12】方向清单：**固定用「不带任何筛选」的那一份**，只进一次（见 onMounted）。
  *
  * 为什么不能直接拿 facets.srcTables 当清单：后端算某一维的筛选项时是
@@ -120,11 +145,29 @@ const directionTabs = computed<{ value: string; label: string; count: number }[]
     {
       value: '',
       label: '全部',
-      count: live.reduce((sum, d) => sum + d.count, 0)
+      count: allCount.value
     },
-    ...directions.value.map((d) => ({ value: d.value, label: d.label ?? d.value, count: countOf(d.value) }))
+    // 「未分类」方向桶（哨兵值 __uncategorized__）也走这里：srcTableLabel 把它翻成中文「未分类」，
+    // 后端没给 label 时也不会露出内部哨兵串
+    ...directions.value.map((d) => ({ value: d.value, label: srcTableLabel(d), count: countOf(d.value) }))
   ]
 })
+
+/**
+ * 方向合计：facets.srcTables 的份数加起来（后端算这一维时排除了自己这一维，
+ * 所以这个和 = 「符合其它筛选条件、且有方向」的份数）。
+ */
+const directionSum = computed(() => (facets.value.srcTables ?? []).reduce((sum, d) => sum + d.count, 0))
+
+/**
+ * 「全部」的份数 = 各方向之和（2026-10-21 · task-23 · B1 / B3）。
+ *
+ * 口径完全交给接口：后端 buildFacets 会把**没有方向**的资料归进「未分类」桶
+ * （哨兵值 __uncategorized__），所以各桶之和 = 符合当前其它筛选条件的全部份数
+ * = 页头「共 N 份」。前端不再自己拿 total 减出「未分类」——
+ * 那套算法和接口口径是两套账，页头和页签的数字会对不上。
+ */
+const allCount = computed(() => directionSum.value)
 
 /**
  * 当前方向（顶部标签是**单选**语义）。
@@ -210,8 +253,14 @@ function buildQuery(): DocListQuery {
 /** 只刷列表（翻页时筛选项没变，不必再取一次 facets） */
 async function fetchList(): Promise<void> {
   loading.value = true
+  listError.value = ''
   try {
     list.value = await getDocs(buildQuery())
+  } catch {
+    // 【T3 · P1-11】读不出来就明说读不出来，并**清掉旧列表**：
+    // 留着上一批数据继续显示，会让人以为看到的还是最新结果（接口挂了也看不出区别）。
+    list.value = null
+    listError.value = '资料列表没能加载出来，请检查网络后重试。'
   } finally {
     loading.value = false
   }
@@ -250,6 +299,10 @@ async function refresh(): Promise<void> {
       // 筛选项取不到不该把列表一起拖下水（错误提示已由 http 拦截器统一弹），下面照样刷列表
     }
     list.value = await getDocs(buildQuery())
+  } catch {
+    // 【T3 · P1-11】同 fetchList：失败时清空旧数据 + 给出错误态
+    list.value = null
+    listError.value = '资料列表没能加载出来，请检查网络后重试。'
   } finally {
     loading.value = false
   }
@@ -257,7 +310,35 @@ async function refresh(): Promise<void> {
 
 function onFilterChange(): void {
   page.value = 1
+  // 【T3 · 公-1】筛选变了就把地址栏一起改掉，刷新/分享都还留着这些条件
+  syncUrl()
   void refresh()
+}
+
+/**
+ * 【T3 · 公-1】把当前筛选写进地址栏。
+ *
+ * 键名必须和 applyRouteQuery 读回时用的**完全一致**：q / type / orgLike / year / tag / srcTable / sort / page。
+ * 写之前把整条 fullPath 记进 selfPushedPath —— 不然下面那个 watcher 会按地址栏把状态重新灌一遍，
+ * 没进 URL 的条件会被冲掉。
+ */
+function syncUrl(): void {
+  const query: Record<string, string | string[]> = {}
+  const q = keyword.value.trim()
+  if (q) query.q = q
+  if (activeType.value) query.type = activeType.value
+  const org = orgLike.value.trim()
+  if (org) query.orgLike = org
+  if (selectedYears.value.length > 0) query.year = [...selectedYears.value]
+  if (selectedTags.value.length > 0) query.tag = [...selectedTags.value]
+  if (selectedSrcTables.value.length > 0) query.srcTable = [...selectedSrcTables.value]
+  if (sort.value !== 'year_desc') query.sort = sort.value
+  if (page.value > 1) query.page = String(page.value)
+  const full = router.resolve({ path: '/shelf', query }).fullPath
+  if (full === route.fullPath) return
+  // replace 而不是 push：点筛选不该在浏览历史里堆一串记录
+  selfPushedPath = full
+  void router.replace({ path: '/shelf', query })
 }
 
 /**
@@ -269,17 +350,14 @@ function onFilterChange(): void {
  */
 function onDirectionClick(value: string): void {
   selectedSrcTables.value = value ? [value] : []
-  const query = { ...route.query }
-  if (value) query.srcTable = value
-  else delete query.srcTable
-  // replace 而不是 push：点筛选不该在浏览历史里堆一串记录
-  selfPushedPath = router.resolve({ path: '/shelf', query }).fullPath
-  void router.replace({ path: '/shelf', query })
+  // 【T3 · 公-1】地址栏交给 syncUrl 统一写（它会带上当前所有筛选条件，不只是方向）
   onFilterChange()
 }
 
 function onPageChange(p: number): void {
   page.value = p
+  // 【T3 · 公-1】页码也写进地址栏，刷新后停在原来这一页
+  syncUrl()
   void fetchList()
 }
 
@@ -291,8 +369,7 @@ function resetAll(): void {
   selectedSrcTables.value = []
   keyword.value = ''
   sort.value = 'year_desc'
-  // 地址栏里的筛选也要清掉，否则刷新又回来了
-  void router.replace({ path: '/shelf' })
+  // 地址栏里的筛选由 syncUrl 统一清掉（否则刷新又回来了）
   onFilterChange()
 }
 
@@ -319,7 +396,11 @@ function applyRouteQuery(): void {
   // T8：所属方向也能从地址栏带进来（`/shelf?srcTable=知识查询（零废弃）`）
   selectedSrcTables.value = toList(srcTable)
   sort.value = sortQuery === 'newest' ? 'newest' : 'year_desc'
-  page.value = 1
+  // 【T3 · 公-1】页码也读回来（分享链接可能直接指到第 3 页）
+  const pageQuery = route.query.page
+  const pageRaw = Array.isArray(pageQuery) ? pageQuery[0] : pageQuery
+  const pageNum = Number(pageRaw)
+  page.value = Number.isFinite(pageNum) && pageNum > 0 ? Math.floor(pageNum) : 1
 
   // 分享链接里带了收在折叠区里的条件（年份 / 机构 / 排序）时自动展开 ——
   // 否则「地址栏明明有年份，界面上却找不到它在哪设的」。
@@ -328,7 +409,9 @@ function applyRouteQuery(): void {
     moreOpen.value = true
   }
 
-  onFilterChange()
+  // 【T3 · 公-1】读回这条路径**不能**走 onFilterChange（它会再写一次地址栏，形成回环）：
+  // 这里只负责把状态灌好并刷新一次。
+  void refresh()
 }
 
 onMounted(() => {
@@ -347,8 +430,6 @@ onMounted(() => {
  * 存整条 fullPath 而不是布尔标记：点了**已选中**的方向时 replace 是空操作、路由不会触发变化，
  * 布尔标记会一直挂着，把下一次真正的导航（从首页点主题进来）也一起吞掉。
  */
-let selfPushedPath: string | null = null
-
 // 已在资料库页时，从首页再次点击主题/类型入口会带新的 query 过来，必须跟着变
 watch(
   () => route.fullPath,
@@ -376,7 +457,12 @@ watch(
            全库总数只在首页「资料分布」那一块出现，不在本页再说一遍。
            没筛任何条件时它就是全库总数，所以措辞跟着换一下，别写死「共收录」。 -->
       <p class="zw-sub">
-        <template v-if="hasFilter">
+        <!-- 【T3 · P1-11】列表读不出来时，份数是「取不到」，不是「0 份」。
+             写「共 0 份资料」等于告诉读者这个库是空的，是假话。 -->
+        <template v-if="listError">
+          暂时取不到份数，<a class="link-plain" href="#" @click.prevent="refresh()">重新加载</a>。
+        </template>
+        <template v-else-if="hasFilter">
           当前条件下找到 <strong class="zw-num">{{ total }}</strong> 份资料。
         </template>
         <template v-else>
@@ -402,6 +488,11 @@ watch(
         {{ d.label }}
         <span class="tab-count zw-num">{{ d.count }}</span>
       </button>
+
+      <!-- 「未分类」方向不用另画一个 chip：后端 facets 会把没有方向的资料归进
+           __uncategorized__ 桶（label 已经是中文「未分类」），
+           上面这个 v-for 会把它渲染成一个**普通可点页签** ——
+           点它就是按 srcTable=__uncategorized__ 去筛，筛出来的正好是没有方向的那些。 -->
     </div>
 
     <!-- 筛选区：默认只露最常用的三项（关键词 / 主题领域 / 知识类型）。
@@ -512,9 +603,21 @@ watch(
 
     <!-- 骨架屏 -->
     <div v-if="loading" class="cards">
-      <div v-for="n in 8" :key="n" class="skeleton-card">
+      <div v-for="n in 9" :key="n" class="skeleton-card">
         <el-skeleton :rows="3" animated />
       </div>
+    </div>
+
+    <!-- 【T3 · P1-11】列表读不出来：说清是「读不到」而不是「没数据」，并给重试。
+         之前 fetchList 没有 catch，接口挂了会留着上一批数据继续显示，
+         用户以为看到的是最新结果，分不清「没数据」和「读不出来」。 -->
+    <div v-else-if="listError" class="list-error">
+      <el-result icon="error" title="资料没能加载出来" :sub-title="listError">
+        <template #extra>
+          <el-button type="primary" @click="refresh">重新加载</el-button>
+          <el-button @click="resetAll">清除筛选条件</el-button>
+        </template>
+      </el-result>
     </div>
 
     <template v-else-if="items.length > 0">
@@ -525,7 +628,7 @@ watch(
       <div class="pager">
         <el-pagination
           background
-          layout="total, prev, pager, next"
+          layout="total, prev, pager, next, jumper"
           :total="total"
           :page-size="PAGE_SIZE"
           :current-page="page"
@@ -607,8 +710,30 @@ watch(
 }
 
 .type-tab.is-active .tab-count {
-  color: #eaf5ea;
-  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.3); /* QA-SHF-06：4.4:1→活动态提白提对比 */
+}
+
+/* 键盘可达（QA-ALL-01）：本页自绘控件统一焦点态 */
+.type-tab:focus-visible,
+.more-toggle:focus-visible,
+.active-chip:focus-visible,
+.clear-all:focus-visible,
+.link-plain:focus-visible {
+  outline: 2px solid var(--zw-green);
+  outline-offset: 2px;
+}
+
+/* 列表读不出来时的错误块 */
+.list-error {
+  padding: 28px 0;
+}
+
+/* 页头里的「重新加载」内联链接（T3 · P1-11：读不出来时页头不给假数字） */
+.link-plain {
+  color: var(--zw-green-deep);
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 /* 工具栏：默认一行（关键词 / 主题 / 类型 / 更多筛选），窄屏自动换行。
@@ -617,8 +742,8 @@ watch(
 .toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 14px;
+  gap: 12px; /* QA-SHF-02/03：10→12，统一 8px 栅格 */
+  margin-bottom: 16px; /* 14→16 */
 }
 
 /* 「更多筛选」面板：与上面那行同一套 flex 布局，只是往上贴紧一点 */
@@ -626,32 +751,33 @@ watch(
   margin-top: -4px;
 }
 
-/* T10：机构文本式检索，机构名普遍较长，给宽一点。 */
+/* T10：机构文本式检索，机构名普遍较长，给宽一点。
+   QA-SHF-02：全部对齐 8px 栅格（原 300/230/190/150/140/260 六种杂值）。 */
 .filter-org {
-  width: 300px;
+  width: 288px;
 }
 
 .filter-tag {
-  width: 230px;
+  width: 232px;
 }
 
 /* T12：类型下拉跟着上方选中的方向变（选项本身只由后端 facets 决定） */
 .filter-type {
-  width: 190px;
+  width: 192px;
 }
 
 .filter-year {
-  width: 150px;
+  width: 152px;
 }
 
 .filter-sort {
-  width: 140px;
+  width: 152px;
 }
 
 /* 关键词现在是常显三项里的第一项、靠左；
    把 margin-left:auto 让给右边的「更多筛选」按钮，让它靠右收边。 */
 .search-input {
-  width: 260px;
+  width: 256px;
 }
 
 /* 「更多筛选」开关 */
@@ -776,11 +902,14 @@ watch(
   padding: 20px;
 }
 
+/* QA-SHF-04：骨架数量与列数同步 —— 桌面 minmax(290px) 在 1160 版心是 3 列=9 格，
+   原固定 8 张，加载完成网格会跳动。9 张对齐桌面网格；手机 640 以下列变 1，
+   8/9 张在窄屏下多几张影响不大，保持单值不 branch。 */
 .pager {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  margin-top: 28px;
+  margin-top: 24px; /* QA-SHF-03：28→24，4/8 刻度 */
 }
 
 /* 窄屏（2026-10-18 修）：分页条 + 「Total 603」在 390px 下必然超宽 ——

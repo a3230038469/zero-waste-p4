@@ -24,21 +24,31 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { exportCsv } from '../api/admin'
 import { fetchStats, type StatsSummary, type TrackEventName } from '../api/track'
+import { getOverview } from '../api/overview'
+import type { DocOverview } from '../api/types'
 import {
   fetchAnalytics,
+  GUEST_ACTIVITY_ID,
   type AnalyticsDailyPoint,
-  type AnalyticsPayload
+  type AnalyticsGuestTotals,
+  type AnalyticsPayload,
+  type AnalyticsUserRow
 } from '../api/analytics'
+import ActivityDrawer from '../components/admin/ActivityDrawer.vue'
 
 const AUTO_REFRESH_MS = 30_000
 
 const stats = ref<StatsSummary | null>(null)
 const analytics = ref<AnalyticsPayload | null>(null)
+/** 资料库概览（GET /api/overview）：只用来解释「份数」的口径，不参与任何统计口径 */
+const overview = ref<DocOverview | null>(null)
 const errorText = ref('')
 const analyticsError = ref('')
 const autoRefresh = ref(false)
 const exporting = ref(false)
 const loading = ref(false)
+/** 「这些数字怎么算的」：平时收起，点标题旁的圆圈「!」才打开（2026-10-22 用户要求） */
+const glossaryOpen = ref(false)
 
 /** 看板区间（天数）。想算「本期 vs 上期」就取两倍天数，前端切前后两段。 */
 const RANGES = [
@@ -187,7 +197,6 @@ interface FunnelRow {
   label: string
   value: number
   ofPv: number
-  stepRate: number | null
   hint: string
 }
 
@@ -202,17 +211,16 @@ const funnelRows = computed<FunnelRow[]>(() => {
     { label: '问 AI', value: f.asks, hint: '检索不出来时的兜底路径' }
   ]
   const base = f.pv > 0 ? f.pv : 1
-  return rows.map((row, index) => ({
+  return rows.map((row) => ({
     ...row,
-    ofPv: (row.value / base) * 100,
-    stepRate: index === 0 || rows[index - 1].value === 0 ? null : (row.value / rows[index - 1].value) * 100
+    ofPv: (row.value / base) * 100
   }))
 })
 
 const funnelWorst = computed(() => {
-  const rows = funnelRows.value.filter((r) => r.stepRate !== null)
+  const rows = funnelRows.value
   if (!rows.length) return null
-  return [...rows].sort((a, b) => (a.stepRate ?? 0) - (b.stepRate ?? 0))[0] ?? null
+  return [...rows].sort((a, b) => a.ofPv - b.ofPv)[0] ?? null
 })
 
 /* ------------------------------------------------------------ 6/7. 内容与问答 */
@@ -270,11 +278,17 @@ async function load(): Promise<void> {
   loading.value = true
   errorText.value = ''
   analyticsError.value = ''
-  const [s, a] = await Promise.allSettled([fetchStats(), fetchAnalytics(rangeDays.value * 2)])
+  const [s, a, o] = await Promise.allSettled([
+    fetchStats(),
+    fetchAnalytics(rangeDays.value * 2),
+    getOverview()
+  ])
   if (s.status === 'fulfilled') stats.value = s.value
   else errorText.value = s.reason instanceof Error ? s.reason.message : '读取统计失败'
   if (a.status === 'fulfilled') analytics.value = a.value
   else analyticsError.value = a.reason instanceof Error ? a.reason.message : '读取分析数据失败'
+  // 概览是「锦上添花」的口径说明，失败就安静地不显示这一段（getOverview 自己会返回 null）
+  overview.value = o.status === 'fulfilled' ? o.value : null
   loading.value = false
 }
 
@@ -282,6 +296,61 @@ function pickRange(days: number): void {
   if (rangeDays.value === days) return
   rangeDays.value = days
   void load()
+}
+
+/* ------------------------------------------------------------ 7. 账号使用明细 */
+
+/**
+ * 「账号使用明细」—— 2026-10-21 新增（用户反馈：看板里看不到「谁在用」）
+ *
+ * 数据全都来自分析接口的 `users`（区间内按账号聚合，已按事件数排序）与 `guest`
+ * （未登录访客合计）。不新开接口、不重复统计，点一行就复用「注册用户」页那张
+ * 逐条记录抽屉（components/admin/ActivityDrawer.vue）。
+ */
+const USER_TOP = 50
+const userKeyword = ref('')
+
+const userRows = computed<AnalyticsUserRow[]>(() => {
+  const rows = analytics.value?.users ?? []
+  const key = userKeyword.value.trim().toLowerCase()
+  const matched = key
+    ? rows.filter((r) =>
+        [r.name, r.org, r.userId].some((v) => String(v ?? '').toLowerCase().includes(key))
+      )
+    : rows
+  return matched.slice(0, USER_TOP)
+})
+
+const guestTotals = computed<AnalyticsGuestTotals | null>(() => analytics.value?.guest ?? null)
+
+/** 账号事件合计（分子） */
+const accountEvents = computed(() =>
+  (analytics.value?.users ?? []).reduce((acc, r) => acc + r.events, 0)
+)
+
+/** 账号事件占全站的比例（分母是区间内全站事件） */
+const accountShare = computed(() => {
+  const total = analytics.value?.totals.events ?? 0
+  return total > 0 ? Math.round((accountEvents.value / total) * 100) : 0
+})
+
+const drawerOpen = ref(false)
+const drawerAccount = ref({ id: '', name: '', org: '' })
+
+function openUserActivity(row: AnalyticsUserRow): void {
+  drawerAccount.value = { id: row.userId, name: row.name, org: row.org }
+  drawerOpen.value = true
+}
+
+function openGuestActivity(): void {
+  drawerAccount.value = { id: GUEST_ACTIVITY_ID, name: '游客（未登录）', org: '' }
+  drawerOpen.value = true
+}
+
+/** 「最近活跃」列：只看得到日期与时分，年份放全反而挤 */
+function shortSeen(iso: string): string {
+  if (!iso) return '—'
+  return formatTime(iso).slice(5, 16)
 }
 
 let timer: number | null = null
@@ -306,8 +375,18 @@ onUnmounted(stopTimer)
 <template>
   <section class="admin">
     <header class="head">
-      <div>
+      <div class="head-title">
         <h1>数据看板</h1>
+        <!-- 口径说明从整块正文收成一个小圆圈：不占版面，想知道怎么算的点一下 -->
+        <button
+          type="button"
+          class="glossary-btn"
+          title="这些数字怎么算的"
+          aria-label="查看这些数字怎么算的"
+          @click="glossaryOpen = true"
+        >
+          !
+        </button>
       </div>
       <RouterLink to="/shelf" class="back">回到书架</RouterLink>
     </header>
@@ -355,6 +434,67 @@ onUnmounted(stopTimer)
         </div>
       </div>
     </section>
+
+    <!-- ============ 1b. 口径说明 ============
+         2026-10-22 用户要求：这一整块正文平时收起，改成标题旁那个圆圈「!」，
+         点开才看「这些数字怎么算的」。内容一个字没删，只是不占版面。 -->
+    <el-dialog
+      v-model="glossaryOpen"
+      title="这些数字怎么算的"
+      width="min(760px, 92vw)"
+      class="glossary-dialog"
+    >
+      <ul class="glossary">
+        <li>
+          <span class="g-name">页面访问 PV / 独立访客 UV</span>
+          <span class="g-text">
+            PV 是「打开页面的次数」，同一个人看十次算十次；UV 是「去重后的人数」，同一个人只算一次。
+            人均浏览 = PV ÷ UV，看内容有没有把人留住。
+          </span>
+        </li>
+        <li>
+          <span class="g-name">环比</span>
+          <span class="g-text">
+            「较上期 +12%」是拿当前区间和前一个等长区间比；上期一条数据都没有时写「上期无数据」，不编百分比。
+          </span>
+        </li>
+        <li>
+          <span class="g-name">无答案率</span>
+          <span class="g-text">AI 问答里答不上来的条数 ÷ 能判定「答得上/答不上」的条数（问得太含糊的题不计入分母）。</span>
+        </li>
+        <li v-if="overview">
+          <span class="g-name">资料份数：{{ overview.total }} 份 / 去重后 {{ overview.uniqueTotal }} 份</span>
+          <span class="g-text">
+            「{{ overview.total }} 份」是库里存着的份数（同一份资料重复上传过就算多份）；
+            「去重后 {{ overview.uniqueTotal }} 份」是把内容相同的副本合并后的实际份数。
+            两个数都不是错，区别在于要不要把重复副本算进去。
+          </span>
+        </li>
+        <li v-if="overview">
+          <span class="g-name">带主题标签的份数：{{ overview.topicCovered }} 份</span>
+          <span class="g-text">
+            这 {{ overview.topicCovered }} 份是打过主题标签的，它包含在上面的 {{ overview.total }} 份里面，
+            不是另加的一份；也就是说还有 {{ Math.max(0, overview.total - overview.topicCovered) }} 份没打标签，
+            在书架的「主题」筛选里挑不出来。
+          </span>
+        </li>
+        <li v-if="overview && overview.duplicateGroups > 0">
+          <span class="g-name">重复副本：{{ overview.duplicateGroups }} 组，共 {{ overview.duplicateCopies }} 份</span>
+          <span class="g-text">这些是重复上传的副本，去重后按一份算。</span>
+        </li>
+        <li v-else-if="overview">
+          <span class="g-name">重复副本：目前没有发现重复上传</span>
+          <span class="g-text">库里每一份的内容都互不相同。</span>
+        </li>
+        <li>
+          <span class="g-name">数据源</span>
+          <span class="g-text">
+            事件与趋势来自 <code>/api/track/stats</code> 与 <code>/api/admin/analytics</code>（既有口径，未做改动）；
+            资料份数来自 <code>/api/overview</code>，只用来解释上面的份数，不参与任何流量统计。
+          </span>
+        </li>
+      </ul>
+    </el-dialog>
 
     <!-- ============ 2. 趋势 + 3. 时段 ============ -->
     <div class="grid grid-2">
@@ -433,14 +573,11 @@ onUnmounted(stopTimer)
             <span class="fn-label">{{ row.label }}</span>
             <span class="fn-track"><span class="fn-fill" :style="{ width: `${Math.max(2, row.ofPv)}%` }" /></span>
             <span class="fn-value zw-num">{{ row.value }}</span>
-            <span class="fn-rate zw-num">
-              {{ row.stepRate === null ? '基准' : `${row.stepRate.toFixed(0)}%` }}
-            </span>
+            <span class="fn-pv zw-num">占 PV {{ row.ofPv.toFixed(0) }}%</span>
           </li>
         </ul>
         <p v-if="funnelWorst" class="foot-note">
-          流失最大的一步：<b>{{ funnelWorst.label }}</b>（相对上一步只有 {{ (funnelWorst.stepRate ?? 0).toFixed(0) }}%）。
-          括号里的百分比是「相对上一步」，不是相对 PV。
+          转化最低的一步：<b>{{ funnelWorst.label }}</b>（占 PV {{ funnelWorst.ofPv.toFixed(0) }}%）。
         </p>
         <p v-else class="foot-note">分析接口暂无数据。</p>
       </section>
@@ -532,6 +669,69 @@ onUnmounted(stopTimer)
       </section>
     </div>
 
+    <!-- ============ 7. 账号使用明细 ============ -->
+    <section class="block">
+      <div class="block-head">
+        <h2>账号使用明细（近 {{ rangeDays }} 天）</h2>
+      </div>
+
+      <div class="user-toolbar">
+        <p class="user-sum">
+          有活动的账号 <b class="zw-num">{{ analytics?.users.length ?? 0 }}</b> 个 · 账号事件占全站
+          <b class="zw-num">{{ accountShare }}%</b>（其余为未登录游客）
+        </p>
+        <el-input
+          v-model="userKeyword"
+          class="user-search"
+          size="small"
+          clearable
+          placeholder="搜账号名 / 机构"
+        />
+      </div>
+
+      <el-table
+        :data="userRows"
+        size="small"
+        empty-text="这段时间还没有账号在站内活动"
+        class="clickable-table"
+        @row-click="openUserActivity"
+      >
+        <el-table-column label="账号" min-width="130" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.name || row.userId }}</template>
+        </el-table-column>
+        <el-table-column label="机构" min-width="130" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.org || '—' }}</template>
+        </el-table-column>
+        <el-table-column prop="events" label="事件" width="72" align="right" />
+        <el-table-column prop="pv" label="浏览" width="68" align="right" />
+        <el-table-column prop="searches" label="检索" width="68" align="right" />
+        <el-table-column prop="previews" label="预览" width="68" align="right" />
+        <el-table-column prop="downloads" label="下载" width="68" align="right" />
+        <el-table-column prop="asks" label="提问" width="68" align="right" />
+        <el-table-column label="最近活跃" width="112">
+          <template #default="{ row }">{{ shortSeen(row.lastSeen) }}</template>
+        </el-table-column>
+      </el-table>
+
+      <p v-if="(analytics?.users.length ?? 0) > USER_TOP && !userKeyword.trim()" class="foot-note">
+        只列出事件数前 {{ USER_TOP }} 个账号；更全的名单在「注册用户」页。
+      </p>
+
+      <div v-if="guestTotals && guestTotals.events > 0" class="guest-line">
+        <span class="guest-name">游客（未登录）</span>
+        <span class="guest-metrics">
+          事件 {{ guestTotals.events }} · 浏览 {{ guestTotals.pv }} · 检索 {{ guestTotals.searches }} ·
+          预览 {{ guestTotals.previews }} · 下载 {{ guestTotals.downloads }} · 提问 {{ guestTotals.asks }}
+        </span>
+        <el-button text size="small" @click="openGuestActivity">查看记录</el-button>
+      </div>
+
+      <p class="foot-note">
+        数据源：<code>/api/admin/analytics</code>。游客是未登录访客的合计，单列不混进账号排行；
+        点任意一行可看这个账号的逐条记录。
+      </p>
+    </section>
+
     <!-- 近 14 天（既有块，保留） -->
     <section v-if="stats" class="block">
       <div class="block-head">
@@ -544,6 +744,15 @@ onUnmounted(stopTimer)
         </div>
       </div>
     </section>
+
+    <!-- 账号逐条记录抽屉（与分析接口同口径，供上面「账号使用明细」用） -->
+    <ActivityDrawer
+      v-model:open="drawerOpen"
+      :user-id="drawerAccount.id"
+      :name="drawerAccount.name"
+      :org="drawerAccount.org"
+      :days="rangeDays"
+    />
 </section>
 </template>
 
@@ -564,6 +773,42 @@ onUnmounted(stopTimer)
   margin: 0 0 6px;
   font-size: 22px;
   color: var(--zw-ink);
+}
+/* 标题 + 口径说明入口（圆圈「!」）排一行 */
+.head-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.head-title h1 {
+  margin: 0;
+}
+/* 2026-10-22：口径说明从整块正文收成这一颗小圆圈，hover/聚焦才显色 */
+.glossary-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--zw-line-strong);
+  border-radius: 50%;
+  background: var(--zw-surface);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--zw-muted);
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+.glossary-btn:hover {
+  border-color: var(--zw-green-soft);
+  background: var(--zw-mint);
+  color: var(--zw-green-deep);
+}
+.glossary-btn:focus-visible {
+  outline: 2px solid var(--zw-green);
+  outline-offset: 2px;
 }
 .back {
   font-size: 13px;
@@ -962,6 +1207,43 @@ onUnmounted(stopTimer)
   cursor: pointer;
 }
 
+/* ---- 7. 账号使用明细 ---- */
+.user-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.user-sum {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--zw-muted);
+}
+.user-search {
+  width: 220px;
+}
+.guest-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--zw-line);
+  font-size: 12.5px;
+  color: var(--zw-muted);
+}
+.guest-name {
+  color: var(--zw-green-deep);
+  font-weight: 600;
+}
+.guest-metrics {
+  flex: 1;
+  min-width: 240px;
+}
+
 .foot-note {
   margin: 12px 0 0;
   font-size: 12px;
@@ -978,6 +1260,37 @@ code {
   border-radius: 4px;
   padding: 1px 5px;
   font-size: 12px;
+}
+
+/* 口径说明列表 */
+.glossary {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.glossary li {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+  font-size: 13px;
+  line-height: 1.8;
+}
+.g-name {
+  color: var(--zw-ink);
+  font-weight: 600;
+}
+.g-text {
+  color: var(--zw-muted);
+}
+@media (max-width: 720px) {
+  .glossary li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
 }
 
 @media (max-width: 1100px) {

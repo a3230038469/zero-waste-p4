@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 200" width="720" height="200">
+  <!-- 顶栏引用版（2026-10-20）：站名、副标题、分隔线、画布尺寸全部保持系统版原样，
+       只把左边圆形图标改两处：
+       1) 直径 112 —— 等于图里那根居中细竖线长度，也等于原最长两根竖条长度。
+          竖条不能只缩环不动（跨度 134 > 直径 112，外两根会整根落在环外），
+          因此整个图标等比缩放 0.6222（112/180）。
+       2) 整体下移 10.5，图标中心 y=110.5 与右侧文字块墨迹中心对齐。
+       页脚仍用原版 logo-horizontal.svg。 -->
+  <circle cx="100" cy="110.5" r="56" fill="none" stroke="#2A6045" stroke-width="3.73"/>
+  <g fill="#2A6045">
+    <rect x="58.31" y="75.66" width="3.73" height="69.69"/>
+    <rect x="68.27" y="81.87" width="3.73" height="57.24"/>
+    <rect x="78.22" y="88.1" width="3.73" height="44.8"/>
+    <rect x="88.18" y="95.57" width="3.73" height="29.87"/>
+    <rect x="108.09" y="95.57" width="3.73" height="29.87"/>
+    <rect x="118.04" y="88.1" width="3.73" height="44.8"/>
+    <rect x="128" y="81.87" width="3.73" height="57.24"/>
+    <rect x="137.96" y="75.66" width="3.73" height="69.69"/>
+  </g>
+  <line x1="224" y1="54.5" x2="224" y2="166.5" stroke="#D8D3C6" stroke-width="2"/>
+  <text x="252" y="106" font-family="'Noto Serif SC','Source Han Serif SC','Songti SC','SimSun',serif" font-size="68" font-weight="700" fill="#1C1C1A">零废弃知识库</text>
+  <text x="254" y="142" font-family="'Noto Serif SC','Source Han Serif SC','Songti SC','SimSun',serif" font-size="18" letter-spacing="5" fill="#5F625C">ZERO WASTE KNOWLEDGE BASE</text>
+  <text x="254" y="172" font-family="'PingFang SC','Microsoft YaHei',sans-serif" font-size="18" fill="#5F625C">六尺巷基金会 · 出品</text>
+</svg>

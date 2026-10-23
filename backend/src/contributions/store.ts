@@ -88,17 +88,41 @@ export function extensionOf(fileName: string): string {
   return fileName.slice(dot).toLowerCase().replace(/[^a-z0-9.]/g, '')
 }
 
-/** 读全部投稿。文件不存在 / 内容坏掉一律当空库，不让存储问题把接口打成 500 */
+/**
+ * 读全部投稿。
+ *
+ * T5（2026-10-21）改口径：
+ *   原来「文件不存在」和「文件坏掉」都当空库处理，于是索引一旦损坏，
+ *   接口会假装「一条投稿都没有」，管理员以为投稿被清空了，实际上是数据读不出来。
+ *   现在区分开：
+ *     - 文件不存在 → 真的是空库（第一次用），返回 []；
+ *     - 文件在但内容坏掉 → 抛错（CONTRIBUTION_STORE_UNAVAILABLE），
+ *       接口回 500 并写服务端日志，不伪装成空列表。
+ */
 function readIndex(): ContributionRecord[] {
   if (!existsSync(INDEX_FILE)) return []
+  let parsed: unknown
   try {
-    const parsed: unknown = JSON.parse(readFileSync(INDEX_FILE, 'utf-8'))
-    const items = (parsed as { items?: unknown })?.items
-    if (!Array.isArray(items)) return []
-    return items.filter((x): x is ContributionRecord => typeof x === 'object' && x !== null)
-  } catch {
-    return []
+    parsed = JSON.parse(readFileSync(INDEX_FILE, 'utf-8'))
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    console.error(`[contributions] 投稿索引文件损坏（读不出来）：${detail}`)
+    throw storeUnavailableError(`投稿索引文件损坏：${detail}`)
   }
+  const items = (parsed as { items?: unknown })?.items
+  if (!Array.isArray(items)) {
+    console.error('[contributions] 投稿索引文件格式不对（items 不是数组）')
+    throw storeUnavailableError('投稿索引文件格式不对（items 不是数组）')
+  }
+  return items.filter((x): x is ContributionRecord => typeof x === 'object' && x !== null)
+}
+
+/** 存储层不可用：带 code/status，交给统一错误信封回 500 */
+function storeUnavailableError(detail: string): Error & { code: string; status: number } {
+  const err = new Error(detail) as Error & { code: string; status: number }
+  err.code = 'CONTRIBUTION_STORE_UNAVAILABLE'
+  err.status = 500
+  return err
 }
 
 /** 原子写：先写临时文件再 rename，避免写到一半断电留下半个 JSON */

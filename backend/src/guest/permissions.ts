@@ -172,31 +172,88 @@ function limitOf(value: unknown, fallback: number): number {
 }
 
 /**
- * 读设置。
+ * 🔴 降级口径：**全部关闭**（安全默认）。
  *
- * ⚠️ 故意**永不抛异常**：这个文件坏了最多退回默认值，
- *    绝不能让整个站点挂掉（权限是附加项，问答/预览/下载才是主功能）。
+ * 配置文件坏了的时候绝不能回落成「默认全开」——那等于把游客能预览、能下载、
+ * 能白刷问答一次性全放开，比报错更糟。所以这里给的是「什么都不给」，
+ * 并且由调用方写日志提示管理员去修文件。
  */
-export function loadGuestPermissions(): GuestPermissions {
+export function safeGuestPermissions(): GuestPermissions {
+  return {
+    aiAsk: false,
+    aiAskDailyLimit: 0,
+    preview: false,
+    share: false,
+    feedback: false,
+    download: false,
+    updatedAt: ''
+  }
+}
+
+/** 这次读到的是哪一种情况 */
+export type GuestPermissionsSource =
+  /** 正常：文件在、解析成功 */
+  | 'file'
+  /** 第一次跑：文件还不存在，用出厂默认 */
+  | 'missing'
+  /** 文件坏了：降级为「全部关闭」的安全默认 */
+  | 'fallback'
+
+/** 读设置的结果 + 这次是从哪儿来的 */
+export interface GuestPermissionsState {
+  permissions: GuestPermissions
+  source: GuestPermissionsSource
+  /** source === 'fallback' 时的原因（内部细节，只给服务端日志） */
+  error?: string
+}
+
+/**
+ * 读设置（带来源标记）。
+ *
+ * ⚠️ 故意**永不抛异常**：这个文件坏了最多降级，
+ *    绝不能让整个站点挂掉（权限是附加项，问答/预览/下载才是主功能）。
+ *    但「降级」不等于「默认全开」—— 坏了就全部关闭（见 safeGuestPermissions）。
+ */
+export function loadGuestPermissionsWithState(): GuestPermissionsState {
   const file = permissionsFile()
-  if (!existsSync(file)) return defaultGuestPermissions()
+  if (!existsSync(file)) {
+    return { permissions: defaultGuestPermissions(), source: 'missing' }
+  }
 
   try {
     const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'))
-    if (!isRecord(parsed)) return defaultGuestPermissions()
+    if (!isRecord(parsed)) {
+      return {
+        permissions: safeGuestPermissions(),
+        source: 'fallback',
+        error: '权限文件内容不是一个对象'
+      }
+    }
     const fallback = defaultGuestPermissions()
     return {
-      aiAsk: boolOf(parsed.aiAsk, fallback.aiAsk),
-      aiAskDailyLimit: limitOf(parsed.aiAskDailyLimit, fallback.aiAskDailyLimit),
-      preview: boolOf(parsed.preview, fallback.preview),
-      share: boolOf(parsed.share, fallback.share),
-      feedback: boolOf(parsed.feedback, fallback.feedback),
-      download: boolOf(parsed.download, fallback.download),
-      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : ''
+      permissions: {
+        aiAsk: boolOf(parsed.aiAsk, fallback.aiAsk),
+        aiAskDailyLimit: limitOf(parsed.aiAskDailyLimit, fallback.aiAskDailyLimit),
+        preview: boolOf(parsed.preview, fallback.preview),
+        share: boolOf(parsed.share, fallback.share),
+        feedback: boolOf(parsed.feedback, fallback.feedback),
+        download: boolOf(parsed.download, fallback.download),
+        updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : ''
+      },
+      source: 'file'
     }
-  } catch {
-    return defaultGuestPermissions()
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    return { permissions: safeGuestPermissions(), source: 'fallback', error: detail }
   }
+}
+
+/**
+ * 读设置（只要值，不要来源）。
+ * 保持老签名：routes/ask.ts、routes/docs.ts、routes/admin.ts 都在用它。
+ */
+export function loadGuestPermissions(): GuestPermissions {
+  return loadGuestPermissionsWithState().permissions
 }
 
 /** PUT 的请求体：字段全可选，只改传了的那些 */
@@ -359,9 +416,20 @@ export interface GuestPermissionsPayload {
   /** 当前值 */
   values: GuestPermissionValues
   updatedAt: string
+  /**
+   * true = 权限文件读不了，本次是「全部关闭」的安全降级值，不是管理员设的真实值。
+   * 前端可以据此提示「功能暂时受限」，但**不能**把它当成管理员的真实配置。
+   */
+  degraded: boolean
+  /** 这次值的来源：file（正常）/ missing（还没存过）/ fallback（文件坏了） */
+  source: GuestPermissionsSource
 }
 
-export function guestPermissionsPayload(settings: GuestPermissions = loadGuestPermissions()): GuestPermissionsPayload {
+export function guestPermissionsPayload(
+  settings: GuestPermissions = loadGuestPermissions(),
+  state?: { source?: GuestPermissionsSource }
+): GuestPermissionsPayload {
+  const source = state?.source ?? 'file'
   return {
     success: true,
     switches: GUEST_SWITCHES.map((item) => ({ ...item })),
@@ -375,7 +443,9 @@ export function guestPermissionsPayload(settings: GuestPermissions = loadGuestPe
       feedback: settings.feedback,
       download: settings.download
     },
-    updatedAt: settings.updatedAt
+    updatedAt: settings.updatedAt,
+    degraded: source === 'fallback',
+    source
   }
 }
 

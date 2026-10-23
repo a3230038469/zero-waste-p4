@@ -8,30 +8,28 @@
  *
  * 结构（经典账号菜单）：
  *   触发区 = 头像圆标（名字首字）+ 用户名 + 展开箭头
- *   下拉卡 = 顶部身份（名 / 机构）→ 个人资料 / 我的投稿 / 意见反馈 → 退出登录
+ *   下拉卡 = 顶部身份（名 / 机构）→ 个人资料 / 管理台（仅管理员）→ 退出登录
  *
  * 资料弹窗（PATCH /api/auth/me，契约见 docs/接口约定.md）：
  *   只提交**改过的**字段；手机号是登录凭证，改完提示「下次用新号登录」。
  *   保存成功后用后端返回的用户对象直接覆盖本地登录态（useAuth().setUser），
  *   不额外再打一次 /auth/me。
  *
- * ⚠️ 这里的「意见反馈」与页脚共用同一个 FeedbackDialog（scope="site"），
- *    同样受 T11 游客权限开关控制。
+ * 2026-10-22（用户要求）：删掉「我的投稿」「意见反馈」两个入口 ——
+ *   它们与顶部导航「我要投稿」（页面里就含我的投稿与意见反馈两个标签）和页脚
+ *   「意见反馈」完全重复，菜单里再放一份只是噪音。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { useAuth } from '../composables/useAuth'
-import { useGuestPermissions } from '../composables/useGuestPermissions'
 import { updateMe, type UpdateProfilePayload } from '../api/auth'
-import FeedbackDialog from './FeedbackDialog.vue'
 
 /** 关注议题候选项：与注册页（AuthView）保持同一套，另允许手动输入自定义议题 */
 const TOPIC_OPTIONS = ['垃圾分类', '厨余处理', '循环再生', '源头减量', '政策倡导', '社区营造', '其他']
 
 const router = useRouter()
 const { user, isAdmin, logout, setUser } = useAuth()
-const { ensure: ensureGuestPermissions, guestAllowed } = useGuestPermissions()
 
 /** 下拉卡是否展开 */
 const menuOpen = ref(false)
@@ -39,8 +37,6 @@ const menuOpen = ref(false)
 const profileOpen = ref(false)
 /** 保存中（防连点） */
 const saving = ref(false)
-/** 站点级反馈弹窗（与页脚共用组件） */
-const feedbackVisible = ref(false)
 
 /** 根元素：判断「点在组件外面」要靠它 */
 const rootRef = ref<HTMLElement | null>(null)
@@ -91,7 +87,6 @@ function onKeydown(ev: KeyboardEvent): void {
 onMounted(() => {
   document.addEventListener('click', onDocumentClick)
   document.addEventListener('keydown', onKeydown)
-  void ensureGuestPermissions()
 })
 
 onBeforeUnmount(() => {
@@ -145,21 +140,17 @@ async function saveProfile(): Promise<void> {
   }
 }
 
-/** 意见反馈：与页脚同一套规则（游客被关掉时提示并跳登录页） */
-function openFeedback(): void {
+/**
+ * 退出登录：清本地凭证并回首页（原来导航栏那颗文字「退出」的行为不变）。
+ *
+ * ⚠️ 等 logout() 走完再跳转（2026-10-21 · C2）：
+ *    logout 现在要等服务端把 zwp_token cookie 清掉。
+ *    不等就跳的话，紧接着发出的请求还会带着旧 cookie，
+ *    用户会看到「明明退出了，接口还说我是登录用户」。
+ */
+async function onLogout(): Promise<void> {
   closeMenu()
-  if (!guestAllowed('feedback')) {
-    ElMessage.warning('意见反馈需要登录后提交，已为你跳到登录页')
-    void router.push({ path: '/auth' })
-    return
-  }
-  feedbackVisible.value = true
-}
-
-/** 退出登录：清本地凭证并回首页（原来导航栏那颗文字「退出」的行为不变） */
-function onLogout(): void {
-  closeMenu()
-  logout()
+  await logout()
   void router.push('/')
 }
 </script>
@@ -199,8 +190,6 @@ function onLogout(): void {
         <RouterLink v-if="isAdmin" to="/admin/knowledge" class="item" role="menuitem" @click="closeMenu">
           管理台
         </RouterLink>
-        <RouterLink to="/contribute" class="item" role="menuitem" @click="closeMenu">我的投稿</RouterLink>
-        <button type="button" class="item" role="menuitem" @click="openFeedback">意见反馈</button>
 
         <div class="panel-sep" role="separator"></div>
 
@@ -255,9 +244,6 @@ function onLogout(): void {
         <el-button type="primary" :loading="saving" @click="saveProfile">保存</el-button>
       </template>
     </el-dialog>
-
-    <!-- 站点级反馈：与页脚同一个组件（B09） -->
-    <FeedbackDialog v-model="feedbackVisible" scope="site" />
   </div>
 </template>
 

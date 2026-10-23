@@ -205,8 +205,24 @@ export function parseFeedback(raw: unknown): [FeedbackInput | null, string | nul
   }
 
   const message = readString(raw, 'message')
-  if (!message) return [null, '请写一下反馈内容']
-  if (message.length > FEEDBACK_MAX_MESSAGE_CHARS) {
+
+  // 先读 scope 与 reason（用于下方资料级放宽判断）
+  const reasonRaw = readString(raw, 'reason')
+  const reason = isReason(reasonRaw) ? reasonRaw : ''
+  const scopeRaw = readString(raw, 'scope')
+  const docIdRaw = readString(raw, 'docId')
+  const scope: FeedbackScope =
+    scopeRaw === 'doc' || scopeRaw === 'site' ? scopeRaw : docIdRaw ? 'doc' : 'site'
+
+  // 资料级（scope='doc' 且已选问题类型 reason 非空）允许 message 为空；
+  // 站点级（scope='site'）仍要求必须写内容。
+  const isDocAllowedEmpty = scope === 'doc' && reason !== ''
+  if (!isDocAllowedEmpty && !message) return [null, '请写一下反馈内容']
+  if (!isDocAllowedEmpty && message.length > FEEDBACK_MAX_MESSAGE_CHARS) {
+    return [null, `反馈内容最多 ${FEEDBACK_MAX_MESSAGE_CHARS} 字，当前 ${message.length} 字`]
+  }
+  // 资料级有内容时同样受字数上限约束
+  if (isDocAllowedEmpty && message.length > FEEDBACK_MAX_MESSAGE_CHARS) {
     return [null, `反馈内容最多 ${FEEDBACK_MAX_MESSAGE_CHARS} 字，当前 ${message.length} 字`]
   }
 
@@ -222,12 +238,8 @@ export function parseFeedback(raw: unknown): [FeedbackInput | null, string | nul
 
   // 细分原因与场景都是**选填**：老调用方（只传 kind/message）照旧能用，
   // 传了不认识的取值就退回空串，不因为一个附加字段把整条反馈拒掉。
-  const reasonRaw = readString(raw, 'reason')
-  const reason = isReason(reasonRaw) ? reasonRaw : ''
-  const scopeRaw = readString(raw, 'scope')
+  // （reason / scope / docId 已在上方读取，此处直接复用）
   const docId = readString(raw, 'docId')
-  const scope: FeedbackScope =
-    scopeRaw === 'doc' || scopeRaw === 'site' ? scopeRaw : docId ? 'doc' : 'site'
 
   return [
     {

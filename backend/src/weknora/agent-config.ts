@@ -39,8 +39,10 @@
  * 设成 all，问「垃圾分类」会把 123 份 AI 学习资料一起拉进检索池。
  * 本文件在**写入前**与**回读后**各卡一道，任何一处不是 selected 都不放行。
  *
- * 将来的「全选」档也必须用「请求传多个库 id」实现，而不是 all：
+ * ⚠️ 引擎协议备忘（**我们不下发**）：引擎的多库写法是
  *   POST /api/v1/agent-chat/{sid} {query, agent_id, agent_enabled, knowledge_base_ids:[…]}
+ *   但下发知识库 id 会**覆盖智能体自配的库**，所以智能体链路一律不带这个字段；
+ *   我们这边保留的默认库（引擎集成的默认库，不是用户可选的检索范围）仅用于兜底链路 knowledge-chat。
  */
 import { EngineError } from './types.js'
 
@@ -133,6 +135,21 @@ export interface AgentEditableConfig {
    * 引擎只在「支持扩展思考的模型」上才真正生效，不支持的模型忽略该值（不会报错）。
    */
   thinking: boolean
+  /**
+   * 图片理解模型（引擎原生 `vlm_model_id`）—— 用户传图提问时由它看图。
+   * 2026-10-21 起可在系统设置「模型选择」里改（白名单从 7 项扩到 9 项）。
+   */
+  vlm_model_id: string
+  /** 检索重排模型（引擎原生 `rerank_model_id`）—— 决定检索结果先拿哪几条 */
+  rerank_model_id: string
+  /**
+   * 摘要模型（**知识库级** `summary_model_id`，不在这份智能体 config 里）。
+   *
+   * 它由 weknora/index.ts 的 updateKnowledgeBaseSummaryModel 单独写；
+   * 读的时候由路由层从知识库那边取来填进视图 —— 本文件的 updateAgentConfig
+   * **不认识这个键**，别把它塞进智能体 config（引擎里没有这个字段）。
+   */
+  summary_model_id: string
 }
 
 /** 只读展示的 4 组字段 */
@@ -175,6 +192,10 @@ export interface AgentConfigPatch {
   fallback_response?: string
   /** true = 思考模式，false = 快速模式（布尔值，没有「不改」这一说） */
   thinking?: boolean
+  /** 图片理解模型 id（VLLM 类模型）；空串 = 不改 */
+  vlm_model_id?: string
+  /** 检索重排模型 id（Rerank 类模型）；空串 = 不改 */
+  rerank_model_id?: string
 }
 
 /** 回读校验的一项（老师要看得见「到底哪一项没过」） */
@@ -267,7 +288,9 @@ export async function fetchRawAgent(agentId?: string): Promise<EngineAgent> {
 export function toAgentView(
   agent: EngineAgent,
   models: AgentConfigView['models'] = [],
-  modelsError = ''
+  modelsError = '',
+  /** 知识库当前摘要模型（跨文件取值，见 AgentEditableConfig.summary_model_id） */
+  summaryModelId = ''
 ): AgentConfigView {
   const cfg = agent.config
   const intentRaw = isRecord(cfg['intent_prompts']) ? cfg['intent_prompts'] : {}
@@ -290,7 +313,10 @@ export function toAgentView(
       fallback_strategy: str(cfg['fallback_strategy']),
       fallback_response: str(cfg['fallback_response']),
       // 引擎里没有这个键 / 不是 true 一律当「快速模式」，页面不会出现第三种状态
-      thinking: cfg['thinking'] === true
+      thinking: cfg['thinking'] === true,
+      vlm_model_id: str(cfg['vlm_model_id']),
+      rerank_model_id: str(cfg['rerank_model_id']),
+      summary_model_id: summaryModelId
     },
     readonly: {
       knowledge_bases: kbs,
@@ -315,10 +341,11 @@ export function toAgentView(
  */
 export async function getAgentConfig(
   models: AgentConfigView['models'] = [],
-  modelsError = ''
+  modelsError = '',
+  summaryModelId = ''
 ): Promise<AgentConfigView> {
   const agent = await fetchRawAgent()
-  return toAgentView(agent, models, modelsError)
+  return toAgentView(agent, models, modelsError, summaryModelId)
 }
 
 /* ------------------------------------------------------------------ *
@@ -418,6 +445,8 @@ export async function updateAgentConfig(
   applyString('fallback_strategy', patch.fallback_strategy)
   applyString('fallback_response', patch.fallback_response)
   applyBoolean('thinking', patch.thinking)
+  applyString('vlm_model_id', patch.vlm_model_id)
+  applyString('rerank_model_id', patch.rerank_model_id)
 
   /* 步骤 3：kb_selection_mode 硬闸 ---------------------------------------- */
   assertKbSelectionMode(str(before.config['kb_selection_mode']))

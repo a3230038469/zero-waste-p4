@@ -18,6 +18,53 @@ import http from './http'
 /** 投稿状态三态（与后端 store.ts 一一对应，**不要加第四个**） */
 export type ContributionStatus = 'pending' | 'approved' | 'rejected'
 
+/**
+ * 通过之后、真正可被问答引用之前的解析进度（2026-10-21 新增）
+ *
+ * 审核通过只是「已经送进知识库」，引擎还要解析（实测 PDF 约 1 分钟）。
+ * unknown = 数据源不是引擎（本地资料包 / 演示快照），或查询失败 —— 此时不编进度。
+ */
+export type ContributionParseState =
+  | 'pending'
+  | 'processing'
+  | 'finalizing'
+  | 'completed'
+  | 'failed'
+  | 'unknown'
+
+/**
+ * 审核状态的中文说法（管理台 + 公众端「我的投稿」共用一份，避免两边各写一套对不上）
+ * 2026-10-21：之前管理台自己写了一套「已通过 · 已入库」之类的拼接文案，这里收成枚举。
+ */
+export const CONTRIBUTION_STATUS_LABEL: Record<ContributionStatus, string> = {
+  pending: '待审核',
+  approved: '已通过',
+  rejected: '已退回'
+}
+
+/** 解析进度的中文说法；unknown 表示查不到进度，不编内容 */
+export const CONTRIBUTION_PARSE_LABEL: Record<ContributionParseState, string> = {
+  pending: '排队中',
+  processing: '解析中',
+  finalizing: '整理中',
+  completed: '已入库',
+  failed: '解析失败',
+  unknown: '进度未知'
+}
+
+/** 解析进度对应的标签色（Element Plus tag type） */
+export const CONTRIBUTION_PARSE_TAG: Record<
+  ContributionParseState,
+  'success' | 'warning' | 'danger' | 'info'
+> = {
+  pending: 'info',
+  processing: 'warning',
+  finalizing: 'warning',
+  completed: 'success',
+  failed: 'danger',
+  unknown: 'info'
+}
+
 /** 只收 PDF（拍板结论）：引擎对 PDF 解析效果最好 */
 export const CONTRIBUTION_ACCEPT = '.pdf'
 /** 单份文件大小上限，与后端 MAX_FILE_BYTES 对齐 */
@@ -34,6 +81,8 @@ export interface MyContribution {
   tags: string
   note: string
   status: ContributionStatus
+  /** 「已通过」之后引擎的解析进度；未通过或查不到时为 unknown */
+  parseState?: ContributionParseState
   /** 被退回时的理由（status='rejected' 时非空） */
   reason: string
   createdAt: string
@@ -145,15 +194,37 @@ export async function fetchAdminContributions(
  * 不能用普通 window.open(url) —— 查看原件要带登录凭证（管理员账号才有权看审核队列），
  * 而浏览器直接导航的请求带不上自定义头。所以先 fetch 成 blob，再开本地 objectURL。
  * 一分钟后回收，避免长期占内存。
+ *
+ * 关键：必须先同步开一个空白窗口，再异步取 blob 并把 location 指向 objectURL。
+ * 否则浏览器把异步后的 window.open 当弹窗拦截。
  */
 export async function openContributionFile(id: string): Promise<void> {
-  const res = await http.get(`/admin/contributions/${encodeURIComponent(id)}/file`, {
-    responseType: 'blob',
-    silent: true
-  })
-  const url = URL.createObjectURL(res.data as Blob)
-  window.open(url, '_blank')
-  window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  // 先同步开窗口，拿到窗口引用；异步之后再赋值 location，避免被拦截
+  const w = window.open('', '_blank')
+  if (!w) {
+    // 被拦截：给明确中文提示，不静默失败
+    const msg = '浏览器拦截了新窗口，请允许本站弹窗后重试'
+    throw new Error(msg)
+  }
+
+  let objectUrl: string | null = null
+  try {
+    const res = await http.get(`/admin/contributions/${encodeURIComponent(id)}/file`, {
+      responseType: 'blob',
+      silent: true
+    })
+    objectUrl = URL.createObjectURL(res.data as Blob)
+    w.location.href = objectUrl
+  } catch (err) {
+    // 取文件失败时别把空白窗口留在那里
+    w.close()
+    throw err
+  } finally {
+    // 无论成功失败，60 秒后回收 objectURL（若已创建）
+    if (objectUrl) {
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl as string), 60_000)
+    }
+  }
 }
 
 export interface ReviewResult {

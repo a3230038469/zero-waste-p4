@@ -66,6 +66,31 @@ function readMedia(): void {
   coarsePointer = !window.matchMedia('(hover: hover) and (pointer: fine)').matches
 }
 
+/**
+ * QA-MOT-08：matchMedia 只在挂载时读一次 —— 用户中途开「减弱动态」/从触屏转鼠标
+ * 不会生效。挂两个监听，状态翻转时把 is-static 与 rAF 一起切。
+ */
+function applyMediaState(host: HTMLElement | null): void {
+  if (!host) return
+  host.classList.toggle('is-static', reduceMotion || coarsePointer)
+  const shouldRun = !reduceMotion && !coarsePointer
+  if (shouldRun) {
+    start()
+    window.addEventListener('pointermove', onPointerMove, { passive: true })
+    window.addEventListener('pointerdown', onPointerDown, { passive: true })
+  } else {
+    stop()
+    window.removeEventListener('pointermove', onPointerMove)
+    window.removeEventListener('pointerdown', onPointerDown)
+  }
+}
+
+let multiMedias: MediaQueryList[] = []
+function onMediaFlip(): void {
+  readMedia()
+  applyMediaState(root.value)
+}
+
 /** 把视口坐标换算成「相对视口中心」的偏移，用于视差 */
 function parallax(depth: number): { x: number; y: number } {
   return {
@@ -193,10 +218,22 @@ onMounted(() => {
   window.addEventListener('resize', onResize, { passive: true })
   document.addEventListener('visibilitychange', onVisibilityChange)
   start()
+
+  // 中途翻转「减弱动态」/指针类型的场景（QA-MOT-08）
+  const reduceMq = window.matchMedia('(prefers-reduced-motion: reduce)')
+  const hoverMq = window.matchMedia('(hover: hover) and (pointer: fine)')
+  multiMedias = [reduceMq, hoverMq]
+  if (typeof reduceMq.addEventListener === 'function') {
+    multiMedias.forEach((mq) => mq.addEventListener('change', onMediaFlip))
+  }
 })
 
 onBeforeUnmount(() => {
   stop()
+  multiMedias.forEach((mq) => {
+    if (typeof mq.removeEventListener === 'function') mq.removeEventListener('change', onMediaFlip)
+  })
+  multiMedias = []
   window.removeEventListener('pointermove', onPointerMove)
   window.removeEventListener('pointerdown', onPointerDown)
   window.removeEventListener('resize', onResize)
@@ -279,12 +316,14 @@ onBeforeUnmount(() => {
   background: radial-gradient(circle, rgba(102, 187, 106, 0.16), rgba(102, 187, 106, 0) 70%);
 }
 
-/* 光圈：贴着鼠标的一圈细线，是「光追」最容易被看见的部分 */
+/* 光圈：贴着鼠标的一圈细线，是「光追」最容易被看见的部分。
+   QA-MOT-04：0.42 透明度在正文密集区扫过是 1px 噪线；降到 0.26，
+   仍可感知但不打扰阅读。 */
 .glow-follow--ring {
   width: 46px;
   height: 46px;
   margin: -23px 0 0 -23px;
-  border: 1px solid rgba(46, 125, 50, 0.42);
+  border: 1px solid rgba(46, 125, 50, 0.26);
   box-shadow: 0 0 18px rgba(46, 125, 50, 0.16) inset;
 }
 
@@ -306,12 +345,14 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-/* 静态模式（触摸设备 / 减弱动态）：不跟随、不漂移，只留一层很淡的底纹 */
+/* 静态模式（触摸设备 / 减弱动态）：不跟随、不漂移，只留一层很淡的底纹。
+   QA-MOT-02：0.55 的静态色斑是「半价的动态」——手机/低端机看到的是大幅模糊色场，
+   而不是更安静的氛围。降到 0.22，保留一点绿意但不抢正文。 */
 .mouse-glow.is-static .glow-follow {
   display: none;
 }
 
 .mouse-glow.is-static .glow-blob {
-  opacity: 0.55;
+  opacity: 0.22;
 }
 </style>

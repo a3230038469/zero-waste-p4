@@ -30,6 +30,7 @@ import { createReadStream } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import express, { Router, type NextFunction, type Request, type Response } from 'express'
 import { requireAdminGuard } from '../admin/guard.js'
+import { requestIdOf } from '../errors/types.js'
 import jwt from 'jsonwebtoken'
 import { PrismaClient } from '@prisma/client'
 
@@ -48,7 +49,7 @@ import {
   writeContributionFile,
   type ContributionRecord
 } from '../contributions/store.js'
-import { contentDisposition } from '../weknora/index.js'
+import { contentDisposition, getDocParseState, type ParseState } from '../weknora/index.js'
 
 /** 投稿人侧路由（index.ts 挂到 /api/contributions） */
 export const contributionsRouter = Router()
@@ -67,11 +68,30 @@ const AUTH_COOKIE_NAME = 'zwp_token'
 const BODY_LIMIT = '60mb'
 
 /**
- * 统一错误信封，形状与 admin.ts / track.ts 一致：{ success: false, error: { code, message } }
- * （前端 http.ts 统一读 error.message 弹提示）
+ * 统一错误信封，形状与 admin.ts / track.ts 一致：
+ *   { success: false, error: { code, message, requestId } }
+ * （前端 http.ts 统一读 error.message 弹提示；requestId 由 src/index.ts 的中间件写入，
+ *   报障时把这号报给管理员就能直接对日志。契约 C6）
  */
 function fail(res: Response, status: number, message: string, code?: string): void {
-  res.status(status).json({ success: false, error: { message, ...(code ? { code } : {}) } })
+  res.status(status).json({
+    success: false,
+    error: { message, ...(code ? { code } : {}), requestId: requestIdOf(res.req) }
+  })
+}
+
+/**
+ * 本站自己的地址 —— 投稿通过后要转发给知识库上传接口。
+ *
+ * 原来这里写死 http://127.0.0.1:${port}（P2-12）：换端口/换域名就自转发失败，
+ * 而且这个地址会顺着错误信息漏到公网。现在走环境变量 SELF_BASE_URL / BACKEND_BASE_URL，
+ * 拿不到才退回本机端口（这个值只出现在服务端拼请求的 URL 里，不进任何对外文案）。
+ */
+function selfBaseUrl(): string {
+  const configured = (process.env.SELF_BASE_URL ?? process.env.BACKEND_BASE_URL ?? '').trim()
+  if (configured) return configured.replace(/\/+$/, '')
+  const port = Number(process.env.PORT ?? 4000)
+  return `http://127.0.0.1:${port}`
 }
 
 function getJwtSecret(): string {
@@ -191,6 +211,28 @@ function toAdminItem(record: ContributionRecord): Record<string, unknown> {
     userOrg: record.userOrg,
     userPhone: record.userPhone
   }
+}
+
+/**
+ * 这条投稿当前的解析进度（2026-10-21 新增）。
+ *
+ * 只有「已通过且有 docId」才有意义：待审/退回的还没进知识库；已通过但数据源
+ * 切在 local / snapshot 时查不到引擎进度，一律 unknown（前端遇到 unknown 不编进度）。
+ * 查询失败也已经在上游吞成 unknown —— 进度是附加信息，不能拖垮整个列表。
+ */
+async function parseStateOf(record: ContributionRecord): Promise<ParseState> {
+  if (record.status !== 'approved' || !record.docId) return 'unknown'
+  return getDocParseState(record.docId)
+}
+
+/** 投稿人视角 + 解析进度 */
+async function toMyItemWithState(record: ContributionRecord): Promise<Record<string, unknown>> {
+  return { ...toMyItem(record), parseState: await parseStateOf(record) }
+}
+
+/** 管理端视角 + 解析进度 */
+async function toAdminItemWithState(record: ContributionRecord): Promise<Record<string, unknown>> {
+  return { ...toAdminItem(record), parseState: await parseStateOf(record) }
 }
 
 /** 待审原件的绝对路径（管理端「查看原件」用） */
@@ -318,11 +360,12 @@ contributionsRouter.post(
   }
 )
 
-/** GET /api/contributions/mine —— 我的投稿（新→旧，含状态与退回理由） */
+/** GET /api/contributions/mine —— 我的投稿（新→旧，含状态、退回理由与解析进度） */
 contributionsRouter.get('/mine', requireUser, async (_req: Request, res: Response) => {
   const userId = String(res.locals.userId ?? '')
   const items = await listByUser(userId)
-  res.json({ success: true, total: items.length, items: items.map(toMyItem) })
+  const projected = await Promise.all(items.map(toMyItemWithState))
+  res.json({ success: true, total: projected.length, items: projected })
 })
 
 /* ------------------------------------------------------------------ *
@@ -357,13 +400,16 @@ adminContributionsRouter.get('/', async (req: Request, res: Response) => {
   const page = Math.max(Number(queryStr(req, 'page')) || 1, 1)
   const start = (page - 1) * pageSize
 
+  // 只给本页的记录查解析进度（最多 100 条，不会把引擎打爆）
+  const items = await Promise.all(filtered.slice(start, start + pageSize).map(toAdminItemWithState))
+
   res.json({
     success: true,
     total: filtered.length,
     page,
     pageSize,
     counts,
-    items: filtered.slice(start, start + pageSize).map(toAdminItem)
+    items
   })
 })
 
@@ -407,13 +453,13 @@ adminContributionsRouter.post('/:id/approve', async (req: Request, res: Response
     return
   }
 
-  const port = Number(process.env.PORT ?? 4000)
   const params = new URLSearchParams()
   for (const key of ['org', 'year', 'type', 'tags'] as const) {
     const value = record[key].trim()
     if (value) params.set(key, value)
   }
-  const target = `http://127.0.0.1:${port}/api/admin/knowledge/upload?${params.toString()}`
+  // 自转发地址走环境变量（见 selfBaseUrl 的注释），不再写死 127.0.0.1
+  const target = `${selfBaseUrl()}/api/admin/knowledge/upload?${params.toString()}`
 
   let upstreamOk = false
   let upstreamStatus = 0
@@ -513,9 +559,22 @@ adminContributionsRouter.post('/:id/reject', async (req: Request, res: Response)
 })
 
 /** 投稿人侧路由级错误兜底：任何异常都以 JSON 返回，不让前端收到 HTML 错误页 */
-contributionsRouter.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+contributionsRouter.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
   const message = err instanceof Error ? err.message : '服务器内部错误'
   // 超过 express.raw 的 limit 时是 413：说清楚比让前端看到「请求失败」有用
   const tooLarge = /entity too large|PayloadTooLarge/i.test(message)
-  fail(res, tooLarge ? 413 : 500, tooLarge ? '文件太大了，单份请控制在 50MB 以内' : message)
+  // ⚠️ 契约 C6：异常原文（可能带内部地址、堆栈）只进日志，对外只给中文
+  console.error(`[contributions] ${requestIdOf(req)} ${req.method} ${req.originalUrl}: ${message}`)
+  fail(
+    res,
+    tooLarge ? 413 : 500,
+    tooLarge ? '文件太大了，单份请控制在 50MB 以内' : '投稿没能提交成功，请稍后重试'
+  )
+})
+
+/** 管理侧路由级错误兜底：同样只回中文，内部细节只进日志 */
+adminContributionsRouter.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
+  const message = err instanceof Error ? err.message : '服务器内部错误'
+  console.error(`[admin-contributions] ${requestIdOf(req)} ${req.method} ${req.originalUrl}: ${message}`)
+  fail(res, 500, '操作没能完成，请稍后重试')
 })

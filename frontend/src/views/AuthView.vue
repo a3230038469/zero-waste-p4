@@ -23,6 +23,30 @@ const { setToken, fetchMe } = useAuth()
 
 const activeTab = ref<'login' | 'register'>('login')
 
+/**
+ * 登录后跳哪儿：**只允许站内相对路径**（2026-10-21 修 · P1-13 开放重定向）。
+ *
+ * ⚠️ 原来是把 ?redirect= 原样丢给 router.push：
+ *    别人发一条 /auth?redirect=https://evil.example 的链接，
+ *    用户一登录就被带到外站 —— 借本站的信任钓鱼。
+ *    现在只放行「以 / 开头」的站内路径，其余一律回首页。
+ *
+ * 放行的条件（同时满足）：
+ *   - 以 / 开头（站内路径）
+ *   - 不是 // 开头（那会被浏览器当成 //evil.example 这种「协议相对地址」）
+ *   - 不含反斜杠（老浏览器会把 \ 当成 /，"/\evil.example" 又是一条绕过口子）
+ *   - 不是 http:/https: 开头（绝对地址）
+ */
+function safeRedirect(target: unknown): string {
+  if (typeof target !== 'string') return '/'
+  const value = target.trim()
+  if (!value.startsWith('/')) return '/'
+  if (value.startsWith('//')) return '/'
+  if (value.includes('\\')) return '/'
+  if (/^https?:/i.test(value)) return '/'
+  return value
+}
+
 // ============ 登录 ============
 const loginFormRef = ref<FormInstance>()
 const loginForm = reactive({ phone: '', password: '' })
@@ -46,8 +70,7 @@ async function handleLogin(): Promise<void> {
     setToken(token) // 保存 token（localStorage），刷新不掉登录态
     await fetchMe() // 拉取用户信息 → 导航栏右上角显示「XX，你好」
     ElMessage.success('登录成功')
-    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/'
-    router.push(redirect)
+    router.push(safeRedirect(route.query.redirect))
   } catch {
     // 错误提示由 http.ts 统一弹出，这里只负责收尾
   } finally {
@@ -252,13 +275,13 @@ async function handleRegister(): Promise<void> {
   margin: 4px 0 6px;
   font-size: 20px;
   text-align: center;
-  color: var(--zw-green, #2e7d32);
+  color: var(--zw-ink); /* QA-AM-11：品牌行不是「 sad 绿字」，墨色与全站 h1 同族 */
 }
 .subtitle {
   margin: 0 0 8px;
   font-size: 13px;
   text-align: center;
-  color: #888;
+  color: var(--zw-muted); /* #888 → 令牌 */
 }
 .auth-tabs {
   margin-top: 8px;

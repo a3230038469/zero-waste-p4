@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  零废弃知识库 · 站点地图
+  2026-10-21（T3 · 公-7）新增。
+
+  只列公开主路由（/、/shelf、/chat、/contribute、/auth）。
+  资料详情页（/doc/:id）不入图：详情 URL 带资料 ID、数量多且随上传变化，
+  靠搜索引擎自己从书架页发现更合适。
+
+  ⚠️ 这里的 loc 写的是**相对路径**：公网域名还没确认，写死一个域名等于对外发布假信息。
+  域名定了以后，把每条 loc 换成 https://<域名>/... 即可（后端生成 sitemap 也归后端那边）。
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>/shelf</loc>
+    <changefreq>daily</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>/chat</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>/contribute</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>/auth</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.3</priority>
+  </url>
+</urlset>

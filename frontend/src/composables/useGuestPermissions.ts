@@ -28,6 +28,11 @@ import { useAuth } from './useAuth'
 const payload = ref<GuestPermissionsPayload | null>(null)
 const loading = ref(false)
 const loaded = ref(false)
+/**
+ * 2026-10-21（T3 · P1-14）：开关是不是**兜底值**（接口没读通）。
+ * 页面可以用它提示「游客开关暂时读不到」，而不是把默认值当成真开关。
+ */
+const degraded = ref(false)
 
 let inflight: Promise<void> | null = null
 
@@ -39,6 +44,7 @@ async function ensure(): Promise<void> {
   inflight = fetchGuestPermissions()
     .then((data) => {
       payload.value = data
+      degraded.value = data.degraded === true
       loaded.value = true
     })
     .finally(() => {
@@ -70,5 +76,5 @@ export function useGuestPermissions() {
     return allows(feature)
   }
 
-  return { values, loading, loaded, ensure, allows, guestAllowed }
+  return { values, loading, loaded, degraded, ensure, allows, guestAllowed }
 }

@@ -32,6 +32,12 @@ const props = withDefaults(
 
 const emit = defineEmits<{ (e: 'update:open', value: boolean): void }>()
 
+/**
+ * 抽屉宽度：桌面上 620px，手机上最多占屏幕宽度的 94%（390px 屏上约 366px）——
+ * 之前写死 620px，手机上抽屉比屏幕还宽，右半边内容全在屏幕外，看不到。
+ */
+const drawerSize = 'min(620px, 94vw)'
+
 const PAGE_SIZE = 20
 
 const FILTERS: { value: ActivityEventFilter; label: string }[] = [
@@ -142,7 +148,7 @@ watch(
 <template>
   <el-drawer
     :model-value="open"
-    :size="620"
+    :size="drawerSize"
     direction="rtl"
     :with-header="false"
     class="activity-drawer"

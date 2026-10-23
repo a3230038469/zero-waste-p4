@@ -10,8 +10,46 @@
  * ⚠️ 这里只调自建后端（localhost:4000），绝不直接连引擎（铁律 2）。
  * ⚠️ 用现成的 api/http.ts 封装，不新造第二个 axios 实例：baseURL / 凭证 / 错误 toast 统一在那里。
  */
+import type { AxiosResponse } from 'axios'
 import http from './http'
 import type { AskSource } from './ask'
+
+/**
+ * 匿名归属令牌（2026-10-21 · T1 会话鉴权）
+ *
+ * 后端给每个匿名访客发一枚不可猜的令牌（响应头 X-Chat-Owner），
+ * 会话按它归属；四个会话请求都必须带上它，
+ * 否则后端认不出「这条会话是不是你的」→ 403。
+ *
+ * 为什么存 localStorage 而不是只放内存：刷新页面、换标签页后还得认回自己的会话。
+ * 为什么不用 httpOnly cookie 顶一顶：cookie 虽然浏览器自动带，
+ * 但前端与后端不同端口时是跨域请求，第三方 cookie 会被浏览器拦掉，
+ * 所以两条腿走路（cookie 由后端种下，这里再存一份备用）。
+ */
+const OWNER_KEY = 'zwp.chat.owner'
+const OWNER_HEADER = 'X-Chat-Owner'
+/** 后端令牌的格式：32 位十六进制（格式不对的一律不存，免得脏数据进来） */
+const OWNER_TOKEN_RE = /^[0-9a-f]{32}$/
+
+/** 取出本地存的归属令牌（没有就是空串） */
+function ownerToken(): string {
+  return localStorage.getItem(OWNER_KEY) ?? ''
+}
+
+/** 请求头：带上归属令牌（没有就先不带，等后端下发了再说） */
+function ownerHeaders(): Record<string, string> {
+  const token = ownerToken()
+  return token ? { [OWNER_HEADER]: token } : {}
+}
+
+/** 记下后端下发的归属令牌（登录状态下后端不下发，这时不动本地那一份） */
+function rememberOwner(res: AxiosResponse): void {
+  const raw = res.headers?.['x-chat-owner']
+  const value = Array.isArray(raw) ? raw[0] : raw
+  if (typeof value === 'string' && OWNER_TOKEN_RE.test(value)) {
+    localStorage.setItem(OWNER_KEY, value)
+  }
+}
 
 /** 一条会话摘要（列表项） */
 export interface ConversationSummary {
@@ -119,7 +157,10 @@ function toMessage(raw: unknown): StoredMessage | null {
 
 /** 建一个新会话（引擎就绪与否看返回的 engineReady，不影响本页使用） */
 export async function createConversation(): Promise<ConversationSummary> {
-  const res = await http.post<CreateResponse>('/chat/conversations')
+  const res = await http.post<CreateResponse>('/chat/conversations', undefined, {
+    headers: ownerHeaders()
+  })
+  rememberOwner(res)
   const conv = toSummary(res.data?.conversation)
   if (!conv) throw new Error('后端返回的会话数据不完整，请刷新重试')
   return conv
@@ -127,7 +168,11 @@ export async function createConversation(): Promise<ConversationSummary> {
 
 /** 会话列表（按最近活动倒序，后端已排好） */
 export async function listConversations(): Promise<ConversationSummary[]> {
-  const res = await http.get<ListResponse>('/chat/conversations', { silent: true })
+  const res = await http.get<ListResponse>('/chat/conversations', {
+    silent: true,
+    headers: ownerHeaders()
+  })
+  rememberOwner(res)
   const raw = res.data?.items
   if (!Array.isArray(raw)) return []
   const out: ConversationSummary[] = []
@@ -143,8 +188,10 @@ export async function fetchMessages(
   conversationId: string
 ): Promise<{ conversation: ConversationSummary; messages: StoredMessage[] }> {
   const res = await http.get<MessagesResponse>(
-    `/chat/conversations/${encodeURIComponent(conversationId)}/messages`
+    `/chat/conversations/${encodeURIComponent(conversationId)}/messages`,
+    { headers: ownerHeaders() }
   )
+  rememberOwner(res)
   const conv = toSummary(res.data?.conversation)
   if (!conv) throw new Error('会话数据不完整，请刷新重试')
   const raw = res.data.messages
@@ -166,7 +213,10 @@ export async function fetchMessages(
  */
 export async function deleteConversation(conversationId: string): Promise<void> {
   try {
-    await http.delete(`/chat/conversations/${encodeURIComponent(conversationId)}`, { silent: true })
+    await http.delete(`/chat/conversations/${encodeURIComponent(conversationId)}`, {
+      silent: true,
+      headers: ownerHeaders()
+    })
   } catch (err) {
     const status = (err as { response?: { status?: number } })?.response?.status
     if (status !== 404) throw err

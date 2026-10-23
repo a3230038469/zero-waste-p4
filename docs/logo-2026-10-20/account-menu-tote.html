@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>账号组件 · 布袋与吊牌 草图 v3</title>
+<style>
+  /* 颜色与圆角沿用 frontend/src/styles/global.css :root */
+  :root{
+    --zw-green:#2e7d32; --zw-green-deep:#1b5e20; --zw-green-soft:#66bb6a;
+    --zw-mint:#e9f3e9; --zw-mint-2:#f2f8f2; --zw-bg:#f4f8f4; --zw-surface:#ffffff; --zw-line:#e1ebe1;
+    --zw-radius-sm:8px; --zw-radius:14px;
+    --zw-ink:#16241a; --zw-text:#2c3a2f; --zw-muted:#66786a; --zw-faint:#93a396; --zw-danger:#c45656;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--zw-bg);font-family:'PingFang SC','Microsoft YaHei',system-ui,sans-serif;color:var(--zw-text);padding:40px 24px 80px}
+  .label{font-size:12px;color:var(--zw-faint);letter-spacing:.12em;margin:0 0 12px}
+  .stage{display:flex;gap:64px;align-items:flex-start;flex-wrap:wrap;margin-bottom:64px}
+
+  /* ---------- 触发区：一只布袋（可重复使用的环保袋） ---------- */
+  .account{position:relative;display:inline-block}
+  .trigger{
+    display:inline-flex;align-items:center;gap:8px;padding:2px 10px 2px 2px;
+    border:0;background:none;font:inherit;font-size:13px;color:var(--zw-text);cursor:pointer;
+  }
+  .trigger:focus-visible{outline:2px solid var(--zw-green-soft);outline-offset:3px;border-radius:999px}
+  .bag{position:relative;width:36px;height:36px;flex-shrink:0;transition:transform .2s ease}
+  .bag svg{display:block;width:36px;height:36px;overflow:visible}
+  .bag b{
+    position:absolute;left:0;right:0;top:15px;text-align:center;
+    font-size:13px;font-weight:700;color:#fff;letter-spacing:0;
+  }
+  .trigger:hover .bag{transform:translateY(-2px)}
+  .trigger.open .bag{transform:translateY(-3px) rotate(-4deg)}
+  .trigger-name{max-width:8em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  /* ---------- 吊牌：从布袋上挂下来的一张标签 ---------- */
+  .tag{
+    position:absolute;top:calc(100% + 26px);right:0;width:248px;padding:16px 10px 8px;
+    background:var(--zw-surface);border:1px solid var(--zw-line);border-radius:var(--zw-radius);
+    box-shadow:0 14px 36px rgba(22,36,26,.12);
+  }
+  /* 吊牌孔：顶部中间一个小圆孔（背景色挖空） */
+  .tag::before{
+    content:"";position:absolute;top:-1px;left:50%;width:12px;height:12px;margin-left:-6px;
+    margin-top:-6px;border-radius:50%;background:var(--zw-bg);border:1.5px solid var(--zw-line);
+  }
+  /* 挂绳：从孔向上连到布袋提手 */
+  .tag::after{
+    content:"";position:absolute;left:50%;bottom:100%;width:1.5px;height:24px;margin-left:-.75px;
+    background:repeating-linear-gradient(to bottom,var(--zw-green-soft) 0 4px,transparent 4px 7px);
+  }
+
+  .tag-head{display:flex;flex-direction:column;align-items:flex-start;padding:4px 8px 12px;border-bottom:1px dashed var(--zw-line)}
+  .tag-head strong{font-size:15px;font-weight:600;color:var(--zw-ink)}
+  .tag-head em{font-style:normal;margin-top:2px;font-size:12px;color:var(--zw-faint)}
+  .tag-tip{margin:0;padding:8px 8px 10px;font-size:12px;line-height:1.6;color:var(--zw-muted)}
+
+  .tag-item{
+    display:flex;align-items:center;gap:10px;width:100%;padding:9px 8px;border:0;border-radius:var(--zw-radius-sm);
+    background:none;font:inherit;font-size:13px;color:var(--zw-text);text-align:left;cursor:pointer;
+  }
+  .tag-item:hover{background:var(--zw-mint);color:var(--zw-green-deep)}
+  .tag-item .no{font-size:11px;color:var(--zw-faint);width:20px;flex-shrink:0;font-variant-numeric:tabular-nums}
+  .tag-item.danger{color:var(--zw-danger)}
+  .tag-item.danger:hover{background:#fdeeee;color:var(--zw-danger)}
+  .tag-sep{height:1px;margin:6px 8px;background:var(--zw-line)}
+
+  .note{max-width:660px;font-size:13px;line-height:1.85;color:var(--zw-muted)}
+  .note h3{font-size:15px;color:var(--zw-ink);margin:18px 0 6px}
+  .note ul{padding-left:18px;margin:0}
+  .note li{margin:4px 0}
+</style>
+</head>
+<body>
+
+<p class="label">默认收起：布袋 + 名字</p>
+<div class="stage">
+  <div class="account">
+    <button class="trigger" type="button" aria-haspopup="menu" aria-expanded="false">
+      <span class="bag" aria-hidden="true">
+        <svg viewBox="0 0 36 36" fill="none">
+          <!-- 提手：一根用过很多次的布带 -->
+          <path d="M11 14 V11 Q11 4 18 4 Q25 4 25 11 V14" stroke="#66bb6a" stroke-width="2" stroke-linecap="round"/>
+          <!-- 袋身：圆角梯形，布的质感 -->
+          <path d="M6 14 H30 L28.5 31 Q28.3 33 26 33 H10 Q7.7 33 7.5 31 Z" fill="#2e7d32"/>
+          <!-- 缝线：一圈虚线，表示手缝 -->
+          <path d="M9.5 17.5 H26.5 L25.6 29.5 Q25.5 30.5 24.5 30.5 H11.5 Q10.5 30.5 10.4 29.5 Z" stroke="#e9f3e9" stroke-width="1" stroke-dasharray="2 2" fill="none" opacity=".7"/>
+        </svg>
+        <b>2</b>
+      </span>
+      <span class="trigger-name">254123</span>
+    </button>
+  </div>
+</div>
+
+<p class="label">展开：吊牌挂在布袋下面</p>
+<div class="stage">
+  <div class="account" style="width:260px;height:340px">
+    <button class="trigger open" type="button" aria-haspopup="menu" aria-expanded="true">
+      <span class="bag" aria-hidden="true">
+        <svg viewBox="0 0 36 36" fill="none">
+          <path d="M11 14 V11 Q11 4 18 4 Q25 4 25 11 V14" stroke="#66bb6a" stroke-width="2" stroke-linecap="round"/>
+          <path d="M6 14 H30 L28.5 31 Q28.3 33 26 33 H10 Q7.7 33 7.5 31 Z" fill="#2e7d32"/>
+          <path d="M9.5 17.5 H26.5 L25.6 29.5 Q25.5 30.5 24.5 30.5 H11.5 Q10.5 30.5 10.4 29.5 Z" stroke="#e9f3e9" stroke-width="1" stroke-dasharray="2 2" fill="none" opacity=".7"/>
+        </svg>
+        <b>2</b>
+      </span>
+      <span class="trigger-name">254123</span>
+    </button>
+
+    <div class="tag" role="menu">
+      <div class="tag-head">
+        <strong>254123</strong>
+        <em>机构未填写</em>
+      </div>
+      <p class="tag-tip">这是你的布袋标签，改动只影响你自己的账号。</p>
+      <button class="tag-item" role="menuitem" type="button"><span class="no">01</span>个人资料</button>
+      <button class="tag-item" role="menuitem" type="button"><span class="no">02</span>我的投稿</button>
+      <button class="tag-item" role="menuitem" type="button"><span class="no">03</span>意见反馈</button>
+      <div class="tag-sep" role="separator"></div>
+      <button class="tag-item danger" role="menuitem" type="button"><span class="no">--</span>退出登录</button>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <h3>设计说明（布袋与吊牌）</h3>
+  <ul>
+    <li><b>主体是环保袋</b>：头像做成一只墨绿色的布袋，袋身缝线、提手微曲，代表"可以反复用的袋子"，直接对应零废弃的核心动作（减少一次性用品）。袋上的字是用户名首字。</li>
+    <li><b>下拉是吊牌</b>：菜单不做成普通浮层，而是一张从布袋上挂下来的吊牌，顶部有圆孔、连着一根虚线挂绳。这是服装与布袋上的标签，把"身份"变成"挂在袋子上的一张牌"。</li>
+    <li><b>交互很轻</b>：hover 时布袋轻微上提，展开时再微微侧倾，像被拎起来一样；没有弹跳和阴影堆叠。</li>
+    <li><b>颜色与圆角</b>只用现有令牌（墨绿 #2e7d32、薄荷 #e9f3e9、底 #f4f8f4），吊牌 14px 圆角，菜单项 8px，与站内一致。</li>
+    <li><b>退出登录</b>放在分隔线后，用危险红，文字旁的序号换成 "--"。</li>
+  </ul>
+  <h3>待确认</h3>
+  <ul>
+    <li>布袋上的字用名字首字（与现在一致）。</li>
+    <li>吊牌里的 "这是你的布袋标签…" 这句提示是否保留？可以删掉。</li>
+  </ul>
+  <p>我没能渲染成截图，只检查了代码和坐标。打开这个文件看效果，有问题直接告诉我哪里不对。</p>
+</div>
+
+</body>
+</html>

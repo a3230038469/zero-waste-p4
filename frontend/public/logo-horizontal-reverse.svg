@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 200" width="720" height="200">
+  <rect width="720" height="200" fill="#2A6045"/>
+  <circle cx="100" cy="100" r="90" fill="none" stroke="#F4F1EA" stroke-width="6"/>
+  <g fill="#F4F1EA">
+    <rect x="33" y="44" width="6" height="112"/>
+    <rect x="49" y="54" width="6" height="92"/>
+    <rect x="65" y="64" width="6" height="72"/>
+    <rect x="81" y="76" width="6" height="48"/>
+    <rect x="113" y="76" width="6" height="48"/>
+    <rect x="129" y="64" width="6" height="72"/>
+    <rect x="145" y="54" width="6" height="92"/>
+    <rect x="161" y="44" width="6" height="112"/>
+  </g>
+  <line x1="224" y1="44" x2="224" y2="156" stroke="#F4F1EA" stroke-opacity="0.35" stroke-width="2"/>
+  <text x="252" y="106" font-family="'Noto Serif SC','Source Han Serif SC','Songti SC','SimSun',serif" font-size="68" font-weight="700" fill="#F4F1EA">零废弃知识库</text>
+  <text x="254" y="142" font-family="'Noto Serif SC','Source Han Serif SC','Songti SC','SimSun',serif" font-size="18" letter-spacing="5" fill="#F4F1EA" fill-opacity="0.8">ZERO WASTE KNOWLEDGE BASE</text>
+  <text x="254" y="172" font-family="'PingFang SC','Microsoft YaHei',sans-serif" font-size="18" fill="#F4F1EA" fill-opacity="0.8">六尺巷基金会 · 出品</text>
+</svg>

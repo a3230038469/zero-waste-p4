@@ -4,6 +4,8 @@
  * 提供的接口（字段名照 docs/接口约定.md）：
  *   POST  /api/auth/register   注册（五字段：姓名/机构/职业/关注议题/电话 + 密码）
  *   POST  /api/auth/login      登录，返回 { token }
+ *   POST  /api/auth/logout     退出登录（2026-10-21 新增）：清掉 zwp_token 登录 cookie
+ *                              —— 只清前端 localStorage 不够，cookie 还在就仍算「已登录」
  *   GET   /api/auth/me         当前用户（需带 Authorization: Bearer <token>）
  *   PATCH /api/auth/me         修改当前用户的资料（2026-10-19 新增，配合导航栏账号菜单）
  *                              —— 只接受请求里出现的字段：姓名/机构/职业/关注议题/电话；
@@ -63,7 +65,12 @@ function getJwtSecret(): string {
  *  code：仅供运维定位用的机器可读标记（如 AUTH_NO_TOKEN / AUTH_BAD_TOKEN），
  *  message 面向用户，不要往里塞内部细节。 */
 function fail(res: Response, status: number, message: string, code?: string): void {
-  res.status(status).json({ error: { message, ...(code ? { code } : {}) } })
+  // 2026-10-23：补 success:false 与 code，和全站错误信封一致；
+  // 前端仍从 error.message 读取，兼容旧调用方。
+  res.status(status).json({
+    success: false,
+    error: { code: code ?? 'AUTH_FAILED', message }
+  })
 }
 
 /** 注册入参（接口字段名照契约，不许别名） */
@@ -289,14 +296,67 @@ function userIdFromRequest(
 /** 登录态 cookie：与返回给前端的 token 同一个值。
  *  httpOnly 让 JS 读不到（防 XSS 盗用），sameSite=lax 防跨站带上，
  *  云端若前端与后端同域，浏览器会在 /auth/me 时自动带上这条 cookie，
- *  这样即使反向代理剥掉了 Authorization 头，登录态也还在。 */
+ *  这样即使反向代理剥掉了 Authorization 头，登录态也还在。
+ * 生产环境 HTTPS 时请设置 COOKIE_SECURE=1，Set-Cookie 会带上 Secure 属性。 */
 function setAuthCookie(res: Response, token: string): void {
+  const cookieSecure = (process.env.COOKIE_SECURE ?? '').trim() === '1'
   res.cookie(AUTH_COOKIE_NAME, token, {
     httpOnly: true,
     sameSite: 'lax',
     maxAge: AUTH_COOKIE_MAX_AGE,
-    path: '/'
+    path: '/',
+    secure: cookieSecure
   })
+}
+
+/* ------------------------------------------------------------------ *
+ * 注册 / 登录限流（2026-10-21 加 · P2-10）
+ * ------------------------------------------------------------------ */
+
+/** 限流窗口：10 分钟 */
+const AUTH_RATE_WINDOW_MS = 10 * 60 * 1000
+/** 窗口内同一 IP 最多尝试次数（注册与登录分开计数） */
+const AUTH_RATE_MAX = 5
+/** 记录条数到这个量就顺手清一遍过期项，防止这个 Map 无限涨 */
+const AUTH_RATE_PRUNE_AT = 5000
+
+/** key = '用途:IP' → 最近几次尝试的时间戳 */
+const authRateHits = new Map<string, number[]>()
+
+/** 清掉窗口外的旧记录 */
+function pruneAuthRateHits(now: number): void {
+  if (authRateHits.size < AUTH_RATE_PRUNE_AT) return
+  for (const [key, hits] of authRateHits) {
+    const kept = hits.filter((t) => now - t < AUTH_RATE_WINDOW_MS)
+    if (kept.length === 0) authRateHits.delete(key)
+    else authRateHits.set(key, kept)
+  }
+}
+
+/**
+ * 记一次注册/登录尝试，并判断要不要拦。
+ *
+ * 计数口径：**成功也计数**，不只数失败的 ——
+ *   否则脚本可以拿一对已知正确的账号密码反复登录，把额度刷回来。
+ *   代价是同一个出口 IP 的正常用户 10 分钟内超过 5 次会被拦；
+ *   这是「一个出口 IP 一份额度」的取舍，和反馈接口的限流同一口径
+ *   （见 backend/src/routes/feedback.ts）。
+ *
+ * @param scope 'register' | 'login' —— 两个用途各算各的，免得注册失败把登录也锁住
+ * @returns true = 放行；false = 已超限（调用方回 429）
+ */
+function allowAuthAttempt(scope: 'register' | 'login', req: Request): boolean {
+  const key = `${scope}:${req.ip ?? 'unknown'}`
+  const now = Date.now()
+  pruneAuthRateHits(now)
+  const hits = (authRateHits.get(key) ?? []).filter((t) => now - t < AUTH_RATE_WINDOW_MS)
+  if (hits.length >= AUTH_RATE_MAX) {
+    authRateHits.set(key, hits)
+    return false
+  }
+  hits.push(now)
+  authRateHits.set(key, hits)
+  return true
 }
 
 /** Prisma 唯一约束冲突（并发下同手机号同时注册） */
@@ -310,6 +370,12 @@ router.post('/register', async (req: Request, res: Response, next: NextFunction)
     const { data, errors } = validateRegister(req.body)
     if (!data) {
       fail(res, 400, `注册信息有误：${errors.join('；')}`)
+      return
+    }
+
+    // 限流放在查重之前：查重是查数据库，脚本狂刷注册会把库也打爆
+    if (!allowAuthAttempt('register', req)) {
+      fail(res, 429, '尝试太频繁了，请 10 分钟后再试', 'AUTH_RATE_LIMITED')
       return
     }
 
@@ -359,6 +425,12 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
       return
     }
 
+    // 限流：挡手机号爆破（挨个试密码）
+    if (!allowAuthAttempt('login', req)) {
+      fail(res, 429, '尝试太频繁了，请 10 分钟后再试', 'AUTH_RATE_LIMITED')
+      return
+    }
+
     const user = await prisma.user.findUnique({ where: { phone } })
     // 手机号不存在与密码错误统一提示，避免向外部泄露"谁注册过"
     if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
@@ -372,6 +444,17 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
   } catch (err) {
     next(err)
   }
+})
+
+// —— POST /api/auth/logout：退出登录（2026-10-21 加 · C2）——
+// 作用是**清掉服务端的登录 cookie**。
+// 之前退出登录只清前端 localStorage，浏览器还一直带着 zwp_token cookie，
+// 服务端仍认为「已登录」—— 游客的每日提问额度就这么被绕过去了（登录一次就能无限问）。
+// 没登录时也回成功：退出登录必须幂等，不能因为「本来就没登录」而报错。
+router.post('/logout', (_req: Request, res: Response) => {
+  // clearCookie 的 path 必须和 setAuthCookie 一致，否则浏览器根本不清这条 cookie
+  res.clearCookie(AUTH_COOKIE_NAME, { httpOnly: true, sameSite: 'lax', path: '/' })
+  res.json({ success: true })
 })
 
 // —— GET /api/auth/me：当前登录用户（需带 token：请求头或 cookie 任一即可）——
@@ -441,9 +524,14 @@ router.patch('/me', async (req: Request, res: Response, next: NextFunction) => {
 })
 
 // —— 路由级错误兜底：任何异常都以 JSON 返回，不让前端收到 HTML 错误页 ——
-router.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-  const message = err instanceof Error ? err.message : '服务器内部错误'
-  res.status(500).json({ error: { message } })
+router.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
+  const requestId = (req as Request & { requestId?: string }).requestId
+  const detail = err instanceof Error ? err.message : String(err)
+  console.error(`[auth] 500 ${requestId ? `requestId=${requestId} ` : ''}${detail}`)
+  res.status(500).json({
+    success: false,
+    error: { code: 'INTERNAL_ERROR', message: '服务器内部错误，请稍后再试' }
+  })
 })
 
 export default router

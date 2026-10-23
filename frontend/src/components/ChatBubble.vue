@@ -1,10 +1,10 @@
 <script setup lang="ts">
 /**
- * 一条对话气泡（T5-3：从 HomeAskWidget 抽出的可复用渲染层）
+ * 一条对话气泡（T5-3：抽出的可复用渲染层）
  *
- * 抽它的原因：T4 把「Markdown 渲染 + 来源卡片 + 等待文案」都写在首页气泡组件里，
+ * 抽它的原因：T4 把「Markdown 渲染 + 来源卡片 + 等待文案」都写在气泡组件里，
  * `/chat` 独立页要同样的观感。**复制一份必然漂移**（改个表格圆角要动两个文件），
- * 所以抽成组件 —— 首页气泡与独立页现在共用同一份渲染与样式。
+ * 所以抽成组件 —— 气泡的渲染与样式现在只有这一份。
  *
  * 三种形态：
  *   - user      → 纯文本（用户输入 `*x*` 就该原样显示，不当 Markdown 解）
@@ -351,6 +351,19 @@ function sourceTitle(source: AskSource): string {
   background: #fff7e6;
   color: #b26a00;
 }
+/* 失败气泡在平铺模式下也要保住警示识别（QA-CHAT-05）：
+   flat 模式把底色全剥了，失败态只剩一行小字、和正常回答完全分不出。
+   现在平铺时给回 amber-soft 警示底 + 幸存左侧色条。 */
+.bubble.flat.failed {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--zw-amber-soft, #fdf3e0);
+  color: var(--zw-amber-ink, #8a5a12);
+  box-shadow: inset 3px 0 0 var(--zw-amber, #c8871f);
+}
+.bubble.flat.failed :deep(.acts) button {
+  color: var(--zw-amber-ink, #8a5a12);
+}
 /* 拒答气泡：不是故障，用中性色 + 虚线边（与 failed 的警示橙区分开） */
 .bubble.no-answer {
   background: #f7faf7;
@@ -664,11 +677,13 @@ function sourceTitle(source: AskSource): string {
   font-size: inherit;
   line-height: inherit;
 }
-/* 用户提问：独立页不要大绿块，浅底深字更像对话框（首页挂件不受影响，它不传 flat） */
+/* 用户提问：独立页不要大绿块，浅底深字更像对话框（首页挂件不受影响，它不传 flat）。
+   QA-CHAT-04：mint-2 on 白对比太弱、「这是我发的」一眼认不出 —— 底加深一档到 mint，
+   依然不是大绿块（正文仍是深墨绿字，非白字反转）。 */
 .bubble.flat.user {
   padding: 11px 16px;
   border-radius: 14px;
-  background: var(--zw-mint-2);
+  background: var(--zw-mint, #e9f3e9);
   color: var(--zw-ink);
 }
 .bubble.flat.no-answer {

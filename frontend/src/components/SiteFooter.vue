@@ -47,6 +47,12 @@
  *      仍保持两列（旧版一行一列会把页脚顶到 817px，是 §4.4 要压掉的主因）。
  *   ⚠️ 该组件是全局的：除「AI 问答页」（App.vue 里 `isFullBleed` 时不渲染页脚）外，
  *      其余页面都会用上这一版；所有色值都取自既有令牌，没有引入新的设计体系。
+ *
+ * 2026-10-20（logo 替换，最终版）：
+ *   品牌列与顶部导航同一套：图标（logo-mark-nav.svg，40px）+ 一条细竖线（26px 高）+ 宋体站名
+ *   （22px）+ 机构名（11.5px），竖向与顶部导航呼应、横向不再占掉 288px 宽。
+ *   曾短暂用过整条横版 logo-horizontal.svg（80px 高），用户要求与顶栏统一后改回「图标 + 字」。
+ *   只动品牌列，链接与其余样式未动。
  */
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -106,14 +112,13 @@ async function loadSiteInfo(): Promise<void> {
     <div class="zw-container">
       <div class="foot-grid">
         <div class="foot-brand">
-          <!-- 品牌块与顶部导航同源：同一个 Logo、同一套「站名 + 机构名」两行结构 -->
+          <!-- 品牌块与顶部导航同源：图标 + 细竖线 + 宋体站名（2026-10-20 统一版） -->
           <RouterLink to="/" class="brand" title="回到首页" aria-label="回到首页">
-            <span class="brand-mark" aria-hidden="true">
-              <img src="/zero-logo.png" alt="" width="32" height="32" />
-            </span>
+            <img src="/logo-mark-nav.svg" alt="" class="brand-mark" width="40" height="40" />
+            <span class="brand-vline" aria-hidden="true"></span>
             <span class="brand-text">
               <strong>零废弃知识库</strong>
-              <em>六尺巷基金会</em>
+              <em>六尺巷基金会 · 出品</em>
             </span>
           </RouterLink>
           <!-- 简介压成一行：同一段话在站内出现 17 次（D1），页脚只留最短的一版 -->
@@ -202,52 +207,51 @@ async function loadSiteInfo(): Promise<void> {
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
   margin-bottom: 12px;
   text-decoration: none;
   color: var(--zw-ink);
 }
 
 .brand-mark {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  background: var(--zw-surface);
-  box-shadow: var(--zw-shadow-sm);
-  overflow: hidden;
+  display: block;
+  width: 40px;
+  height: 40px;
   flex-shrink: 0;
 }
 
-.brand-mark img {
-  width: 32px;
-  height: 32px;
-  object-fit: contain;
+/* 与顶栏同一条细竖线：只到字块中间（26px），颜色比正文淡一档 */
+.brand-vline {
+  width: 1px;
+  height: 26px;
+  background: #cfcabb;
+  flex-shrink: 0;
 }
 
 .brand-text {
   display: flex;
   flex-direction: column;
-  line-height: 1.25;
+  line-height: 1.16;
 }
 
+/* 宋体站名：与顶栏 21px 同族，页脚略大一号 */
 .brand-text strong {
-  font-size: 17px;
-  font-weight: 600;
-  color: var(--zw-green-deep);
+  font-family: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'SimSun', serif;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--zw-ink);
 }
 
 .brand-text em {
   font-style: normal;
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--zw-faint);
-  letter-spacing: 0.04em;
+  letter-spacing: 0.12em;
 }
 
-.brand:hover .brand-text strong {
-  text-decoration: underline;
-  text-underline-offset: 4px;
+.brand:hover .brand-mark {
+  opacity: 0.86;
 }
 
 .foot-lede {
@@ -314,6 +318,14 @@ async function loadSiteInfo(): Promise<void> {
   color: var(--zw-green-deep);
 }
 
+/* 键盘可达（QA-ALL-01）：页脚链路 */
+.foot-col a:focus-visible,
+.foot-link-btn:focus-visible,
+.brand:focus-visible {
+  outline: 2px solid var(--zw-green);
+  outline-offset: 3px;
+}
+
 /* 「意见反馈」是按钮不是链接（点了开弹窗），样式上要跟同列的链接长得一样 */
 .foot-link-btn {
   border: 0;
@@ -325,9 +337,10 @@ async function loadSiteInfo(): Promise<void> {
   cursor: pointer;
 }
 
-/* T11：游客权限把反馈关掉时的置灰（仍可点，会提示并跳登录页） */
+/* T11：游客权限把反馈关掉时的置灰（仍可点，会提示并跳登录页）
+   QA-ALL-04：与其他页面 need-login 统一降为 0.72 —— 0.55 在 mint 底上像「坏了」 */
 .foot-link-btn.need-login {
-  opacity: 0.55;
+  opacity: 0.72;
 }
 
 /* ---- 版权行 ---- */
@@ -341,7 +354,7 @@ async function loadSiteInfo(): Promise<void> {
   padding-top: 18px;
   border-top: 1px solid var(--zw-line);
   font-size: 12px;
-  color: var(--zw-faint);
+  color: var(--zw-muted); /* 版权行 faint→muted：备案文字也要能读 */
 }
 
 .foot-copy {
@@ -370,6 +383,24 @@ async function loadSiteInfo(): Promise<void> {
   .site-footer {
     margin-top: 40px;
     padding: 34px 0 22px;
+  }
+
+  /* 手机上品牌区按比例收一档，别顶满一行 */
+  .brand {
+    gap: 9px;
+  }
+
+  .brand-mark {
+    width: 34px;
+    height: 34px;
+  }
+
+  .brand-vline {
+    height: 22px;
+  }
+
+  .brand-text strong {
+    font-size: 19px;
   }
 
   .foot-grid {

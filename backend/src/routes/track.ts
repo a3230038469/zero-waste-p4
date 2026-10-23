@@ -31,7 +31,7 @@ import {
   type TrackErrorResponse,
   type TrackIssue
 } from '../track/types.js'
-import { isLoggedIn } from '../guest/identity.js'
+import { isLoggedIn, userIdFromRequest } from '../guest/identity.js'
 import { loadGuestPermissions } from '../guest/permissions.js'
 
 const router = Router()
@@ -39,6 +39,40 @@ const router = Router()
 /** 「反馈已对游客关闭」的原因码（只在本文件用，理由见顶部注释） */
 const FEEDBACK_CLOSED_CODE = 'FEEDBACK_CLOSED'
 const FEEDBACK_CLOSED_MESSAGE = '意见反馈需要登录后才能提交，请先登录'
+
+/* ------------------------------------------------------------------ *
+ * 简易内存限流（T09 安全加固）
+ * ------------------------------------------------------------------ *
+ * 按 req.ip 计数，240 次/分钟；超限返回 429。
+ * 不引新依赖，用 Map 存储，定期清理过期项。
+ */
+const TRACK_RATE_WINDOW_MS = 60 * 1000 // 1 分钟
+const TRACK_RATE_MAX = 240 // 窗口内同一 IP 最多请求数
+const TRACK_RATE_PRUNE_AT = 5000 // 触发清理的阈值
+
+const trackRateHits = new Map<string, number[]>()
+
+function pruneTrackRateHits(now: number): void {
+  if (trackRateHits.size < TRACK_RATE_PRUNE_AT) return
+  for (const [key, list] of trackRateHits) {
+    const kept = list.filter((t) => now - t < TRACK_RATE_WINDOW_MS)
+    if (kept.length === 0) trackRateHits.delete(key)
+    else trackRateHits.set(key, kept)
+  }
+}
+
+function allowTrackRequest(ip: string): boolean {
+  const now = Date.now()
+  pruneTrackRateHits(now)
+  const list = (trackRateHits.get(ip) ?? []).filter((t) => now - t < TRACK_RATE_WINDOW_MS)
+  if (list.length >= TRACK_RATE_MAX) {
+    trackRateHits.set(ip, list)
+    return false
+  }
+  list.push(now)
+  trackRateHits.set(ip, list)
+  return true
+}
 
 /* ------------------------------------------------------------------ *
  * POST /api/track
@@ -118,11 +152,27 @@ function isFeedbackEvent(raw: unknown): boolean {
 }
 
 router.post('/', (req: Request, res: Response) => {
+  // T09：简易内存限流，按 req.ip 计数
+  const clientIp = req.ip ?? 'unknown'
+  if (!allowTrackRequest(clientIp)) {
+    res.status(429).json({
+      success: false,
+      error: {
+        code: 'RATE_LIMITED',
+        message: '埋点提交太频繁，请稍后再试'
+      }
+    })
+    return
+  }
+
   const envelope = parseEnvelope(req.body)
   if (!envelope.ok) {
     respondError(res, 400, 'VALIDATION_FAILED', envelope.issue.message, [envelope.issue])
     return
   }
+
+  // T09：解析真实登录身份（登录用户 = 真实 userId，未登录 = null），客户端传来的 userId 一律忽略
+  const realUserId = userIdFromRequest(req)
 
   // 🔴 T11：游客权限 `feedback` 关闭时，游客（未登录）的反馈一律拒收。
   //    判「游客」按 JWT 校验（见 guest/identity.ts）；已登录用户照常能提。
@@ -151,8 +201,13 @@ router.post('/', (req: Request, res: Response) => {
   allowed.forEach((item) => {
     // index 传原始下标：被摘掉几条之后，下标仍与前端发来的一致，便于对账
     const [event, issue] = normalizeEvent(item.raw, item.index)
-    if (event !== null) accepted.push(event)
-    else if (issue !== null) rejected.push(issue as RejectIssue)
+    if (event !== null) {
+      // T09：覆盖 userId 为真实身份，客户端传来的 userId 一律忽略
+      // T09：忽略客户端传来的 ts，使用服务端当前时间（normalizeEvent 已经处理了 ts 字段，这里再次覆盖确保）
+      event.userId = realUserId
+      event.ts = new Date().toISOString()
+      accepted.push(event)
+    } else if (issue !== null) rejected.push(issue as RejectIssue)
   })
 
   if (accepted.length === 0) {

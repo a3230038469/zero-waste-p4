@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>账号组件 · 绿巷 v4</title>
+<style>
+  :root{
+    --g:#2e7d32; --g-deep:#1b5e20; --g-soft:#66bb6a; --g-light:#a5d6a7;
+    --mint:#e9f3e9; --mint-2:#f2f8f2; --bg:#f4f8f4; --line:#e1ebe1;
+    --ink:#16241a; --text:#2c3a2f; --muted:#66786a; --faint:#93a396; --danger:#c45656;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);font-family:'PingFang SC','Microsoft YaHei',system-ui,sans-serif;color:var(--text);padding:40px 24px 80px}
+  .label{font-size:12px;color:var(--faint);letter-spacing:.12em;margin:0 0 12px}
+  .stage{display:flex;gap:64px;align-items:flex-start;flex-wrap:wrap;margin-bottom:64px}
+
+  /* 触发区：绿色胶囊，左侧叶形头像 */
+  .account{position:relative;display:inline-block}
+  .trigger{
+    display:inline-flex;align-items:center;gap:10px;padding:4px 14px 4px 4px;
+    border:0;border-radius:999px;background:var(--g);color:#fff;font:inherit;font-size:14px;cursor:pointer;
+    box-shadow:0 4px 14px rgba(46,125,50,.28);transition:background .16s,box-shadow .16s;
+  }
+  .trigger:hover,.trigger.open{background:var(--g-deep)}
+  .trigger:focus-visible{outline:2px solid var(--g-soft);outline-offset:3px}
+  .leaf{
+    width:34px;height:34px;display:grid;place-items:center;flex-shrink:0;
+    border-radius:50% 0 50% 50%;background:#fff;color:var(--g-deep);font-size:14px;font-weight:700;
+  }
+  .trigger-name{max-width:8em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chev{width:8px;height:8px;border-right:2px solid #fff;border-bottom:2px solid #fff;transform:rotate(45deg) translateY(-2px);transition:transform .2s;opacity:.85}
+  .trigger.open .chev{transform:rotate(225deg) translateY(-2px)}
+
+  /* 下拉卡：白卡 + 顶部"六尺巷"竖线 + 绿色页眉 */
+  .panel{
+    position:absolute;top:calc(100% + 10px);right:0;width:264px;overflow:hidden;
+    background:var(--mint-2);border:1px solid var(--line);border-radius:14px;
+    box-shadow:0 18px 44px rgba(22,36,26,.14);
+  }
+  /* 页眉：绿底，里面是六尺巷的竖线（由长到短向中间收拢） */
+  .head{position:relative;padding:18px 16px 16px;background:var(--g);color:#fff}
+  .head svg.bars{position:absolute;right:10px;top:8px;width:120px;height:44px;opacity:.55}
+  .head-row{position:relative;display:flex;align-items:center;gap:12px}
+  .head .leaf{width:44px;height:44px;font-size:18px;background:#fff;color:var(--g-deep)}
+  .who strong{display:block;font-size:16px;font-weight:600}
+  .who em{display:block;margin-top:2px;font-style:normal;font-size:12px;color:var(--g-light)}
+  /* 零：页眉底部一圈绿环，表示"零废弃"的循环 */
+  .ring{position:absolute;right:-14px;bottom:-22px;width:64px;height:64px;border:2px solid rgba(255,255,255,.22);border-radius:50%}
+
+  .menu{padding:8px}
+  .item{
+    display:flex;align-items:center;gap:10px;width:100%;padding:10px 10px;border:0;border-radius:10px;
+    background:none;font:inherit;font-size:14px;color:var(--text);text-align:left;cursor:pointer;
+  }
+  .item:hover{background:var(--mint);color:var(--g-deep)}
+  .item .dot{width:8px;height:8px;border-radius:50% 0 50% 50%;background:var(--g-soft);flex-shrink:0}
+  .item:hover .dot{background:var(--g)}
+  .sep{height:1px;margin:6px 10px;background:var(--line)}
+  .item.danger{color:var(--danger)}
+  .item.danger .dot{background:var(--danger)}
+  .item.danger:hover{background:#fdeeee;color:var(--danger)}
+  .foot{padding:10px 16px 14px;font-size:11px;color:var(--faint);letter-spacing:.06em;border-top:1px dashed var(--line)}
+</style>
+</head>
+<body>
+
+<p class="label">收起</p>
+<div class="stage">
+  <div class="account">
+    <button class="trigger" type="button" aria-haspopup="menu" aria-expanded="false">
+      <span class="leaf" aria-hidden="true">2</span>
+      <span class="trigger-name">254123</span>
+      <span class="chev" aria-hidden="true"></span>
+    </button>
+  </div>
+</div>
+
+<p class="label">展开</p>
+<div class="stage">
+  <div class="account" style="width:280px;height:300px">
+    <button class="trigger open" type="button" aria-haspopup="menu" aria-expanded="true">
+      <span class="leaf" aria-hidden="true">2</span>
+      <span class="trigger-name">254123</span>
+      <span class="chev" aria-hidden="true"></span>
+    </button>
+
+    <div class="panel" role="menu">
+      <div class="head">
+        <svg class="bars" viewBox="0 0 120 44" aria-hidden="true">
+          <g fill="#fff">
+            <rect x="0" y="0" width="4" height="44"/>
+            <rect x="12" y="4" width="4" height="36"/>
+            <rect x="24" y="9" width="4" height="26"/>
+            <rect x="36" y="14" width="4" height="16"/>
+            <rect x="80" y="14" width="4" height="16"/>
+            <rect x="92" y="9" width="4" height="26"/>
+            <rect x="104" y="4" width="4" height="36"/>
+            <rect x="116" y="0" width="4" height="44"/>
+          </g>
+        </svg>
+        <div class="head-row">
+          <span class="leaf" aria-hidden="true">2</span>
+          <div class="who">
+            <strong>254123</strong>
+            <em>机构未填写</em>
+          </div>
+        </div>
+        <span class="ring" aria-hidden="true"></span>
+      </div>
+
+      <div class="menu">
+        <button class="item" role="menuitem" type="button"><span class="dot"></span>个人资料</button>
+        <button class="item" role="menuitem" type="button"><span class="dot"></span>我的投稿</button>
+        <button class="item" role="menuitem" type="button"><span class="dot"></span>意见反馈</button>
+        <div class="sep" role="separator"></div>
+        <button class="item danger" role="menuitem" type="button"><span class="dot"></span>退出登录</button>
+      </div>
+
+      <div class="foot">六尺巷 · 零废弃知识库</div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

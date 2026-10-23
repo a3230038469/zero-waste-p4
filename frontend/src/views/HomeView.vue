@@ -15,7 +15,7 @@
  *   ⑤ 引用与转载（原「关于项目」页的 #cite 板块，4 条规则一字未改）
  *
  * 随之删掉：数据条、最近收录 3 张卡、找资料整块、AI 问答整宽带、右下角 AI 悬浮挂件
- * （HomeAskWidget 不再在本页挂载；组件文件保留，未删）。
+ * （右下角 AI 悬浮挂件组件已于 2026-10-21 删除；首页不再挂载 AI 组件，AI 入口是跳 /chat 的链接）。
  *
  * ⚠️ 三处写作纪律（沿用 AboutView 的页头约定）：
  *   1. 只写能核实的事实；基金会对外口径（成立时间、电话等）未经确认一律不写、不编造。
@@ -29,8 +29,15 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { getOverview } from '../api/overview'
-import { fetchSiteInfo } from '../api/site'
-import { DEFAULT_COOPERATION } from '../constants/site-defaults'
+import { fetchSiteInfo, type SiteInfoValues } from '../api/site'
+import {
+  DEFAULT_CITE_INTRO,
+  DEFAULT_CITE_RULES,
+  DEFAULT_COOPERATION,
+  DEFAULT_FOUNDATION_ITEMS,
+  DEFAULT_INTRO_PARAGRAPHS
+} from '../constants/site-defaults'
+import { inlineBold, splitLines, splitParagraphs } from '../utils/siteText'
 import type { DocOverview } from '../api/types'
 import { formatCount } from '../utils/format'
 
@@ -53,27 +60,58 @@ const HOT_TERMS = ['零废弃', '垃圾分类', '塑料', '无废城市', '化�
    2026-10-19：三行联系方式从管理台「机构信息」页读（`GET /api/site-info`，公开只读）。
    取不到或没填时**保持「待补充」**：这一块是对外口径，宁可空着也不编。 */
 
-const siteInfo = ref<Record<string, string>>({})
+const siteInfo = ref<SiteInfoValues | null>(null)
 
 /** 合作说明：机构填了就用填的，没填沿用默认那句（默认值来自 constants/site-defaults） */
 const coopText = computed(() => {
-  const v = (siteInfo.value.cooperation ?? '').trim()
+  const v = (siteInfo.value?.cooperation ?? '').trim()
   return v || DEFAULT_COOPERATION
 })
 
 /** 三行联系信息：label 固定，value 空则前端显示「待补充」 */
 const contactRows = computed(() => [
-  { key: 'contact', label: '联系方式', value: (siteInfo.value.contact ?? '').trim() },
-  { key: 'email', label: '邮箱', value: (siteInfo.value.email ?? '').trim() },
-  { key: 'address', label: '地址', value: (siteInfo.value.address ?? '').trim() }
+  { key: 'contact', label: '联系方式', value: (siteInfo.value?.contact ?? '').trim() },
+  { key: 'email', label: '邮箱', value: (siteInfo.value?.email ?? '').trim() },
+  { key: 'address', label: '地址', value: (siteInfo.value?.address ?? '').trim() }
 ])
+
+/**
+ * 首页三块可编辑文案（2026-10-22，管理台「机构信息」页填写）。
+ *
+ * 口径：老师没填 / 清空 → 回退到 constants/site-defaults 里的默认文案
+ * （就是改造前首页上的原文，一字未改）。空着不会变成空白。
+ */
+const introParagraphs = computed(() => {
+  const ps = splitParagraphs(siteInfo.value?.introBody ?? '')
+  return ps.length > 0 ? ps : DEFAULT_INTRO_PARAGRAPHS
+})
+
+const foundationItems = computed(() => {
+  const items = siteInfo.value?.foundationItems ?? []
+  return items.length > 0 ? items : DEFAULT_FOUNDATION_ITEMS
+})
+
+const citeIntro = computed(() => (siteInfo.value?.citeIntro ?? '').trim() || DEFAULT_CITE_INTRO)
+
+const citeRules = computed(() => {
+  const rules = siteInfo.value?.citeRules ?? []
+  return rules.length > 0 ? rules : DEFAULT_CITE_RULES
+})
+
+/** 引用与转载的正文 / 规则允许用 **两个星号** 加粗（先转义再换标签，见 utils/siteText） */
+const citeIntroHtml = computed(() => inlineBold(citeIntro.value))
+
+/** 条目正文：多行 → 圆点列表（核心方向那种）；单行 → 一段 */
+function itemLines(body: string): string[] {
+  return splitLines(body)
+}
 
 async function loadSiteInfo(): Promise<void> {
   try {
     const res = await fetchSiteInfo()
-    siteInfo.value = res.info ?? {}
+    siteInfo.value = res.info ?? null
   } catch {
-    // 拿不到就当作全空（页面显示「待补充」），不弹错、不挡首页其它内容
+    // 拿不到就当作全空（页面显示「待补充」/ 默认文案），不弹错、不挡首页其它内容
   }
 }
 
@@ -83,6 +121,9 @@ const overview = ref<DocOverview | null>(null)
 const overviewFailed = ref(false)
 
 async function loadHome(): Promise<void> {
+  // 【T3 · P1-11】重试前先把失败标记清掉：否则这次取到了数据，
+  // 模板里 v-else-if="overviewFailed" 仍然成立，页面会一边有图一边说「取不到」。
+  overviewFailed.value = false
   try {
     overview.value = await getOverview()
   } catch {
@@ -200,7 +241,9 @@ onMounted(() => {
           @keyup.enter="onSearch"
         >
           <template #prefix>
-            <span class="search-icon">🔍</span>
+            <!-- 2026-10-20：换成 docs/logo-2026-10-20 那套新 logo 的搜索图标
+                 （未闭合圆环 + 镜片里一片叶子 + 手柄），与站标同一主色 -->
+            <img src="/search-icon.svg" class="search-icon" alt="" width="18" height="18" />
           </template>
         </el-input>
         <el-button type="primary" size="large" class="search-btn" @click="onSearch">检索</el-button>
@@ -230,22 +273,14 @@ onMounted(() => {
         <div class="panel">
           <h2 class="zw-h2 panel-title">项目简介</h2>
 
-          <p class="intro-lead">
-            零废弃知识库把散落在各部门、各机构、各语种里的零废弃资料汇集到一处：
-            政策法规、研究报告、标准规范、实践工具与科学认知，统一标注发布机构、发布年份、
-            资料类型与主题领域，供检索与查阅。
+          <!-- 正文由管理台「机构信息」页填写（2026-10-22）：空一行分一段，第一段沿用导语样式 -->
+          <p
+            v-for="(p, i) in introParagraphs"
+            :key="i"
+            :class="i === 0 ? 'intro-lead' : 'intro-body'"
+          >
+            {{ p }}
           </p>
-          <p class="intro-body">
-            建设这个库的出发点很直接——关心零废弃议题的人（社区工作者、社会组织从业者、
-            研究者、学生、企业环境管理人员）常常知道「有这份文件」，却不知道怎么找到它。
-            我们把「找资料」这一步做掉，把资料本身留给使用者判断。
-          </p>
-
-          <ul class="intro-points">
-            <li>统一标注发布机构、年份、类型与主题</li>
-            <li>把「找资料」这一步做掉</li>
-            <li>资料本身留给使用者判断</li>
-          </ul>
 
           <!-- 合作与共建：原「关于基金会」里的「合作说明」，按用户要求改名并搬到本栏 -->
           <div id="coop" class="coop">
@@ -274,38 +309,14 @@ onMounted(() => {
           <div class="fund-body">
             <p class="fund-org">安徽省六尺巷慈善基金会</p>
 
-            <div class="fund-item">
-              <h3>基金会简介</h3>
-              <p>
-                以「六尺巷」包容礼让的文化精神为内核，立足公益慈善领域，围绕生态环保、社区发展、
-                公益人才培育等方向开展公益项目，推动知识共享、行业协作与可持续公益生态建设。
-              </p>
-            </div>
-
-            <div class="fund-item">
-              <h3>与知识库的关系</h3>
-              <p>
-                零废弃知识库是安徽省六尺巷慈善基金会建设的公开知识平台，面向环保、公益及相关领域
-                工作人员，提供资料查询、案例参考、知识学习与行业交流支持。
-              </p>
-            </div>
-
-            <div class="fund-item">
-              <h3>机构宗旨</h3>
-              <p class="fund-motto">
-                传承礼让精神，践行公益使命；凝聚多方力量，共建可持续的公益生态。
-              </p>
-            </div>
-
-            <div class="fund-item">
-              <h3>核心方向</h3>
-              <ul class="fund-list">
-                <li>生态环保与零废弃项目推广</li>
-                <li>社区公益建设</li>
-                <li>公众环境教育</li>
-                <li>公益行业人才赋能</li>
-                <li>知识共享与行业协作</li>
+            <!-- 条目由管理台「机构信息」页填写：小标题 + 正文，可增删排序（2026-10-22）。
+                 正文多行 → 圆点列表（原「核心方向」那种）；单行 → 一段。 -->
+            <div v-for="(item, i) in foundationItems" :key="i" class="fund-item">
+              <h3 v-if="item.title">{{ item.title }}</h3>
+              <ul v-if="itemLines(item.body).length > 1" class="fund-list">
+                <li v-for="(line, j) in itemLines(item.body)" :key="j">{{ line }}</li>
               </ul>
+              <p v-else :class="{ 'fund-motto': item.emphasis }">{{ item.body }}</p>
             </div>
 
             <div class="fund-actions">
@@ -318,7 +329,27 @@ onMounted(() => {
       <!-- ④ 资料分布（原 /insights 的统计，收成一张图） -->
       <section id="distribution" class="block">
         <div class="panel">
-          <h2 class="zw-h2 panel-title">资料分布</h2>
+          <h2 class="zw-h2 panel-title">
+            资料分布
+            <!-- 口径说明（「其他」的成员 + 合计口径）收进圆圈「!」，点开才显示（2026-10-22 用户要求） -->
+            <el-popover
+              placement="bottom-start"
+              trigger="click"
+              :width="380"
+              popper-class="dist-note-pop"
+            >
+              <template #reference>
+                <button type="button" class="info-dot" aria-label="资料分布的口径说明">!</button>
+              </template>
+              <p v-if="restTopics.length > 0" class="dist-note-line">
+                「其他」= {{ restTopics.join('、') }}（共 {{ formatCount(restCount) }} 份）
+              </p>
+              <p class="dist-note-line">
+                一份资料可同时归属多个主题，故各主题合计大于总份数。
+                完整筛选与全部主题见<RouterLink to="/shelf">资料库</RouterLink>。
+              </p>
+            </el-popover>
+          </h2>
 
           <p class="chart-sub">
             按主题领域 <template v-if="overview">· 共 {{ formatCount(overview.total) }} 份资料</template>
@@ -326,9 +357,13 @@ onMounted(() => {
 
           <el-skeleton v-if="!overview && !overviewFailed" :rows="4" animated />
 
-          <p v-else-if="overviewFailed" class="chart-empty">
-            暂时取不到统计数据，稍后再看；资料本身仍可在<RouterLink to="/shelf">资料库</RouterLink>检索。
-          </p>
+          <!-- 【T3 · P1-11】统计读不出来要说清是「读不到」，并给一次重试的机会 -->
+          <div v-else-if="overviewFailed" class="chart-empty">
+            <p>
+              暂时取不到统计数据，稍后再看；资料本身仍可在<RouterLink to="/shelf">资料库</RouterLink>检索。
+            </p>
+            <el-button size="small" @click="loadHome">重新加载</el-button>
+          </div>
 
           <template v-else>
             <ul class="bar-list">
@@ -344,35 +379,23 @@ onMounted(() => {
                 <span class="bar-value zw-num">{{ formatCount(b.count) }}</span>
               </li>
             </ul>
-
-            <!-- 「其他」是个合并项，必须把成员列出来，否则等于把 11 个主题藏了 -->
-            <p v-if="restTopics.length > 0" class="chart-note">
-              「其他」= {{ restTopics.join('、') }}（共 {{ formatCount(restCount) }} 份）
-            </p>
           </template>
-
-          <p class="chart-foot">
-            一份资料可同时归属多个主题，故各主题合计大于总份数。
-            完整筛选与全部主题见<RouterLink to="/shelf">资料库</RouterLink>。
-          </p>
         </div>
       </section>
 
-      <!-- ⑤ 引用与转载 -->
+      <!-- ⑤ 引用与转载（正文与规则由管理台「机构信息」页填写，2026-10-22） -->
       <section id="cite" class="block">
         <div class="panel">
           <h2 class="zw-h2 panel-title">引用与转载</h2>
           <div class="prose">
-            <p>
-              本站收录的资料均为公开出版物、政府公开文件或公开发布的研究报告，
-              <strong>著作权归原作者与发布机构所有</strong>。本站做的是汇集、标注与索引，不做再授权。
-            </p>
+            <!-- 文案来自管理台（老师可改）；加粗用 **两个星号** 标记，
+                 inlineBold 先整体转义再换 <strong>，所以 v-html 里不可能出现别的标签。 -->
+            <!-- eslint-disable vue/no-v-html -->
+            <p v-html="citeIntroHtml"></p>
             <ul class="rules">
-              <li>引用本站收录的资料时，请注明<strong>原始发布机构与资料名称</strong>，而不是「引自零废弃知识库」。</li>
-              <li>下载原件后用于研究、教学或公益传播，请遵循该资料自身的授权条款。</li>
-              <li>如权利人认为某份资料不宜在本站收录，请联系我们，我们核实后会下架。</li>
-              <li>本站的检索结果与 AI 回答由系统依据库内资料生成，仅供检索参考，<strong>不构成任何形式的专业意见</strong>。</li>
+              <li v-for="(rule, i) in citeRules" :key="i" v-html="inlineBold(rule)"></li>
             </ul>
+            <!-- eslint-enable vue/no-v-html -->
           </div>
         </div>
       </section>
@@ -451,14 +474,25 @@ onMounted(() => {
   flex: 1;
 }
 
+/* 搜索图标（新 logo 同源的 SVG 文件）：固定尺寸，不随字体缩放。
+   margin-left 取负值抵掉 Element 前缀容器的内缩，让图标贴近输入框左缘。 */
 .search-icon {
-  font-size: 14px;
-  opacity: 0.55;
+  display: block;
+  width: 18px;
+  height: 18px;
+  margin-left: -5px;
+  margin-right: 3px;
 }
 
+/* 「检索」只有两个字：默认字距挤成一团、在按钮里显小。
+   拉开字距 + 去掉一个字的字重差，再把右侧内边距收窄（字距会在末字后带出一个空隙），
+   整体宽度基本不变，但两个字看起来占满按钮、更饱满。 */
 .search-btn {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
   padding-left: 26px;
-  padding-right: 26px;
+  padding-right: 20px;
 }
 
 /* 搜索框正下方的 AI 入口：不大，但要一眼看见（2026-10-18 起是站内链接，不再是按钮） */
@@ -496,13 +530,13 @@ onMounted(() => {
 
 .hot-label {
   font-size: 13px;
-  color: var(--zw-faint);
+  color: var(--zw-muted); /* 对比度：faint≈2.6:1 on 灰玻璃不足，muted 稳过 */
 }
 
 .hot-chip {
-  border: 1px dashed var(--zw-line-strong);
+  border: 1px solid var(--zw-line-strong); /* 虚线语义回收(QA-ALL-04)：可点元素不用虚线 */
   background: rgba(255, 255, 255, 0.7);
-  color: var(--zw-muted);
+  color: var(--zw-text);
   font: inherit;
   font-size: 13px;
   padding: 4px 12px;
@@ -518,6 +552,14 @@ onMounted(() => {
   color: var(--zw-green-deep);
   border-color: var(--zw-green);
   background: #fff;
+}
+
+/* 键盘可达（QA-ALL-01）：首页交互元素焦点态 */
+.ask-inline:focus-visible,
+.hot-chip:focus-visible,
+.search-btn:focus-visible {
+  outline: 2px solid var(--zw-green);
+  outline-offset: 2px;
 }
 
 /* ---------------- 分隔线以下的「关于」四栏（样式沿用原 AboutView 的卡片语言） ---------------- */
@@ -604,23 +646,7 @@ onMounted(() => {
   color: var(--zw-text);
 }
 
-/* 三个要点：从上面两段里抽出来的短句，排成一行标签，扫一眼就够 */
-.intro-points {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.intro-points li {
-  font-size: 13px;
-  color: var(--zw-ink);
-  background: var(--zw-mint);
-  border-radius: 999px;
-  padding: 5px 14px;
-}
+/* 三个要点：2026-10-22 按用户要求从首页删掉（正文改为管理台可编辑），样式一并移除 */
 
 /* 合作与共建：本栏的收尾小块 */
 .coop {
@@ -816,29 +842,45 @@ onMounted(() => {
   text-align: right;
 }
 
-.chart-note {
-  margin: 16px 0 0;
-  font-size: 12px;
-  line-height: 1.8;
-  color: var(--zw-muted);
-}
-
-.chart-foot {
-  margin: 12px 0 0;
-  font-size: 12px;
-  line-height: 1.8;
-  color: var(--zw-faint);
-}
-
-.chart-foot a,
+/* 2026-10-22：「其他」的成员说明与图注都收进标题旁的圆圈「!」，两条样式随之移除；
+   这里只留「统计读不出来」那一块里的链接样式。 */
 .chart-empty a {
   color: var(--zw-green-deep);
   text-decoration: none;
 }
 
-.chart-foot a:hover,
 .chart-empty a:hover {
   text-decoration: underline;
+}
+
+/* 圆圈「!」：资料分布标题旁的口径说明入口（与数据看板那颗同一个观感） */
+.info-dot {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 8px;
+  padding: 0;
+  border: 1px solid var(--zw-line-strong);
+  border-radius: 50%;
+  background: var(--zw-surface);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--zw-muted);
+  cursor: pointer;
+  vertical-align: 2px;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+.info-dot:hover {
+  border-color: var(--zw-green-soft);
+  background: var(--zw-mint);
+  color: var(--zw-green-deep);
+}
+.info-dot:focus-visible {
+  outline: 2px solid var(--zw-green);
+  outline-offset: 2px;
 }
 
 /* ---------------- ⑤ 引用与转载 ---------------- */
@@ -927,5 +969,33 @@ onMounted(() => {
   .ct-label {
     width: 64px;
   }
+}
+</style>
+
+<style>
+/* 资料分布「!」的弹层：el-popover 会 teleport 到 body，scoped 样式够不到，
+   所以这一小段单独写成非 scoped（只作用于 .dist-note-pop 里）。 */
+.dist-note-pop.el-popover.el-popper {
+  padding: 12px 14px;
+}
+
+.dist-note-pop .dist-note-line {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  line-height: 1.85;
+  color: var(--zw-muted);
+}
+
+.dist-note-pop .dist-note-line:last-child {
+  margin-bottom: 0;
+}
+
+.dist-note-pop a {
+  color: var(--zw-green-deep);
+  text-decoration: none;
+}
+
+.dist-note-pop a:hover {
+  text-decoration: underline;
 }
 </style>

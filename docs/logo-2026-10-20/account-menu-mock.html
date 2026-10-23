@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>账号组件 · 印章版 草图</title>
+<style>
+  :root{
+    --paper:#F4F1EA; --ink:#1C1C1A; --ink-2:#5F625C; --ink-3:#8A8F88;
+    --line:#D8D3C6; --green:#2A6045; --green-deep:#173A2A; --seal:#B0392F;
+    --serif:'Noto Serif SC','Source Han Serif SC','Songti SC','SimSun',serif;
+    --sans:'PingFang SC','Microsoft YaHei',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);font-family:var(--sans);color:var(--ink);padding:40px 24px 80px}
+  .label{font-size:12px;color:var(--ink-3);letter-spacing:.12em;margin:0 0 10px}
+  .stage{display:flex;gap:56px;align-items:flex-start;flex-wrap:wrap;margin-bottom:56px}
+
+  /* ---------- 触发区：方形印章 + 名字（竖排小字） ---------- */
+  .account{position:relative;display:inline-block}
+  .trigger{
+    display:inline-flex;align-items:center;gap:10px;
+    padding:6px 12px 6px 6px;background:transparent;border:0;cursor:pointer;
+    font:inherit;color:var(--ink);
+  }
+  .trigger:hover .name,.trigger.open .name{color:var(--green-deep)}
+  .trigger:focus-visible{outline:1px dashed var(--green);outline-offset:4px}
+  .seal{
+    position:relative;width:34px;height:34px;display:grid;place-items:center;
+    background:var(--green);color:var(--paper);
+    font-family:var(--serif);font-size:16px;font-weight:700;
+    border-radius:3px;
+  }
+  /* 印章边框：内框一道细线，像刻好的章 */
+  .seal::before{content:"";position:absolute;inset:3px;border:1px solid rgba(244,241,234,.55);border-radius:1px}
+  .name{font-family:var(--serif);font-size:15px;letter-spacing:.02em;transition:color .16s}
+  /* 展开指示：一条由长到短的竖线（呼应 logo 的"巷道"母题），不是三角箭头 */
+  .ticks{display:inline-flex;gap:2px;align-items:flex-end;height:10px;margin-left:2px}
+  .ticks i{display:block;width:2px;background:var(--ink-3);transition:transform .2s}
+  .ticks i:nth-child(1){height:10px}.ticks i:nth-child(2){height:7px}.ticks i:nth-child(3){height:4px}
+  .trigger.open .ticks i{background:var(--green)}
+
+  /* ---------- 名帖下拉卡 ---------- */
+  .panel{
+    position:absolute;top:calc(100% + 6px);right:0;width:272px;
+    background:#FBFAF6;border:1px solid var(--line);border-radius:4px;
+    box-shadow:0 1px 0 rgba(28,28,26,.04),0 8px 24px rgba(28,28,26,.08);
+    padding:18px 18px 12px;
+  }
+  .panel::before{ /* 顶部细朱线：只此一处红 */
+    content:"";position:absolute;left:18px;right:18px;top:0;height:1px;background:var(--seal);opacity:.8
+  }
+  .card-head{display:flex;gap:14px;align-items:center;padding-bottom:14px;border-bottom:1px dashed var(--line)}
+  .seal--lg{width:48px;height:48px;font-size:22px;border-radius:4px}
+  .seal--lg::before{inset:4px}
+  .who strong{display:block;font-family:var(--serif);font-size:17px;font-weight:700}
+  .who span{display:block;margin-top:3px;font-size:12px;color:var(--ink-2);line-height:1.5}
+  /* 目录式菜单：序号 · 项名 · 点线 */
+  .toc{list-style:none;margin:10px 0 0;padding:0}
+  .toc a,.toc button{
+    display:flex;align-items:baseline;gap:8px;width:100%;padding:9px 0;
+    background:none;border:0;font:inherit;font-size:14px;color:var(--ink);
+    text-align:left;text-decoration:none;cursor:pointer;
+  }
+  .toc .no{font-family:var(--serif);font-size:12px;color:var(--ink-3);min-width:18px}
+  .toc .dots{flex:1;border-bottom:1px dotted var(--line);transform:translateY(-3px)}
+  .toc a:hover,.toc button:hover{color:var(--green-deep)}
+  .toc a:hover .dots,.toc button:hover .dots{border-color:var(--green)}
+  .foot{margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);display:flex;justify-content:space-between;align-items:center}
+  .foot button{background:none;border:0;font:inherit;font-size:13px;color:var(--ink-2);cursor:pointer;padding:4px 0}
+  .foot button:hover{color:var(--seal)}
+  .foot small{font-size:11px;color:var(--ink-3);letter-spacing:.08em}
+
+  /* ---------- 变体：圆形"循环圈"头像（备选） ---------- */
+  .ring{
+    position:relative;width:40px;height:40px;display:grid;place-items:center;
+  }
+  .ring svg{position:absolute;inset:0}
+  .ring b{font-family:var(--serif);font-size:15px;color:var(--green-deep)}
+
+  .note{max-width:620px;font-size:13px;line-height:1.85;color:var(--ink-2)}
+  .note h3{font-family:var(--serif);font-size:16px;color:var(--ink);margin:18px 0 6px}
+  .note ul{padding-left:18px;margin:0}
+  .note li{margin:4px 0}
+  .dark{background:var(--green-deep);padding:22px 26px;border-radius:4px;display:inline-block}
+  .dark .name,.dark .trigger{color:var(--paper)}
+  .dark .seal{background:var(--paper);color:var(--green-deep)}
+  .dark .seal::before{border-color:rgba(28,28,26,.35)}
+  .dark .ticks i{background:rgba(244,241,234,.6)}
+</style>
+</head>
+<body>
+
+<p class="label">方案 A：印章账号（推荐）· 默认收起</p>
+<div class="stage">
+  <div class="account">
+    <button class="trigger" type="button" aria-haspopup="menu" aria-expanded="false">
+      <span class="seal" aria-hidden="true">2</span>
+      <span class="name">254123</span>
+      <span class="ticks" aria-hidden="true"><i></i><i></i><i></i></span>
+    </button>
+  </div>
+</div>
+
+<p class="label">方案 A：展开状态（名帖）</p>
+<div class="stage">
+  <div class="account" style="width:300px;height:330px">
+    <button class="trigger open" type="button" aria-haspopup="menu" aria-expanded="true">
+      <span class="seal" aria-hidden="true">2</span>
+      <span class="name">254123</span>
+      <span class="ticks" aria-hidden="true"><i></i><i></i><i></i></span>
+    </button>
+    <div class="panel" role="menu">
+      <div class="card-head">
+        <span class="seal seal--lg" aria-hidden="true">2</span>
+        <div class="who">
+          <strong>254123</strong>
+          <span>机构未填写</span>
+        </div>
+      </div>
+      <ul class="toc">
+        <li><a href="#" role="menuitem"><span class="no">壹</span>个人资料<span class="dots"></span></a></li>
+        <li><a href="#" role="menuitem"><span class="no">贰</span>我的投稿<span class="dots"></span></a></li>
+        <li><a href="#" role="menuitem"><span class="no">叁</span>意见反馈<span class="dots"></span></a></li>
+      </ul>
+      <div class="foot">
+        <button type="button" role="menuitem">退出登录</button>
+        <small>六尺巷 · 零废弃知识库</small>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p class="label">方案 A：深色底（导航在深色区域时）</p>
+<div class="stage">
+  <div class="dark">
+    <div class="account">
+      <button class="trigger" type="button">
+        <span class="seal" aria-hidden="true">2</span>
+        <span class="name">254123</span>
+        <span class="ticks" aria-hidden="true"><i></i><i></i><i></i></span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<p class="label">方案 B（备选）：循环圈头像 · 与搜索图标同一语汇</p>
+<div class="stage">
+  <div class="account">
+    <button class="trigger" type="button">
+      <span class="ring" aria-hidden="true">
+        <svg viewBox="0 0 40 40" fill="none">
+          <circle cx="20" cy="20" r="18" stroke="#2A6045" stroke-width="2" stroke-dasharray="86 27" stroke-linecap="round" transform="rotate(-90 20 20)"/>
+          <circle cx="20" cy="20" r="18" stroke="#D8D3C6" stroke-width="1" />
+        </svg>
+        <b>2</b>
+      </span>
+      <span class="name">254123</span>
+      <span class="ticks" aria-hidden="true"><i></i><i></i><i></i></span>
+    </button>
+  </div>
+</div>
+
+<div class="note">
+  <h3>设计说明（方案 A）</h3>
+  <ul>
+    <li><b>头像 = 印章</b>：把头像做成一方方形朱文/墨文小章，对应设计方案里"印章只用一处"的规则。方章 4px 圆角，内框一道细线，像刻好的章。颜色用墨绿，不用朱红（朱红留给"支持我们"）。</li>
+    <li><b>名字用宋体</b>，展开箭头换成三根由长到短的竖线，呼应 logo 的"巷道"母题，代替通用三角。</li>
+    <li><b>下拉卡 = 名帖</b>：宣纸色底、一道朱线、虚线分隔身份区与菜单，菜单用"壹 贰 叁"序号 + 点线目录，沿用资料库和信息公开的目录语言。</li>
+    <li><b>退出登录</b>降为页脚小字，避免在菜单里像一颗危险按钮。</li>
+    <li><b>方案 B</b>：圆形头像外加一道环形进度线，把"循环"具象化（进度来源待定，不能编造数字）。仅作备选。</li>
+    <li>没有阴影堆叠、没有渐变，圆角 ≤ 4px，与新版 UI 令牌一致。</li>
+    <li>内容字段保持不变：名字 / 机构 / 个人资料 / 我的投稿 / 意见反馈 / 管理台（仅管理员）/ 退出登录。</li>
+  </ul>
+  <h3>待确认</h3>
+  <ul>
+    <li>印章上的字取名字首字（与现在一致），还是固定用一个"零"字做品牌章？</li>
+    <li>选 A 还是 B？A 更有机构感，B 更接近"循环"语义。</li>
+  </ul>
+</div>
+
+</body>
+</html>

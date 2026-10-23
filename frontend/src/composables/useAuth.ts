@@ -5,7 +5,7 @@
  *   - isLoggedIn：是否已登录 —— 只要本地有 token 就算已登录
  *   - fetchMe()：带 token 请求 GET /auth/me，未登录 / 接口未就绪时静默降级
  *   - setToken()：登录成功后保存 token
- *   - logout()：退出登录，清空本地凭证与用户信息
+ *   - logout()：退出登录 —— 先让服务端清掉登录 cookie，再清空本地凭证与用户信息
  */
 import { computed, ref } from 'vue'
 import http, { TOKEN_KEY } from '../api/http'
@@ -66,11 +66,26 @@ export function useAuth() {
     user.value = next
   }
 
-  /** 退出登录：清空本地凭证与用户信息 */
-  function logout(): void {
+  /**
+   * 退出登录：打服务端把登录 cookie 清掉，同时清空本地凭证与用户信息。
+   *
+   * ⚠️ 为什么要多打一次服务端（2026-10-21 · C2）：
+   *    以前只清 localStorage，浏览器的 zwp_token cookie 还留着，
+   *    后端仍认为「已登录」—— 游客每天 5 次的提问额度就这么被绕过去了
+   *    （登录一次就能无限问，退出也不算数）。
+   *
+   * 顺序：先把请求发出去，再同步清本地。
+   *   - 本地同步清：调用方就算没 await（导航栏/管理台那两处旧调用），
+   *     退出登录也立刻生效，不会卡在「看着还登录着」；
+   *   - await 本函数：等服务端把 cookie 清掉再发下一个请求，
+   *     否则紧接着的那一枪还带着旧登录态。
+   */
+  async function logout(): Promise<void> {
+    const cookieCleared = http.post('/auth/logout', undefined, { silent: true }).catch(() => undefined)
     localStorage.removeItem(TOKEN_KEY)
     hasToken.value = false
     user.value = null
+    await cookieCleared
   }
 
   return { user, isLoggedIn, isAdmin, fetchMe, setToken, setUser, logout }

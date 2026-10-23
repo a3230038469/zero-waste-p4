@@ -14,16 +14,54 @@
  */
 import http from './http'
 
-/** 后端下发的字段说明（表单据此渲染，含中文标签、长度上限、填写提示） */
+/** 后端下发的字段说明（表单据此渲染，含中文标签、类型、上限、填写提示） */
 export interface SiteInfoField {
   key: string
   label: string
+  /**
+   * 渲染形态：
+   *   text = 单行输入；longtext = 多行输入；
+   *   entries = 「关于基金会」条目编辑器；rules = 「引用与转载」规则编辑器
+   */
+  kind: 'text' | 'longtext' | 'entries' | 'rules'
+  /** text / longtext = 字数上限；entries = 条目数上限；rules = 规则条数上限 */
   max: number
   hint: string
+  /** 仅 entries：单条小标题 / 正文的字数上限 */
+  titleMax?: number
+  bodyMax?: number
+  /** 仅 rules：单条规则的字数上限 */
+  itemMax?: number
 }
 
-/** 站点信息的当前值（key 与 fields[].key 对应；未填 = 空串） */
-export type SiteInfoValues = Record<string, string>
+/** 「关于基金会」的一条 */
+export interface FoundationItemValue {
+  title: string
+  body: string
+  /** 首页用浅绿底强调这一条 */
+  emphasis?: boolean
+}
+
+/**
+ * 站点信息的当前值（未填 = 空串 / 空数组）。
+ *
+ * 2026-10-22 起数组字段（关于基金会条目、引用规则）由后端解析好再给，
+ * 前端拿到的就是结构，不需要自己 JSON.parse。
+ */
+export interface SiteInfoValues {
+  contact: string
+  email: string
+  address: string
+  cooperation: string
+  copyright: string
+  introBody: string
+  foundationItems: FoundationItemValue[]
+  citeIntro: string
+  citeRules: string[]
+}
+
+/** 保存时只传改过的字段（后端是部分更新） */
+export type SiteInfoPatch = Partial<SiteInfoValues>
 
 export interface SiteInfoPayload {
   success: boolean
@@ -52,6 +90,26 @@ export async function fetchSiteInfo(options: { fresh?: boolean } = {}): Promise<
   return inflight
 }
 
+/**
+ * 管理台读站点信息（管理视角）。
+ *
+ * 先试管理接口 GET /admin/site-info（后端补齐后走这条，会带上管理员才能看到的字段）；
+ * 后端还没补时退回公开的 GET /site-info —— 公开接口本来就给得出手上这几个字段，
+ * 管理台照样能用，不会因为少一个读接口就白屏。
+ */
+export async function fetchAdminSiteInfo(): Promise<SiteInfoPayload> {
+  try {
+    const res = await http.get<SiteInfoPayload>('/admin/site-info', { silent: true })
+    if (res.data) {
+      cached = res.data
+      return res.data
+    }
+  } catch {
+    // 管理接口还没有这个读接口 → 下面退回公开接口
+  }
+  return fetchSiteInfo({ fresh: true })
+}
+
 export interface SiteInfoSaveResult {
   success: boolean
   info: SiteInfoValues
@@ -59,9 +117,11 @@ export interface SiteInfoSaveResult {
   changed: string[]
 }
 
-/** 管理员保存（只传要改的字段；传空串 = 清空） */
-export async function saveSiteInfo(patch: SiteInfoValues): Promise<SiteInfoSaveResult> {
-  const res = await http.put<SiteInfoSaveResult>('/admin/site-info', patch, { silent: true })
+/** 管理员保存（只传要改的字段；空串 / 空数组 = 清空） */
+export async function saveSiteInfo(patch: SiteInfoPatch): Promise<SiteInfoSaveResult> {
+  // ⚠️ 这里**不能**静默：保存失败（比如邮箱格式不对 → 后端 400）如果不吭声，
+  // 页面上就表现为「点了保存什么都没发生」（2026-10-21 修的 bug）。
+  const res = await http.put<SiteInfoSaveResult>('/admin/site-info', patch)
   // 保存成功后同步缓存：老师切回首页时看到的就是刚填的值，不用等下一次请求
   if (cached) cached = { ...cached, info: res.data.info }
   return res.data

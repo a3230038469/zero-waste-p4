@@ -60,9 +60,19 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getDocDetail, getDocs, LARGE_FILE_LIMIT, type DocDetail } from '../api/docs'
+import {
+  describeDocDetailError,
+  docFileExtension,
+  getDocDetail,
+  getDocs,
+  isPdfTitle,
+  LARGE_FILE_LIMIT,
+  type DocDetail,
+  type DocDetailError
+} from '../api/docs'
 import type { DocItem } from '../api/types'
 import { useDocActions } from '../composables/useDocActions'
+import { useGuestPermissions } from '../composables/useGuestPermissions'
 import DocCard from '../components/DocCard.vue'
 import PdfViewer from '../components/PdfViewer.vue'
 import FeedbackDialog from '../components/FeedbackDialog.vue'
@@ -88,6 +98,16 @@ const {
 const loading = ref(false)
 const doc = ref<DocDetail | null>(null)
 
+/**
+ * 详情读取失败的分类（404 资料不存在 / 5xx 服务器故障 / 网络不通…）。
+ * 2026-10-21（T3 · P1-11）：之前这里只有一个 `doc = null`，页面一律显示
+ * 「资料不存在」—— 服务器 502 也被说成资料不存在，读者会以为链接错了。
+ */
+const detailError = ref<DocDetailError | null>(null)
+
+/** 游客开关是不是兜底值（接口没读通）—— P1-14：读不到要让页面知道 */
+const { degraded: guestSwitchDegraded } = useGuestPermissions()
+
 /* 页面内预览区：预览在本页展开、文件可上下滚动读；不分栏。
    「全屏」= 预览区占满视口（替代原来弹窗里那个全屏），手机上看 PDF 才读得动。 */
 const previewPane = ref<HTMLElement | null>(null)
@@ -95,6 +115,16 @@ const previewFull = ref(false)
 
 /** 超过在线预览上限的文件：按钮提前置灰，规则写在页面上 */
 const tooLarge = computed(() => (doc.value?.size ?? 0) > LARGE_FILE_LIMIT)
+
+/**
+ * 这份资料是不是 PDF（公-4）。
+ * 后端公开接口不吐 MIME，只能看标题里的扩展名；非 PDF（.docx/.txt/…）
+ * 在浏览器里根本渲染不了，所以不给预览入口，直接说清楚怎么办。
+ */
+const isPdf = computed(() => (doc.value ? isPdfTitle(doc.value.title) : true))
+
+/** 能不能在线预览：既没超体积，也是 PDF */
+const canPreview = computed(() => !tooLarge.value && isPdf.value)
 
 /** 反馈弹窗（资料级） */
 const feedbackVisible = ref(false)
@@ -132,6 +162,7 @@ async function fetchDetail(): Promise<void> {
   }
   loading.value = true
   doc.value = null
+  detailError.value = null
   related.value = []
   try {
     doc.value = await getDocDetail(id)
@@ -140,9 +171,18 @@ async function fetchDetail(): Promise<void> {
       document.title = `${doc.value.title} · ${SITE_TITLE}`
       void fetchRelated(doc.value)
     }
+  } catch (err) {
+    // 2026-10-21（T3 · P1-11）：失败要分清楚是「资料不存在」还是「服务器坏了」
+    detailError.value = describeDocDetailError(err)
   } finally {
     loading.value = false
   }
+}
+
+/** 重新读一次详情（服务器故障时的「重试」按钮） */
+async function retryDetail(): Promise<void> {
+  await fetchDetail()
+  if (doc.value && canPreview.value) void preview(doc.value)
 }
 
 /** 按首个主题标签找同主题资料；没有标签就不找（不猜） */
@@ -166,6 +206,10 @@ function goShelf(): void {
 
 function goTopic(tag: string): void {
   void router.push({ path: '/shelf', query: { tag } })
+}
+
+function goToLogin(): void {
+  void router.push({ path: '/auth', query: { redirect: route.fullPath } })
 }
 
 /** 正文按段落渲染。本地资料模式下详情接口不返回 content，必须兜底，否则整页崩 */
@@ -204,12 +248,12 @@ async function onCopyLink(): Promise<void> {
 }
 
 onMounted(async () => {
-  // T11：读一次游客权限，用来决定预览/下载/分享/反馈要不要置灰
-  void initGuestPermissions()
+  // T02（2026-10-23）：进详情页时先 await initGuestPermissions，再决定是否自动预览。
+  // 自动预览条件：文件可预览（PDF、未超限）**且**当前身份有预览权限。
+  // 没有权限时：不自动加载，页面正常显示元数据，预览区显示登录提示。
+  await initGuestPermissions()
   await fetchDetail()
-  /* 进详情页就是预览界面：拉到资料就开渲染，读者不必再点一次按钮。
-     超过上限的文件不自动加载（也不预览），页面上写明原因。 */
-  if (doc.value && !tooLarge.value) {
+  if (doc.value && canPreview.value && !locked('preview')) {
     void preview(doc.value)
   }
 })
@@ -230,7 +274,7 @@ watch(
       feedbackVisible.value = false
       revokePreview()
       void fetchDetail().then(() => {
-        if (doc.value && !tooLarge.value) void preview(doc.value)
+        if (doc.value && canPreview.value) void preview(doc.value)
       })
     }
   }
@@ -247,10 +291,26 @@ watch(
       <el-skeleton :rows="6" animated />
     </div>
 
+    <!-- T3 · P1-11：404 与 5xx 必须说不同的话。以前 502 也显示「资料不存在」，
+         读者以为是自己链接错了，其实服务器那边出了事。 -->
     <div v-else-if="!doc" class="doc-sheet zw-card">
-      <!-- 措辞与全站 404 页保持一致：标题说「什么没了」，副标题说「为什么 / 怎么办」 -->
-      <el-result icon="warning" title="资料不存在" sub-title="这份资料可能已下架，或者链接有误。">
+      <el-result
+        :icon="detailError && detailError.kind !== 'not-found' ? 'error' : 'warning'"
+        :title="detailError && detailError.kind !== 'not-found' ? '资料没能加载出来' : '资料不存在'"
+        :sub-title="
+          detailError
+            ? detailError.message
+            : '这份资料可能已下架，或者链接有误。'
+        "
+      >
         <template #extra>
+          <el-button
+            v-if="detailError && detailError.kind !== 'not-found'"
+            type="primary"
+            @click="retryDetail"
+          >
+            重新加载
+          </el-button>
           <el-button type="primary" @click="goShelf">返回资料库</el-button>
         </template>
       </el-result>
@@ -343,28 +403,52 @@ watch(
           所以这里不提供在线预览 —— 请用「下载原件」保存后查看。
         </p>
 
-        <!-- ③ 预览区：一条工具栏（文件名 / 翻页 / 缩放 / 全屏）+ 纸面。进页就展开，没有开关 -->
+        <!-- T3 · 公-4：非 PDF 不给预览入口（.docx/.txt 在浏览器里渲染不了），
+             之前只按体积判断，点了预览只出来一片空白或英文报错。 -->
+        <p v-else-if="!isPdf" class="notice notice--amber">
+          这份资料是 {{ docFileExtension(doc.title).toUpperCase() || '非 PDF' }} 文件，
+          浏览器里没法直接预览 —— 请用「下载原件」保存后用本地阅读器打开。
+        </p>
+
+        <!-- T3 · P1-14：游客开关读不到时如实说明（按默认开放走，后端仍会真拦） -->
+        <p v-if="guestSwitchDegraded" class="notice notice--amber">
+          游客功能开关暂时读不到，页面按默认开放处理；如果某项操作被拦，请登录后再试。
+        </p>
+
+        <!-- ③ 预览区：一条工具栏（文件名 / 翻页 / 缩放 / 全屁）+ 纸面。进页就展开，没有开关 -->
         <section
-          v-if="!tooLarge"
+          v-if="canPreview"
           ref="previewPane"
           class="preview-pane"
           :class="{ 'is-full': previewFull }"
         >
           <div class="pv-body">
-            <div v-if="previewLoading" class="pv-mask">
-              <span class="pv-spinner" aria-hidden="true" />
-              <p>正在打开文件…</p>
-            </div>
-            <PdfViewer v-else-if="previewUrl" :src="previewUrl" :title="doc.title">
-              <template #actions>
-                <button type="button" class="pv-mini" @click="previewFull = !previewFull">
-                  {{ previewFull ? '退出全屏' : '全屏' }}
-                </button>
-              </template>
-            </PdfViewer>
-            <p v-else class="pv-empty">
-              文件没能在这里打开，可以用上方「下载原件」保存后用本地阅读器查看。
+            <!-- 游客且无预览权限：显示登录提示 -->
+            <p v-if="locked('preview')" class="pv-login-prompt">
+              登录后可在线预览这份资料
+              <el-button size="small" type="primary" @click="goToLogin">
+                去登录
+              </el-button>
             </p>
+            <!-- 已登录或有权限：正常预览逻辑
+                 ⚠️ 必须用 template 而不是 div：多套一层没有高度的 div 会把
+                 PdfViewer 的 height:100% 高度链打断，预览区会塌成一条缝（2026-10-23 实测）。 -->
+            <template v-else>
+              <div v-if="previewLoading" class="pv-mask">
+                <span class="pv-spinner" aria-hidden="true" />
+                <p>正在打开文件…</p>
+              </div>
+              <PdfViewer v-else-if="previewUrl" :src="previewUrl" :title="doc.title">
+                <template #actions>
+                  <button type="button" class="pv-mini" @click="previewFull = !previewFull">
+                    {{ previewFull ? '退出全屏' : '全屏' }}
+                  </button>
+                </template>
+              </PdfViewer>
+              <p v-else class="pv-empty">
+                文件没能在这里打开，可以用上方「下载原件」保存后用本地阅读器查看。
+              </p>
+            </template>
           </div>
           <p class="pane-foot">这里显示的是原件本身；下载或引用请遵循资料自身的授权。</p>
         </section>
@@ -447,13 +531,19 @@ watch(
   font-size: 13.5px;
   color: var(--zw-muted);
   cursor: pointer;
-  padding: 6px 10px 6px 0;
+  padding: 8px 12px 8px 0; /* QA-ALL-03 热区：6px 纵向不足 44 标准，留 8 上下假设含行高 */
+  min-height: 36px;
   margin-bottom: 12px;
   transition: color 0.16s ease;
 }
 
 .back-btn:hover {
   color: var(--zw-green-deep);
+}
+
+.back-btn:focus-visible {
+  outline: 2px solid var(--zw-green);
+  outline-offset: 2px;
 }
 
 .back-arrow {
@@ -661,13 +751,16 @@ watch(
   color: var(--zw-amber-ink);
 }
 
-/* T11：游客权限关闭后的「置灰」（只影响这几个入口，不动别的按钮） */
+/* T11：游客权限关闭后的「置灰」（只影响这几个入口，不动别的按钮）。
+   QA-ALL-04：全站禁用到此统一 —— opacity 0.55 单看是「坏掉了」，
+   现在改整 button 组合语义：降低一档透明度 + cursor 提示 + amber 提示在按钮内。 */
 .need-login {
-  opacity: 0.55;
+  opacity: 0.72;
+  cursor: not-allowed;
 }
 
 .feedback-hint {
-  color: var(--zw-amber);
+  color: var(--zw-amber-ink); /* 对比度同上，amber 或 amber-ink 二选一，这里用深琥珀 */
   margin-left: 4px;
 }
 
@@ -799,6 +892,10 @@ watch(
   font-size: 15px;
   line-height: 1.95;
   color: var(--zw-text);
+  /* QA-DOC-01：长文正文列宽上限 —— 960 纸面上完全铺满会到 ~890px，
+     一行 60+ 汉字读读起来太宽；收成 72ch 汉字舒适行宽并始终居中。 */
+  max-width: 72ch;
+  margin-inline: auto;
 }
 
 .doc-body p {

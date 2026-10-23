@@ -16,16 +16,19 @@
  *   库里有什么就能选什么；同时开着 allow-create，遇到新机构/新主题可以自己输，
  *   否则会把「库里还没有的机构」这类合法投稿挡在门外。
  */
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
 import { getFacets } from '../api/docs'
 import {
   CONTRIBUTION_ACCEPT,
+  CONTRIBUTION_PARSE_LABEL,
+  CONTRIBUTION_STATUS_LABEL,
   MAX_CONTRIBUTION_BYTES,
   fetchMyContributions,
   submitContribution,
+  type ContributionParseState,
   type ContributionStatus,
   type MyContribution
 } from '../api/contributions'
@@ -59,7 +62,21 @@ const options = reactive({ orgs: [] as FacetsLike[], years: [] as FacetsLike[], 
 
 const mine = ref<MyContribution[]>([])
 const mineLoading = ref(false)
+/** 【T3 · 操作员-6】「我的投稿」读不出来 ≠ 没有投过稿：两个状态必须分得开 */
+const mineError = ref('')
 const mineSection = ref<HTMLElement | null>(null)
+
+/**
+ * 【T3 · P3-2 / 公众-7】窄屏（≤720px）下「我的投稿」改用卡片流。
+ *
+ * 原来是一张四列表格（标题 / 状态 / 提交时间 / 审核说明），最少要 650px 宽，
+ * 390px 的手机上只能横向拖 —— 看标题就得先把表拖到最右。改成卡片：一份一卡。
+ */
+const narrowScreen = ref(false)
+let narrowMq: MediaQueryList | null = null
+function syncNarrow(): void {
+  narrowScreen.value = narrowMq?.matches ?? false
+}
 
 const NOTE_MAX = 200
 
@@ -86,11 +103,15 @@ async function loadMine(): Promise<void> {
     return
   }
   mineLoading.value = true
+  mineError.value = ''
   try {
     const data = await fetchMyContributions()
     mine.value = data.items ?? []
   } catch {
+    // 【T3 · 操作员-6】之前这里把列表清空就完事，页面显示「还没有投过稿」——
+    // 接口挂了会被当成「你没投过」，用户白等一场。改成显式的加载失败。
     mine.value = []
+    mineError.value = '投稿记录没能加载出来，请稍后再试。'
   } finally {
     mineLoading.value = false
   }
@@ -165,15 +186,46 @@ async function onSubmit(): Promise<void> {
   }
 }
 
-function statusTag(status: ContributionStatus): { type: 'success' | 'warning' | 'danger'; text: string } {
-  if (status === 'approved') return { type: 'success', text: '已通过' }
-  if (status === 'rejected') return { type: 'danger', text: '已退回' }
-  return { type: 'warning', text: '待审核' }
+/**
+ * 状态标签（2026-10-21 起「通过」再细分解析进度）
+ *
+ * 审核通过 ≠ 已经能被问答引用：引擎还要解析（实测 PDF 约 1 分钟）。
+ * 这里把这段中间态如实说出来，避免用户以为「已通过」就等于「已经入库了」。
+ * unknown 时只写「已通过」（数据源不是引擎，不编进度）。
+ */
+function statusTag(row: {
+  status: ContributionStatus
+  parseState?: ContributionParseState
+}): { type: 'success' | 'warning' | 'danger' | 'info'; text: string } {
+  // 【T3 · P2-9】文案统一用 api/contributions.ts 里那份共享枚举
+  // （管理台「投稿审核」用的是同一份，两边不该各写一套对不上）。
+  const base = CONTRIBUTION_STATUS_LABEL[row.status]
+  if (row.status !== 'approved') {
+    return { type: row.status === 'rejected' ? 'danger' : 'warning', text: base }
+  }
+  // 已通过之后还要看引擎解析进度：通过了不等于已经能被问答引用
+  const state = row.parseState ?? 'unknown'
+  if (state === 'completed') return { type: 'success', text: `${base} · ${CONTRIBUTION_PARSE_LABEL.completed}` }
+  if (state === 'failed') return { type: 'danger', text: `${base} · ${CONTRIBUTION_PARSE_LABEL.failed}` }
+  if (state === 'pending' || state === 'processing' || state === 'finalizing') {
+    return { type: 'warning', text: `${base} · ${CONTRIBUTION_PARSE_LABEL[state]}` }
+  }
+  // unknown = 数据源不是引擎（本地资料包 / 演示快照），不编进度，只说「已通过」
+  return { type: 'success', text: base }
 }
 
+/**
+ * 【T3 · 公-3】时间显示改成本地时区。
+ *
+ * 后端给的是 UTC 的 ISO 串，之前直接截字符串（'2026-10-20T08:47:00' → '2026-10-20 08:47'），
+ * 显示的其实是 UTC 时间，比本地时间少 8 小时 —— 用户会以为稿子投了 8 小时才被处理。
+ */
 function fmtTime(value: string): string {
   if (!value) return '—'
-  return value.replace('T', ' ').slice(0, 16)
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return value.replace('T', ' ').slice(0, 16)
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 /* ------------------------------------------------------------------ *
@@ -220,8 +272,15 @@ async function onSubmitFeedback(): Promise<void> {
  * ------------------------------------------------------------------ */
 
 onMounted(() => {
+  narrowMq = window.matchMedia('(max-width: 720px)')
+  syncNarrow()
+  narrowMq.addEventListener('change', syncNarrow)
   void loadFacets()
   void loadMine()
+})
+
+onBeforeUnmount(() => {
+  narrowMq?.removeEventListener('change', syncNarrow)
 })
 
 const pendingCount = computed(() => mine.value.filter((x) => x.status === 'pending').length)
@@ -270,7 +329,7 @@ function goLogin(): void {
                 :accept="CONTRIBUTION_ACCEPT"
                 @change="onPickFile"
               />
-              <div class="file-row">
+              <div id="contribute-upload" class="file-row">
                 <el-button @click="fileInput?.click()">选择 PDF 文件</el-button>
                 <span v-if="pickedFile" class="file-name">
                   {{ pickedFile.name }}
@@ -374,13 +433,27 @@ function goLogin(): void {
               </el-tag>
             </h3>
 
-            <el-empty v-if="!mineLoading && mine.length === 0" description="还没有投过稿，上方提交后会在这里显示" />
+            <!-- 【T3 · 操作员-6】「读不出来」和「没有投过稿」是两回事，必须分开显示 -->
+            <el-result
+              v-if="mineError"
+              icon="error"
+              title="投稿记录没能加载出来"
+              :sub-title="mineError"
+              class="mine-error"
+            >
+              <template #extra>
+                <el-button type="primary" @click="loadMine">重新加载</el-button>
+              </template>
+            </el-result>
 
-            <el-table v-else v-loading="mineLoading" :data="mine" class="mine-table">
+            <el-empty v-else-if="!mineLoading && mine.length === 0" description="还没有投过稿，上方提交后会在这里显示" />
+
+            <!-- 宽屏：表格 -->
+            <el-table v-else-if="!narrowScreen" v-loading="mineLoading" :data="mine" class="mine-table">
               <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
               <el-table-column label="状态" width="100">
                 <template #default="{ row }">
-                  <el-tag :type="statusTag(row.status).type" size="small">{{ statusTag(row.status).text }}</el-tag>
+                  <el-tag :type="statusTag(row).type" size="small">{{ statusTag(row).text }}</el-tag>
                 </template>
               </el-table-column>
               <el-table-column label="提交时间" width="150">
@@ -396,6 +469,26 @@ function goLogin(): void {
                 </template>
               </el-table-column>
             </el-table>
+
+            <!-- 【T3 · P3-2 / 公众-7】窄屏：一份一张卡。
+                 原来那张四列表格最少要 650px 宽，390px 的手机上只能横着拖，
+                 想看标题得先把表拖到最右边。 -->
+            <ul v-else v-loading="mineLoading" class="mine-cards">
+              <li v-for="row in mine" :key="row.id" class="mine-card">
+                <p class="mc-title">{{ row.title }}</p>
+                <p class="mc-meta">
+                  <el-tag :type="statusTag(row).type" size="small">{{ statusTag(row).text }}</el-tag>
+                  <span class="mc-time">{{ fmtTime(row.createdAt) }}</span>
+                </p>
+                <p class="mc-note">
+                  <span v-if="row.status === 'rejected'" class="reason">{{ row.reason || '（未填理由）' }}</span>
+                  <span v-else-if="row.status === 'approved'" class="ok-note">
+                    已收录进资料库{{ row.reviewedAt ? `（${fmtTime(row.reviewedAt)}）` : '' }}
+                  </span>
+                  <span v-else class="pending-note">等待管理员审核</span>
+                </p>
+              </li>
+            </ul>
           </section>
         </template>
       </el-tab-pane>
@@ -510,7 +603,13 @@ function goLogin(): void {
 }
 
 .opt {
-  color: var(--zw-faint);
+  color: var(--zw-muted); /* QA-CTR-03：faint on mint-2 底不达标，muted 稳过 4.5:1 */
+}
+
+/* 上传锚点（QA-CTR-08）：上传控件在 11 屏长表单中间，直接告知位置。 */
+.file-hint {
+  font-size: 12px;
+  color: var(--zw-muted);
 }
 
 .ct-grid {
@@ -521,10 +620,17 @@ function goLogin(): void {
 
 /* 原生 file input 藏起来：样式无法统一，触发交给「选择 PDF 文件」按钮 */
 .file-input {
-  display: none;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .file-row {
+  scroll-margin-top: 84px; /* QA-CTR-08：与全站 scroll-margin 常数一致，锚点理值 */
   display: flex;
   align-items: center;
   gap: 12px;
@@ -542,10 +648,12 @@ function goLogin(): void {
 }
 
 .file-clear {
+  min-width: 36px;
+  min-height: 32px; /* QA-ALL-03：热区从「一行小字」拉到 36×32 可点 */
   margin-left: 6px;
   border: 0;
   background: none;
-  padding: 0;
+  padding: 4px 8px;
   font: inherit;
   font-size: 12px;
   color: var(--zw-muted);
@@ -601,6 +709,50 @@ function goLogin(): void {
   border: 1px solid var(--zw-line);
   border-radius: var(--zw-radius);
   overflow: hidden;
+}
+
+/* 【T3 · P3-2】窄屏卡片流 */
+.mine-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mine-card {
+  border: 1px solid var(--zw-line);
+  border-radius: var(--zw-radius);
+  padding: 12px 14px;
+  background: var(--zw-surface);
+}
+
+.mc-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--zw-ink);
+  word-break: break-word;
+}
+
+.mc-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 6px;
+  flex-wrap: wrap;
+}
+
+.mc-time {
+  font-size: 12px;
+  color: var(--zw-faint);
+}
+
+.mc-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .reason {

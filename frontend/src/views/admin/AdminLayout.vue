@@ -20,9 +20,10 @@
  * ⚠️ 权限：这里只决定「入口给不给看」。真正的拦截在后端每个 /api/admin/* 上，
  *    路由守卫（router/index.ts 的 beforeEach）负责把非管理员挡到登录页。
  */
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { useAuth } from '../../composables/useAuth'
+import { runSelfcheck, type SelfcheckItem } from '../../api/admin'
 
 const route = useRoute()
 const router = useRouter()
@@ -36,6 +37,7 @@ const NAV = [
   { to: 'adminUsers', label: '注册用户', hint: '谁在用这个站' },
   { to: 'adminFeedback', label: '访客反馈', hint: '意见与纠错' },
   { to: 'adminStats', label: '数据看板', hint: '访问与使用明细' },
+  { to: 'adminModels', label: '模型管理', hint: '密钥、增删与测试' },
   { to: 'adminSettings', label: '系统设置', hint: '问答、解析与游客权限' }
 ] as const
 
@@ -52,17 +54,57 @@ function onLogout(): void {
   void router.push('/')
 }
 
+/* --------------------------------------------------------------
+ * 常驻健康状态条（2026-10-21 新增）
+ *
+ * 之前「引擎没起」「向量服务没启动」只有去「系统设置」页点「开始自检」才看得到，
+ * 平时在别的后台页操作时出了问题只能靠猜。现在外壳顶部常驻一条：
+ * 四项（知识库引擎 / 云解析 / 向量服务 / 数据库）各一颗小圆点，绿=通过、红=未通过，
+ * 点「重新检查」就能刷新。读的就是设置页那同一个 POST /api/admin/selfcheck。
+ * ------------------------------------------------------------------ */
+
+const healthItems = ref<SelfcheckItem[]>([])
+const healthError = ref('')
+const healthChecking = ref(false)
+/** 全部通过时这条可以收起，别一直占地方 */
+const healthAllOk = computed(() => healthItems.value.length > 0 && healthItems.value.every((i) => i.ok))
+
+async function loadHealth(): Promise<void> {
+  healthChecking.value = true
+  healthError.value = ''
+  try {
+    const result = await runSelfcheck()
+    healthItems.value = result.items ?? []
+  } catch (err) {
+    const response = (err as { response?: { status?: number; data?: { error?: { message?: string } } } })
+      .response
+    healthError.value = response?.data?.error?.message ?? '暂时查不到服务状态，请稍后再试。'
+    healthItems.value = []
+  } finally {
+    healthChecking.value = false
+  }
+}
+
 onMounted(() => {
   // 刷新后直接进 /admin/* 时，守卫已经拉过一次；这里再兜一次，保证底部署名有值
   if (!user.value) void fetchMe()
+  void loadHealth()
 })
+
+// 换页时顺手刷新一次状态（不同页面对应的服务依赖可能不一样）
+watch(
+  () => route.name,
+  () => {
+    void loadHealth()
+  }
+)
 </script>
 
 <template>
   <div class="admin-shell">
     <aside class="admin-rail">
       <RouterLink to="/" class="brand" title="返回网站首页">
-        <span class="brand-dot" aria-hidden="true"></span>
+        <img src="/logo-mark-nav.svg" alt="" class="brand-logo" width="28" height="28" />
         <span class="brand-text">
           <strong>零废弃知识库</strong>
           <em>管理台</em>
@@ -97,6 +139,28 @@ onMounted(() => {
     </aside>
 
     <main class="admin-main">
+      <!-- 常驻健康状态条：引擎 / 解析 / 向量 / 数据库 -->
+      <div class="health-bar" :class="{ 'is-bad': healthError || healthItems.some((i) => !i.ok) }">
+        <span class="health-title">服务状态</span>
+        <span v-if="healthChecking" class="health-text">正在检查…</span>
+        <template v-else-if="healthError">
+          <span class="health-text">{{ healthError }}</span>
+        </template>
+        <template v-else-if="healthItems.length">
+          <span v-if="healthAllOk" class="health-text">四项全部正常。</span>
+          <span v-for="item in healthItems" :key="item.key" class="health-item" :class="item.ok ? 'ok' : 'bad'">
+            <span class="dot" aria-hidden="true" />
+            <span class="h-label">{{ item.label }}</span>
+            <span class="h-state">{{ item.ok ? '正常' : '未通过' }}</span>
+            <span v-if="!item.ok && item.message" class="h-msg" :title="item.message">{{ item.message }}</span>
+          </span>
+        </template>
+        <span v-else class="health-text">还没检查过。</span>
+        <button type="button" class="health-refresh" :disabled="healthChecking" @click="loadHealth">
+          {{ healthChecking ? '检查中…' : '重新检查' }}
+        </button>
+      </div>
+
       <!-- 页面标题由各页自己渲染（它们的页头里还挂着统计行与上传/导出按钮，
            外壳再写一遍标题就会重复；这里只负责「导航 + 内容区」两件事）。 -->
       <div class="admin-body">
@@ -134,12 +198,13 @@ onMounted(() => {
   text-decoration: none;
 }
 
-.brand-dot {
-  width: 26px;
-  height: 26px;
-  border-radius: 9px;
-  background: linear-gradient(150deg, var(--zw-green), var(--zw-green-light));
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+/* 2026-10-20：原来的绿色圆角方块换成和公众站同一款圆形 logo 图标。
+   28px 是配合右侧「零废弃知识库 / 管理台」两行文字（14px + 11px）的尺寸：
+   图标高度略大于两行文字块，视觉上与文字块居中对齐。 */
+.brand-logo {
+  display: block;
+  width: 28px;
+  height: 28px;
   flex-shrink: 0;
 }
 
@@ -299,6 +364,81 @@ onMounted(() => {
   margin: 0 auto;
 }
 
+/* ---- health bar ---- */
+.health-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin: -8px 0 16px;
+  padding: 8px 12px;
+  border: 1px solid var(--zw-line);
+  border-radius: 10px;
+  background: #fff;
+  font-size: 12.5px;
+  color: var(--zw-muted);
+}
+.health-bar.is-bad {
+  border-color: #f0c9c2;
+  background: #fdf6f4;
+}
+.health-title {
+  font-weight: 600;
+  color: var(--zw-ink);
+}
+.health-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.health-item .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--zw-line-strong);
+  flex: 0 0 auto;
+}
+.health-item.ok .dot {
+  background: var(--zw-green);
+}
+.health-item.bad .dot {
+  background: #d0493b;
+}
+.health-item.bad .h-label,
+.health-item.bad .h-state {
+  color: #c0392b;
+}
+.h-state {
+  color: var(--zw-faint);
+}
+.h-msg {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #c0392b;
+}
+.health-text {
+  color: var(--zw-muted);
+}
+.health-refresh {
+  margin-left: auto;
+  border: 1px solid var(--zw-line);
+  border-radius: 6px;
+  padding: 2px 10px;
+  background: #fff;
+  font-size: 12px;
+  color: var(--zw-ink);
+  cursor: pointer;
+}
+.health-refresh:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* ---- 手机 / 窄屏：竖栏折成顶部横向导航带 ---- */
 @media (max-width: 900px) {
   .admin-shell {
@@ -318,9 +458,10 @@ onMounted(() => {
 
   .admin-nav {
     flex-direction: row;
+    flex-wrap: wrap;
     gap: 6px;
-    overflow-x: auto;
-    overflow-y: hidden;
+    /* 窄屏不再横向滚动：换行摆开，避免最后一项被裁掉半个字（2026-10-22） */
+    overflow: visible;
     padding-bottom: 2px;
   }
 

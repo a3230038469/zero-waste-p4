@@ -17,7 +17,7 @@
 import { Router, type Request, type Response } from 'express'
 
 import { EngineError, listFiles, type FacetItem, type KbDoc, type KbDocInternal } from '../weknora/index.js'
-import { duplicateCopyCount, duplicateGroupCount, duplicateOf } from '../data/duplicates.js'
+import { duplicateOf } from '../data/duplicates.js'
 
 const router = Router()
 
@@ -118,7 +118,23 @@ function titleKey(title: string): string {
 
 function buildOverview(docs: KbDocInternal[]): OverviewResponse {
   const total = docs.length
-  const duplicateCopies = duplicateCopyCount()
+
+  // 按精确 size (字节) 分组计算重复——不再使用 kb-duplicates.json
+  const sizeGroups = new Map<number, KbDocInternal[]>()
+  for (const doc of docs) {
+    const sz = doc.size
+    if (!sizeGroups.has(sz)) sizeGroups.set(sz, [])
+    sizeGroups.get(sz)!.push(doc)
+  }
+  // 重复副本份数：每组里，除保留件外其余全部算作副本
+  let duplicateCopies = 0
+  let duplicateGroups = 0
+  for (const [, group] of sizeGroups) {
+    if (group.length > 1) {
+      duplicateGroups += 1
+      duplicateCopies += group.length - 1
+    }
+  }
 
   // 年份：0 表示「台账未填」，单列出来，不混进年份序列（否则图表上会出现一个 0 年的柱子）
   const dated = docs.filter((d) => d.year > 0)
@@ -167,7 +183,7 @@ function buildOverview(docs: KbDocInternal[]): OverviewResponse {
     generatedAt: new Date().toISOString(),
     total,
     uniqueTotal: Math.max(0, total - duplicateCopies),
-    duplicateGroups: duplicateGroupCount(),
+    duplicateGroups,
     duplicateCopies,
     totalBytes: docs.reduce((sum, d) => sum + d.size, 0),
     orgCount: new Set(docs.map((d) => d.org)).size,
@@ -189,13 +205,14 @@ function buildOverview(docs: KbDocInternal[]): OverviewResponse {
  * 统一错误出口（与 docs.ts 同一信封，前端拦截器只需认一种形状）
  * ------------------------------------------------------------------ */
 
-function sendError(res: Response, err: unknown): void {
+function sendError(res: Response, err: unknown, req?: { requestId?: string }): void {
   if (err instanceof EngineError) {
     res.status(err.status).json({ success: false, error: { code: err.code, message: err.message } })
     return
   }
   const message = err instanceof Error ? err.message : '服务器内部错误'
-  res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message } })
+  console.error(`[overview] 内部错误: ${message}, requestId: ${req?.requestId || 'unknown'}`)
+  res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: '资料统计暂时不可用，请稍后再试' } })
 }
 
 router.get('/', (_req: Request, res: Response) => {
@@ -204,7 +221,7 @@ router.get('/', (_req: Request, res: Response) => {
       const docs = await listFiles()
       res.json(buildOverview(docs))
     } catch (err) {
-      sendError(res, err)
+      sendError(res, err, _req)
     }
   })()
 })
